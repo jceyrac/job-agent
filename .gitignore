@@ -1,0 +1,18 @@
+# Secrets & credentials
+.env
+.claude/
+
+# Generated outputs (contain job data / email previews)
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Test / scratch files
+test_*.py
+
+# macOS
+.DS_Store
