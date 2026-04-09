@@ -42,17 +42,19 @@ class XingScraper(BaseScraper):
                 if jobs_data:
                     jobs = []
                     for item in jobs_data:
+                        raw_loc = item.get("location", "")
                         jobs.append(JobPosting(
                             source=self.SOURCE_NAME,
                             title=item.get("title", ""),
                             company=item.get("company", {}).get("name", "") if isinstance(item.get("company"), dict) else str(item.get("company", "")),
-                            location=item.get("location", "Remote"),
+                            location=raw_loc or "Remote",
                             url=item.get("url", item.get("jobUrl", "")),
                             posted_date=None,
                             description=None,
                             tags=[],
                             salary=None,
                             work_mode="unknown",
+                            base_location=raw_loc if raw_loc else None,
                         ))
                     print(f"[{self.SOURCE_NAME}] {len(jobs)} jobs fetched")
                     return jobs
@@ -82,6 +84,7 @@ class XingScraper(BaseScraper):
                     tags=[],
                     salary=None,
                     work_mode="unknown",
+                    base_location=None,
                 ))
 
             print(f"[{self.SOURCE_NAME}] {len(jobs)} jobs fetched")

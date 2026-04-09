@@ -66,6 +66,11 @@ class CryptoJobsListScraper(BaseScraper):
                 slug = item.get("seoSlug", "")
                 url = f"{BASE_URL}/{slug}" if slug else BASE_URL
 
+                # locationEnhancedObj provides structured country data
+                enhanced = (item.get("locationEnhancedObj") or [{}])[0]
+                country = enhanced.get("country") or enhanced.get("formattedAddress") or None
+                base_location = country if country else ("Worldwide" if remote else None)
+
                 jobs.append(JobPosting(
                     source=self.SOURCE_NAME,
                     title=item.get("jobTitle", ""),
@@ -77,6 +82,7 @@ class CryptoJobsListScraper(BaseScraper):
                     tags=tags,
                     salary=salary,
                     work_mode=work_mode,
+                    base_location=base_location,
                 ))
 
             print(f"[{self.SOURCE_NAME}] {len(jobs)} jobs fetched")

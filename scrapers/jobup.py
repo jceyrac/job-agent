@@ -1,7 +1,29 @@
 import re
-from datetime import date
+from datetime import date, timedelta
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
+
+
+def _parse_relative_date(text: str) -> date | None:
+    """Convert Jobup relative date text to an approximate date."""
+    t = text.lower().strip()
+    today = date.today()
+    if "hour" in t or t == "today":
+        return today
+    if t == "yesterday":
+        return today - timedelta(days=1)
+    if t == "last week":
+        return today - timedelta(days=7)
+    m = re.match(r"(\d+)\s+day", t)
+    if m:
+        return today - timedelta(days=int(m.group(1)))
+    m = re.match(r"(\d+)\s+week", t)
+    if m:
+        return today - timedelta(weeks=int(m.group(1)))
+    m = re.match(r"(\d+)\s+month", t)
+    if m:
+        return today - timedelta(days=int(m.group(1)) * 30)
+    return None
 
 import httpx
 
@@ -46,6 +68,10 @@ class JobupScraper(BaseScraper):
 
                     # Extract text fields: location follows "Place of work" label
                     texts = [t.strip() for t in card.get_text("\n").split("\n") if t.strip()]
+
+                    # First text field is relative date ("Last week", "2 days ago", etc.)
+                    posted_date = _parse_relative_date(texts[0]) if texts else None
+
                     location = "Switzerland"
                     for i, t in enumerate(texts):
                         if t == "Place of work" and i + 2 < len(texts):
@@ -69,11 +95,12 @@ class JobupScraper(BaseScraper):
                         company=company,
                         location=location,
                         url=url,
-                        posted_date=None,
+                        posted_date=posted_date,
                         description=None,
                         tags=[],
                         salary=None,
-                        work_mode="unknown",  # Swiss jobs — mode often unspecified
+                        work_mode="on-site",   # Jobup is a Swiss on-site board
+                        base_location=location if location != "Switzerland" else "Switzerland",
                     ))
                 except Exception as e:
                     print(f"[{self.SOURCE_NAME}] Parse error: {e}")

@@ -133,6 +133,8 @@ class WellfoundScraper(BaseScraper):
                 else:
                     contract_type = "unknown"
 
+                base_location = cities[0] if cities else ("Worldwide" if remote else None)
+
                 jobs.append(JobPosting(
                     source=self.SOURCE_NAME,
                     title=item.get("title", ""),
@@ -144,6 +146,7 @@ class WellfoundScraper(BaseScraper):
                     tags=[],
                     salary=None,
                     work_mode=work_mode,
+                    base_location=base_location,
                     contract_type=contract_type,
                 ))
 

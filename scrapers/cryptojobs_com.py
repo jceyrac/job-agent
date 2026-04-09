@@ -1,6 +1,29 @@
 import re
+from datetime import date, timedelta
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
+
+
+def _parse_relative_date(text: str) -> date | None:
+    """Convert relative date text to an approximate date."""
+    t = text.lower().strip()
+    today = date.today()
+    if "hour" in t or t == "today":
+        return today
+    if t == "yesterday":
+        return today - timedelta(days=1)
+    if t == "last week":
+        return today - timedelta(days=7)
+    m = re.match(r"(\d+)\s+day", t)
+    if m:
+        return today - timedelta(days=int(m.group(1)))
+    m = re.match(r"(\d+)\s+week", t)
+    if m:
+        return today - timedelta(weeks=int(m.group(1)))
+    m = re.match(r"(\d+)\s+month", t)
+    if m:
+        return today - timedelta(days=int(m.group(1)) * 30)
+    return None
 
 import httpx
 
@@ -69,17 +92,27 @@ class CryptoJobsComScraper(BaseScraper):
                     # Tags from "other" ul
                     tags = [a.get_text(strip=True) for a in article.select("ul.other li a")]
 
+                    # Date: <ul class="date"><li><strong>Posted:</strong><span> X ago </span></li>
+                    posted_date = None
+                    date_span = article.select_one("ul.date span")
+                    if date_span:
+                        posted_date = _parse_relative_date(date_span.get_text(strip=True))
+
+                    # location holds the country; expose it as base_location too
+                    base_location = location if location and location != "Remote" else None
+
                     jobs.append(JobPosting(
                         source=self.SOURCE_NAME,
                         title=title,
                         company=company,
                         location=location,
                         url=url,
-                        posted_date=None,
+                        posted_date=posted_date,
                         description=None,
                         tags=tags,
                         salary=None,
                         work_mode=work_mode,
+                        base_location=base_location,
                     ))
                 except Exception as e:
                     print(f"[{self.SOURCE_NAME}] Parse error: {e}")

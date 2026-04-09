@@ -178,7 +178,7 @@ def export_joplin(jobs: list[dict]) -> None:
             return ""
         lines = [f"## {title}\n"]
         for j in items:
-            posted = j.get("posted_date") or today_str
+            posted = j.get("posted_date") or "—"
             work_mode = j.get("work_mode") or "unknown"
             wm_badge = WORK_MODE_BADGE.get(work_mode, "❓ Mode inconnu")
             geo_zone = j.get("geo_zone") or "unknown"

@@ -148,9 +148,13 @@ class JobSpyScraper(BaseScraper):
                 description = re.sub(r"[#*`>\[\]]+", " ", description)
                 description = re.sub(r"\s+", " ", description).strip()
 
-            # Date
+            # Date — JobSpy returns datetime.date directly or float NaN when unavailable.
+            # LinkedIn omits dates on promoted/featured listings; NaN is the honest signal.
             posted_date = row.get("date_posted")
-            if posted_date and not isinstance(posted_date, date):
+            if posted_date is None or isinstance(posted_date, float):
+                # float covers pandas NaN (which is truthy, so must be caught explicitly)
+                posted_date = None
+            elif not isinstance(posted_date, date):
                 try:
                     posted_date = datetime.strptime(str(posted_date), "%Y-%m-%d").date()
                 except ValueError:
@@ -161,14 +165,17 @@ class JobSpyScraper(BaseScraper):
             is_remote = row.get("is_remote")
 
             if "hybrid" in wfh:
+                work_mode = "hybrid"
                 location = f"{raw_loc} (Hybrid)" if raw_loc else "Hybrid"
-            elif raw_loc and not is_remote and "remote" not in raw_loc.lower():
-                # Has a city but not flagged remote → likely on-site or hybrid
-                location = raw_loc
-            elif is_remote or not raw_loc:
-                location = "Remote"
+            elif is_remote or not raw_loc or "remote" in raw_loc.lower():
+                work_mode = "remote"
+                location = "Remote" if not raw_loc else raw_loc
             else:
+                work_mode = "on-site"
                 location = raw_loc
+
+            # base_location: the city/state from the raw LinkedIn/Indeed location field
+            base_location = raw_loc if raw_loc and raw_loc.lower() not in ("remote", "") else None
 
             postings.append(JobPosting(
                 source=source,
@@ -180,5 +187,7 @@ class JobSpyScraper(BaseScraper):
                 description=description or None,
                 tags=[],
                 salary=salary,
+                work_mode=work_mode,
+                base_location=base_location,
             ))
         return postings

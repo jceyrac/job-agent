@@ -31,16 +31,17 @@ logger = logging.getLogger(__name__)
 SCHEMA = """
 -- Données brutes des offres — une ligne par job, partagée entre profils
 CREATE TABLE IF NOT EXISTS jobs (
-    id           TEXT PRIMARY KEY,
-    title        TEXT NOT NULL,
-    company      TEXT,
-    url          TEXT,
-    source       TEXT,
-    location     TEXT,
-    posted_date  TEXT,
-    description  TEXT,
-    first_seen   TEXT NOT NULL,
-    last_seen    TEXT NOT NULL
+    id            TEXT PRIMARY KEY,
+    title         TEXT NOT NULL,
+    company       TEXT,
+    url           TEXT,
+    source        TEXT,
+    location      TEXT,
+    base_location TEXT,
+    posted_date   TEXT,
+    description   TEXT,
+    first_seen    TEXT NOT NULL,
+    last_seen     TEXT NOT NULL
 );
 
 -- Profils de recherche
@@ -84,6 +85,14 @@ class JobStorage:
 
     def __init__(self, db_path: str = "data/jobs.db"):
         self.db_path = db_path
+        # For :memory: databases each new connection is a separate empty DB,
+        # so we keep a single persistent connection for the lifetime of this object.
+        self._memory_conn: sqlite3.Connection | None = None
+        if db_path == ":memory:":
+            self._memory_conn = sqlite3.connect(":memory:")
+            self._memory_conn.row_factory = sqlite3.Row
+            self._memory_conn.execute("PRAGMA journal_mode=WAL")
+            self._memory_conn.execute("PRAGMA foreign_keys=ON")
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -98,22 +107,36 @@ class JobStorage:
         )
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            # Migrations — add columns introduced after initial schema
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "base_location" not in existing:
+                conn.execute("ALTER TABLE jobs ADD COLUMN base_location TEXT")
+                logger.info("[Storage] Migration: added base_location column to jobs")
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        if self._memory_conn is not None:
+            # Shared in-memory connection — no close, commit manually
+            try:
+                yield self._memory_conn
+                self._memory_conn.commit()
+            except Exception:
+                self._memory_conn.rollback()
+                raise
+        else:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
     # ------------------------------------------------------------------
     # Gestion des profils
@@ -185,23 +208,26 @@ class JobStorage:
         """Insère ou met à jour la table jobs (données brutes uniquement)."""
         conn.execute(
             """INSERT INTO jobs (
-                   id, title, company, url, source, location,
+                   id, title, company, url, source, location, base_location,
                    posted_date, description, first_seen, last_seen
                ) VALUES (
-                   :id, :title, :company, :url, :source, :location,
+                   :id, :title, :company, :url, :source, :location, :base_location,
                    :posted_date, :description, :now, :now
                )
-               ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen""",
+               ON CONFLICT(id) DO UPDATE SET
+                   last_seen     = excluded.last_seen,
+                   base_location = excluded.base_location""",
             {
-                "id":          job.id,
-                "title":       job.title,
-                "company":     getattr(job, "company", None),
-                "url":         getattr(job, "url", None),
-                "source":      getattr(job, "source", None),
-                "location":    getattr(job, "location", None),
-                "posted_date": str(getattr(job, "posted_date", "") or ""),
-                "description": getattr(job, "description", None),
-                "now":         now,
+                "id":            job.id,
+                "title":         job.title,
+                "company":       getattr(job, "company", None),
+                "url":           getattr(job, "url", None),
+                "source":        getattr(job, "source", None),
+                "location":      getattr(job, "location", None),
+                "base_location": getattr(job, "base_location", None),
+                "posted_date":   str(getattr(job, "posted_date", "") or ""),
+                "description":   getattr(job, "description", None),
+                "now":           now,
             },
         )
 

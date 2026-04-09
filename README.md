@@ -123,6 +123,18 @@ CRYPTO_WEB3_BOARDS = [
 
 ---
 
+## Running tests
+
+Live integration tests — each scraper makes real HTTP calls so structural changes to source sites are caught immediately.
+
+```bash
+python tests/run_all.py
+```
+
+Tests assert that every result has a non-empty `title`, `company`, `url`, `posted_date`, `base_location`, and a valid `work_mode`. Scrapers requiring an API key (`Wellfound`, `JobSpy`) are skipped gracefully when the env var is absent. Exit code is `0` if all scrapers pass or skip, `1` if any fail.
+
+---
+
 ## Project structure
 
 ```

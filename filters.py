@@ -13,7 +13,8 @@ class JobFilterEngine:
 
         for job in jobs:
             # Date filter: max 30 days (always applied, not configurable)
-            if job.posted_date and job.posted_date < cutoff:
+            # None means undated — exclude so stale jobs can't slip through
+            if not job.posted_date or job.posted_date < cutoff:
                 excluded_date += 1
                 continue
 

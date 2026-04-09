@@ -17,6 +17,7 @@ class JobPosting:
     salary: Optional[str] = None
     summary: Optional[str] = None
     work_mode: Optional[str] = None      # "remote" | "hybrid" | "on-site" | "unknown"
+    base_location: Optional[str] = None  # physical anchor country/city, e.g. "United States", "London, UK", "Worldwide"
     company_size: Optional[str] = None   # "startup" | "scaleup" | "sme" | "large" | "unknown"
     contract_type: Optional[str] = None  # "permanent" | "freelance" | "contract" | "internship" | "unknown"
     geo_zone: Optional[str] = None       # "europe" | "us_only" | "apac" | "latam" | "global_remote" | "unknown"
@@ -45,6 +46,7 @@ class JobPosting:
             "salary": self.salary,
             "summary": self.summary,
             "work_mode": self.work_mode,
+            "base_location": self.base_location or "Not found",
             "company_size": self.company_size,
             "contract_type": self.contract_type,
             "geo_zone": self.geo_zone,

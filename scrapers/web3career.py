@@ -77,16 +77,23 @@ class Web3CareerScraper(BaseScraper):
                     except ValueError:
                         pass
 
+                # Web3Career is a remote-first board.
+                # Location is a base anchor when present; "," means no location specified.
+                base_location = location if location and location != "," else None
+                display_location = location if location and location != "," else "Remote"
+
                 jobs.append(JobPosting(
                     source=self.SOURCE_NAME,
                     title=title,
                     company=company,
-                    location=location,
+                    location=display_location,
                     url=url,
                     posted_date=posted_date,
                     description=None,
                     tags=[],
                     salary=None,
+                    work_mode="remote",
+                    base_location=base_location,
                 ))
             except Exception as e:
                 print(f"[{self.SOURCE_NAME}] Parse error on row: {e}")

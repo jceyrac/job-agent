@@ -1,3 +1,4 @@
+from datetime import date
 import httpx
 
 from scrapers.base import BaseScraper
@@ -79,6 +80,7 @@ class DeFiJobsScraper(BaseScraper):
                         tags=[],
                         salary=None,
                         work_mode="remote",
+                        base_location=None,
                     ))
                 if jobs:
                     print(f"[{self.SOURCE_NAME}] Source: defi.jobs — {len(jobs)} jobs fetched")
@@ -120,17 +122,27 @@ class DeFiJobsScraper(BaseScraper):
                                 break
                         if "hybrid" in spans:
                             location = "Hybrid"
+                    # Date: <meta itemprop="datePosted" content="YYYY-MM-DD"> in parent tr.job-entry
+                    posted_date = None
+                    job_row = a.parent.parent  # a → td → tr.job-entry
+                    date_meta = job_row.select_one("meta[itemprop='datePosted']") if job_row else None
+                    if date_meta and date_meta.get("content"):
+                        try:
+                            posted_date = date.fromisoformat(date_meta["content"][:10])
+                        except ValueError:
+                            pass
                     jobs2.append(JobPosting(
                         source=self.SOURCE_NAME,
                         title=title,
                         company=company,
                         location=location,
                         url=href,
-                        posted_date=None,
+                        posted_date=posted_date,
                         description=None,
                         tags=[],
                         salary=None,
-                        work_mode=work_mode,
+                        work_mode="remote",
+                        base_location=None,
                     ))
                 if jobs2:
                     print(f"[{self.SOURCE_NAME}] Source: crypto.jobs (fallback) — {len(jobs2)} jobs fetched")

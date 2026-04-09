@@ -62,6 +62,9 @@ class TieTalentScraper(BaseScraper):
                 tags = [s["name"] for s in item.get("skills", [])]
                 work_mode = "remote" if remote_only else "unknown"
 
+                country = (locations[0].get("country") if locations else None) or None
+                base_location = country if country else ("Worldwide" if remote_only else None)
+
                 jobs.append(JobPosting(
                     source=self.SOURCE_NAME,
                     title=item.get("name", ""),
@@ -73,6 +76,7 @@ class TieTalentScraper(BaseScraper):
                     tags=tags,
                     salary=None,
                     work_mode=work_mode,
+                    base_location=base_location,
                 ))
             print(f"[{self.SOURCE_NAME}] {len(jobs)} jobs fetched")
             return jobs

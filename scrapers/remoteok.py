@@ -42,16 +42,24 @@ class RemoteOKScraper(BaseScraper):
                 if s_min or s_max:
                     salary = f"${s_min:,}–${s_max:,}"
 
+                raw_loc = item.get("location") or ""
+                # RemoteOK is a remote-first board — all jobs are remote-ok.
+                # Empty / "Remote" = truly global; a city/country = remote but anchored there.
+                location = raw_loc if raw_loc else "Remote"
+                base_location = raw_loc if raw_loc and raw_loc.lower() != "remote" else None
+
                 jobs.append(JobPosting(
                     source=self.SOURCE_NAME,
                     title=item.get("position", ""),
                     company=item.get("company", ""),
-                    location=item.get("location") or "Remote",
+                    location=location,
                     url=item.get("url", ""),
                     posted_date=posted_date,
                     description=description,
                     tags=item.get("tags", []),
                     salary=salary,
+                    work_mode="remote",
+                    base_location=base_location,
                 ))
             return jobs
         except Exception as e:
