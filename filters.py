@@ -1,11 +1,22 @@
+from datetime import date, timedelta
+
 from models import JobFilter, JobPosting
 
 
 class JobFilterEngine:
     @staticmethod
-    def apply(jobs: list[JobPosting], job_filter: JobFilter) -> list[JobPosting]:
+    def apply(jobs: list[JobPosting], job_filter: JobFilter) -> tuple[list[JobPosting], int, int]:
         results = []
+        excluded_date = 0
+        excluded_geo = 0
+        cutoff = date.today() - timedelta(days=30)
+
         for job in jobs:
+            # Date filter: max 30 days (always applied, not configurable)
+            if job.posted_date and job.posted_date < cutoff:
+                excluded_date += 1
+                continue
+
             searchable = " ".join([
                 job.title,
                 job.company,
@@ -55,10 +66,11 @@ class JobFilterEngine:
                 if job.contract_type not in job_filter.contract_types:
                     continue
 
-            # Date filter
-            if job_filter.date_from and job.posted_date:
-                if job.posted_date < job_filter.date_from:
+            # Geo zone filter
+            if job_filter.allowed_geo_zones and job.geo_zone:
+                if job.geo_zone not in job_filter.allowed_geo_zones:
+                    excluded_geo += 1
                     continue
 
             results.append(job)
-        return results
+        return results, excluded_date, excluded_geo

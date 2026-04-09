@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
@@ -18,13 +19,21 @@ class JobPosting:
     work_mode: Optional[str] = None      # "remote" | "hybrid" | "on-site" | "unknown"
     company_size: Optional[str] = None   # "startup" | "scaleup" | "sme" | "large" | "unknown"
     contract_type: Optional[str] = None  # "permanent" | "freelance" | "contract" | "internship" | "unknown"
+    geo_zone: Optional[str] = None       # "europe" | "us_only" | "apac" | "latam" | "global_remote" | "unknown"
 
     def __post_init__(self):
         if self.description and len(self.description) > 200:
             self.description = self.description[:200]
 
+    @property
+    def id(self) -> str:
+        """Deterministic ID derived from URL (or title+company+source as fallback)."""
+        key = self.url or f"{self.title}::{self.company}::{self.source}"
+        return hashlib.sha256(key.encode()).hexdigest()[:20]
+
     def to_json(self) -> dict:
         return {
+            "id": self.id,
             "source": self.source,
             "title": self.title,
             "company": self.company,
@@ -38,6 +47,7 @@ class JobPosting:
             "work_mode": self.work_mode,
             "company_size": self.company_size,
             "contract_type": self.contract_type,
+            "geo_zone": self.geo_zone,
         }
 
 
@@ -50,5 +60,6 @@ class JobFilter:
     date_from: Optional[date] = None
     remote_only: bool = False
     remote_or_hybrid: bool = False
-    company_sizes: list[str] = field(default_factory=list)   # OR filter, empty = no filter
-    contract_types: list[str] = field(default_factory=list)  # OR filter, empty = no filter
+    company_sizes: list[str] = field(default_factory=list)    # OR filter, empty = no filter
+    contract_types: list[str] = field(default_factory=list)   # OR filter, empty = no filter
+    allowed_geo_zones: list[str] = field(default_factory=list)  # OR filter, empty = no filter

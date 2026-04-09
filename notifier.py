@@ -47,22 +47,24 @@ def _build_html(jobs: list[dict], today: str) -> str:
         if not items:
             return ""
         cards = ""
-        wm_badge = {"remote": "🌍", "hybrid": "🏢", "on-site": "🏙️", "unknown": "❓"}
+        wm_badge = {"remote": "🌍 Remote", "hybrid": "🏢 Hybrid", "on-site": "🏙️ On-site", "unknown": "❓"}
+        geo_badge_map = {"europe": "🇪🇺 Europe", "global_remote": "🌍 Global Remote", "us_only": "🇺🇸 US Only", "apac": "🌏 APAC", "latam": "🌎 LATAM", "unknown": "❓ Zone inconnue"}
         size_badge_map = {"startup":"🚀","scaleup":"⚡","sme":"🏢","large":"🏦","unknown":""}
         contract_badge_map = {"permanent":"💼","freelance":"🔄","contract":"📋","internship":"🎓","unknown":""}
         for j in items:
             posted = j.get("posted_date") or ""
             wm = j.get("work_mode") or "unknown"
             badge = wm_badge.get(wm, "❓")
+            geo = geo_badge_map.get(j.get("geo_zone") or "unknown", "❓ Zone inconnue")
             sz = size_badge_map.get(j.get("company_size") or "unknown", "")
             ct = contract_badge_map.get(j.get("contract_type") or "unknown", "")
-            extra = " ".join(b for b in [sz, ct] if b)
+            extra = " · ".join(b for b in [geo, sz, ct] if b)
             summary = j.get("summary") or ""
             summary_html = f'<p style="color:#bbb;font-size:12px;margin:4px 0">{summary}</p>' if summary else ""
             cards += f"""
             <div style="border-left:3px solid {color};padding:8px 12px;margin:10px 0;background:#1a1a1a;border-radius:0 4px 4px 0">
               <b style="color:{color}">{_emoji(j['score'])} {j['title']} @ {j['company']}</b><br>
-              <span style="color:#aaa;font-size:12px">{j.get('location','Remote')} {badge} {extra} · {j.get('source','')} · {posted}</span><br>
+              <span style="color:#aaa;font-size:12px">{j.get('source','')} · {badge} · {extra} · 🗓 {posted}</span><br>
               <i style="color:#ccc;font-size:13px">{j.get('reason','')}</i>
               {summary_html}
               <a href="{j.get('url','#')}" style="color:{color};font-size:13px">→ Apply</a>
@@ -148,6 +150,14 @@ def export_joplin(jobs: list[dict]) -> None:
         "on-site":  "🏙️ On-site",
         "unknown":  "❓ Mode inconnu",
     }
+    GEO_BADGE = {
+        "europe":        "🇪🇺 Europe",
+        "global_remote": "🌍 Global Remote",
+        "us_only":       "🇺🇸 US Only",
+        "apac":          "🌏 APAC",
+        "latam":         "🌎 LATAM",
+        "unknown":       "❓ Zone inconnue",
+    }
     COMPANY_SIZE_BADGE = {
         "startup":  "🚀 Startup",
         "scaleup":  "⚡ Scale-up",
@@ -163,27 +173,22 @@ def export_joplin(jobs: list[dict]) -> None:
         "unknown":    "",
     }
 
-    def _fmt_location(loc: str) -> str:
-        loc_l = (loc or "").lower()
-        if "hybrid" in loc_l:
-            return loc
-        return "Remote"
-
     def md_section(title: str, items: list[dict]) -> str:
         if not items:
             return ""
         lines = [f"## {title}\n"]
         for j in items:
             posted = j.get("posted_date") or today_str
-            location = _fmt_location(j.get("location", ""))
             work_mode = j.get("work_mode") or "unknown"
-            badge = WORK_MODE_BADGE.get(work_mode, "❓ Mode inconnu")
+            wm_badge = WORK_MODE_BADGE.get(work_mode, "❓ Mode inconnu")
+            geo_zone = j.get("geo_zone") or "unknown"
+            geo_badge = GEO_BADGE.get(geo_zone, "❓ Zone inconnue")
             summary = j.get("summary") or ""
             company_size = j.get("company_size") or "unknown"
             contract_type = j.get("contract_type") or "unknown"
             size_badge = COMPANY_SIZE_BADGE.get(company_size, "")
             contract_badge = CONTRACT_BADGE.get(contract_type, "")
-            meta_badges = " · ".join(b for b in [badge, size_badge, contract_badge] if b)
+            meta_badges = " · ".join(b for b in [wm_badge, geo_badge, size_badge, contract_badge] if b)
             lines.append(f"### {j['title']} @ {j['company']}")
             lines.append(f"**Score {j['score']}/10** · {j.get('source','')} · {meta_badges} · 🗓 {posted}")
             lines.append(f"> *{j.get('reason','')}*")
