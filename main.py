@@ -70,13 +70,15 @@ def main():
     parser = argparse.ArgumentParser(description="job_agent — automated PM job search")
     parser.add_argument(
         "--profile",
-        default=DEFAULT_PROFILE_ID,
+        default=None,
         choices=list(ALL_PROFILES.keys()),
-        help=f"Search profile to run (default: {DEFAULT_PROFILE_ID})",
+        help=f"Search profile to run (default: active profile from DB or {DEFAULT_PROFILE_ID})",
     )
     args = parser.parse_args()
 
-    profile = ALL_PROFILES[args.profile]
+    _db = JobStorage("data/jobs.db")
+    _active = args.profile or _db.get_config("active_profile_id", default=DEFAULT_PROFILE_ID)
+    profile = ALL_PROFILES.get(_active, ALL_PROFILES[DEFAULT_PROFILE_ID])
     print(f"🔍 Profile: {profile.name} ({profile.id})")
 
     # ── Filter ────────────────────────────────────────────────────────────────

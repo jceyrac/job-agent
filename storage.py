@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS job_scores (
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen    ON jobs (last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_profile    ON job_scores (profile_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_status     ON job_scores (profile_id, status);
+
+-- Key-value config store (active_profile_id, etc.)
+CREATE TABLE IF NOT EXISTS config (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -371,6 +377,34 @@ class JobStorage:
             "solid":     solid,
             "by_status": by_status,
         }
+
+    # ------------------------------------------------------------------
+    # Config key-value store
+    # ------------------------------------------------------------------
+
+    def get_config(self, key: str, default=None) -> str | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else default
+
+    def set_config(self, key: str, value: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    # ------------------------------------------------------------------
+    # Profiles listing (for tracker UI)
+    # ------------------------------------------------------------------
+
+    def get_all_profiles(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, name, criteria FROM search_profiles"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def get_all_for_tracker(self, profile_id: str) -> list[dict]:
         """Tous les jobs scorés pour le tracker Streamlit."""
