@@ -23,8 +23,8 @@ class JobPosting:
     geo_zone: Optional[str] = None       # "europe" | "us_only" | "apac" | "latam" | "global_remote" | "unknown"
 
     def __post_init__(self):
-        if self.description and len(self.description) > 200:
-            self.description = self.description[:200]
+        if self.description and len(self.description) > 1000:
+            self.description = self.description[:1000]
 
     @property
     def id(self) -> str:

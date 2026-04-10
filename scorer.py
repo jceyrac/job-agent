@@ -56,13 +56,21 @@ Infer from title, description, or job type indicators:
 - "unknown"     : not specified
 
 ## Geographic zone
-Infer geo_zone from location field and description:
-- "europe"        : EU countries, UK, Germany, France, Spain, Portugal, Netherlands, Switzerland, Poland, Turkey, Russia, Ukraine, CET/CEST/EET timezone, "Europe", "EMEA" without US restriction, "UTC+0 to UTC+4", "+1", "+2", "+3", "+4"
-- "us_only"       : "United States", "US only", "must be authorized to work in the US", "US-based", EST/PST/CST/MST timezone, "UTC-5 to UTC-8", "Americas", "North America only"
-- "global_remote" : "anywhere", "worldwide", "no timezone restriction", "fully async", "global", location = "Remote" with no further geographic restriction
-- "apac"          : Asia, Pacific, Singapore, Australia, "UTC+5 to UTC+12"
-- "latam"         : Latin America, Brazil, Mexico, "UTC-3 to UTC-5" (excluding US)
-- "unknown"       : not enough information
+Infer geo_zone from the Base location field, then the Location field, then the description.
+Priority rule: if Base location names a specific country or city, use that country to set geo_zone — even if work arrangement is remote.
+
+- "europe"        : Base location or description mentions EU country, UK, Germany, France, Spain, Portugal, Netherlands, Switzerland, Poland, Turkey, CET/CEST/EET timezone, "Europe", "EMEA" without US restriction, UTC+0 to UTC+4
+- "us_only"       : Base location or description mentions US city/state, "United States", "US only", "must be authorized to work in the US", "US-based", EST/PST/CST/MST timezone, UTC-5 to UTC-8, "Americas", "North America only"
+- "apac"          : Base location or description mentions Asia, Singapore, Hong Kong, Japan, South Korea, Australia, "UTC+5 to UTC+12", APAC
+- "latam"         : Base location or description mentions Latin America, Brazil, Mexico, UTC-3 to UTC-5 (excluding US)
+- "global_remote" : ONLY when there is explicit positive evidence — description or title says "anywhere", "worldwide", "no timezone restriction", "fully async", "open to all locations", "global team" — AND there is no specific country requirement
+- "unknown"       : Location is "Remote" OR "Worldwide" with no base location and no geographic clues in description — USE THIS as the safe default when in doubt. Do NOT assign global_remote unless the evidence is explicit.
+
+IMPORTANT — company geography: if the company is well-known to operate primarily from a specific region, use that region even without explicit location info:
+- Binance, OKX, Bybit, Huobi, HashKey → apac
+- Coinbase, Kraken, Gemini, Ripple, Chainalysis, Anchorage → us_only (unless description says open to all / worldwide)
+- Aave, Consensys, Gnosis, Ethereum Foundation, MakerDAO, Uniswap Foundation → global_remote
+- Deutsche Bank, UBS, Société Générale, BNP Paribas → europe
 
 ## Geographic score adjustment (apply AFTER base score and work mode)
 - us_only       → subtract 3 from score (mention "US only" in reason)
@@ -233,10 +241,12 @@ def score_job(job: dict) -> dict | None:
     contract_type, geo_zone, scored_by ("groq" | "gemini").
     Returns None if all backends fail — caller should save_unscored and skip.
     """
+    base_loc = job.get("base_location") or ""
     prompt = (
         f"Title: {job.get('title', '')}\n"
         f"Company: {job.get('company', '')}\n"
         f"Location: {job.get('location', '')}\n"
+        f"Base location: {base_loc}\n"
         f"Description: {job.get('description', '')}"
     )
     messages = [

@@ -135,10 +135,11 @@ def main():
         for i, job in enumerate(new_jobs, 1):
             print(f"  Scoring {i}/{len(new_jobs)} — {job.title[:50]}")
             job_dict_for_scorer = {
-                "title":       job.title,
-                "company":     job.company,
-                "location":    job.location,
-                "description": job.description or "",
+                "title":         job.title,
+                "company":       job.company,
+                "location":      job.location,
+                "base_location": job.base_location or "",
+                "description":   job.description or "",
             }
             result = score_job(job_dict_for_scorer)
 
