@@ -1,3 +1,6 @@
+import json
+import re
+import time
 from datetime import date
 import httpx
 
@@ -40,6 +43,36 @@ def _is_pm_title(title: str) -> bool:
     return any(kw in t for kw in PM_TITLE_KEYWORDS)
 
 
+def _clean_text(text: str) -> str | None:
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[#*`>\[\]]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def _fetch_description(url: str) -> str | None:
+    """Fetch job description from a detail page via JSON-LD structured data."""
+    try:
+        from bs4 import BeautifulSoup
+        r = httpx.get(url, headers=HEADERS, timeout=12, follow_redirects=True)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        for sc in soup.find_all("script", type="application/ld+json"):
+            try:
+                d = json.loads(sc.string or "")
+                for node in (d.get("@graph", [d]) if isinstance(d, dict) else [d]):
+                    if isinstance(node, dict) and node.get("@type") == "JobPosting":
+                        desc = node.get("description", "")
+                        if desc:
+                            return _clean_text(desc)
+            except Exception:
+                pass
+        return None
+    except Exception:
+        return None
+
+
 class DeFiJobsScraper(BaseScraper):
     SOURCE_NAME = "DeFi Jobs"
     ENABLED = True
@@ -69,6 +102,8 @@ class DeFiJobsScraper(BaseScraper):
                     if not title or not _is_pm_title(title):
                         continue
                     url = f"https://defi.jobs{href}" if href.startswith("/") else href
+                    description = _fetch_description(url)
+                    time.sleep(0.3)
                     jobs.append(JobPosting(
                         source=self.SOURCE_NAME,
                         title=title,
@@ -76,7 +111,7 @@ class DeFiJobsScraper(BaseScraper):
                         location="Remote",
                         url=url,
                         posted_date=None,
-                        description=None,
+                        description=description,
                         tags=[],
                         salary=None,
                         work_mode="remote",
@@ -122,15 +157,16 @@ class DeFiJobsScraper(BaseScraper):
                                 break
                         if "hybrid" in spans:
                             location = "Hybrid"
-                    # Date: <meta itemprop="datePosted" content="YYYY-MM-DD"> in parent tr.job-entry
                     posted_date = None
-                    job_row = a.parent.parent  # a → td → tr.job-entry
+                    job_row = a.parent.parent
                     date_meta = job_row.select_one("meta[itemprop='datePosted']") if job_row else None
                     if date_meta and date_meta.get("content"):
                         try:
                             posted_date = date.fromisoformat(date_meta["content"][:10])
                         except ValueError:
                             pass
+                    description = _fetch_description(href)
+                    time.sleep(0.3)
                     jobs2.append(JobPosting(
                         source=self.SOURCE_NAME,
                         title=title,
@@ -138,7 +174,7 @@ class DeFiJobsScraper(BaseScraper):
                         location=location,
                         url=href,
                         posted_date=posted_date,
-                        description=None,
+                        description=description,
                         tags=[],
                         salary=None,
                         work_mode="remote",

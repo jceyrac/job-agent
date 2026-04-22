@@ -16,7 +16,7 @@ HEADERS = {
 class XingScraper(BaseScraper):
     SOURCE_NAME = "Xing"
     ENABLED = True
-    URL = "https://www.xing.com/jobs/search?keywords=product+manager+crypto&location=Remote"
+    URL = "https://www.xing.com/jobs/search?keywords=product+manager+OR+product+owner+OR+head+of+product&location=Schweiz"
 
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
         try:

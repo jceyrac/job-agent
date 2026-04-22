@@ -1,4 +1,6 @@
+import json
 import re
+import time
 import requests
 from datetime import date
 from bs4 import BeautifulSoup
@@ -12,6 +14,37 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
     "Referer": "https://google.com",
 }
+
+
+def _clean_text(text: str) -> str | None:
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[#*`>\[\]]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def _fetch_description(url: str) -> str | None:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        for sc in soup.find_all("script", type="application/ld+json"):
+            try:
+                d = json.loads(sc.string or "")
+                for node in (d.get("@graph", [d]) if isinstance(d, dict) else [d]):
+                    if isinstance(node, dict) and node.get("@type") == "JobPosting":
+                        desc = node.get("description", "")
+                        if desc:
+                            return _clean_text(desc)
+            except Exception:
+                pass
+        el = soup.select_one(".main-border-sides-job")
+        if el:
+            return _clean_text(el.get_text(separator=" ", strip=True))
+        return None
+    except Exception:
+        return None
 
 
 class Web3CareerScraper(BaseScraper):
@@ -48,7 +81,6 @@ class Web3CareerScraper(BaseScraper):
         jobs = []
         for row in rows:
             try:
-                # Title + relative URL
                 title_tag = row.find("h2")
                 if not title_tag:
                     continue
@@ -57,15 +89,12 @@ class Web3CareerScraper(BaseScraper):
                 href = link_tag["href"] if link_tag else ""
                 url = f"{BASE_URL}{href}" if href.startswith("/") else href
 
-                # Company — first <h3>
                 company_tag = row.find("h3")
                 company = company_tag.get_text(strip=True) if company_tag else ""
 
-                # Location — small grey <span>
                 loc_tag = row.find("span", style=lambda s: s and "d5d3d3" in s)
                 location = loc_tag.get_text(strip=True) if loc_tag else "Remote"
 
-                # Date
                 time_tag = row.find("time")
                 posted_date = None
                 if time_tag and time_tag.get("datetime"):
@@ -77,10 +106,11 @@ class Web3CareerScraper(BaseScraper):
                     except ValueError:
                         pass
 
-                # Web3Career is a remote-first board.
-                # Location is a base anchor when present; "," means no location specified.
                 base_location = location if location and location != "," else None
                 display_location = location if location and location != "," else "Remote"
+
+                description = _fetch_description(url) if url else None
+                time.sleep(0.3)
 
                 jobs.append(JobPosting(
                     source=self.SOURCE_NAME,
@@ -89,7 +119,7 @@ class Web3CareerScraper(BaseScraper):
                     location=display_location,
                     url=url,
                     posted_date=posted_date,
-                    description=None,
+                    description=description,
                     tags=[],
                     salary=None,
                     work_mode="remote",

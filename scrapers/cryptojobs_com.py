@@ -1,4 +1,5 @@
 import re
+import time
 from datetime import date, timedelta
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
@@ -25,6 +26,14 @@ def _parse_relative_date(text: str) -> date | None:
         return today - timedelta(days=int(m.group(1)) * 30)
     return None
 
+
+def _clean_text(text: str) -> str | None:
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[#*`>\[\]]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
 import httpx
 
 BASE_URL = "https://www.cryptojobs.com"
@@ -34,6 +43,21 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
     "Referer": "https://google.com",
 }
+
+
+def _fetch_description(url: str) -> str | None:
+    try:
+        from bs4 import BeautifulSoup
+        r = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        el = soup.select_one(".details-area")
+        if el:
+            return _clean_text(el.get_text(separator=" ", strip=True))
+        return None
+    except Exception:
+        return None
 
 
 class CryptoJobsComScraper(BaseScraper):
@@ -51,13 +75,11 @@ class CryptoJobsComScraper(BaseScraper):
 
             soup = BeautifulSoup(r.text, "html.parser")
             articles = soup.find_all("article")
-            # First article is the search/filter form — skip it
             job_articles = [a for a in articles if a.find("aside")]
 
             jobs = []
             for article in job_articles:
                 try:
-                    # Title + URL
                     title_tag = article.select_one("aside h2 a")
                     if not title_tag:
                         continue
@@ -65,11 +87,9 @@ class CryptoJobsComScraper(BaseScraper):
                     href = title_tag.get("href", "")
                     url = href if href.startswith("http") else f"{BASE_URL}{href}"
 
-                    # Company — bold text inside first info list item with link
                     company_tag = article.select_one("ul.info li a b")
                     company = company_tag.get_text(strip=True) if company_tag else ""
 
-                    # Location — li with map-marker icon
                     location = "Remote"
                     for li in article.select("ul.info li"):
                         if li.select_one("i.la-map-marker"):
@@ -77,7 +97,6 @@ class CryptoJobsComScraper(BaseScraper):
                             if loc_a:
                                 location = loc_a.get_text(strip=True)
 
-                    # Work mode — li with clock icon contains Onsite/Remote/Hybrid
                     work_mode = "unknown"
                     for li in article.select("ul.info li"):
                         if li.select_one("i.la-clock"):
@@ -89,17 +108,17 @@ class CryptoJobsComScraper(BaseScraper):
                             elif "onsite" in mode_text or "on-site" in mode_text:
                                 work_mode = "on-site"
 
-                    # Tags from "other" ul
                     tags = [a.get_text(strip=True) for a in article.select("ul.other li a")]
 
-                    # Date: <ul class="date"><li><strong>Posted:</strong><span> X ago </span></li>
                     posted_date = None
                     date_span = article.select_one("ul.date span")
                     if date_span:
                         posted_date = _parse_relative_date(date_span.get_text(strip=True))
 
-                    # location holds the country; expose it as base_location too
                     base_location = location if location and location != "Remote" else None
+
+                    description = _fetch_description(url)
+                    time.sleep(0.3)
 
                     jobs.append(JobPosting(
                         source=self.SOURCE_NAME,
@@ -108,7 +127,7 @@ class CryptoJobsComScraper(BaseScraper):
                         location=location,
                         url=url,
                         posted_date=posted_date,
-                        description=None,
+                        description=description,
                         tags=tags,
                         salary=None,
                         work_mode=work_mode,

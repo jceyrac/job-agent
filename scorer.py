@@ -2,7 +2,6 @@ import json
 import os
 import time
 
-import httpx
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -11,12 +10,12 @@ load_dotenv()
 api_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_APIKEY")
 client = Groq(api_key=api_key, max_retries=0)
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_MODEL}:generateContent"
-)
+FALLBACK_MODELS = [
+    "llama-3.3-70b-versatile",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "groq/compound",
+    "llama-3.1-8b-instant",
+]
 
 SYSTEM_PROMPT = """You are an expert recruiter scoring job postings for a Senior Product Manager with expertise in Web3, DeFi, AI, and Crypto.
 
@@ -98,118 +97,94 @@ Respond with JSON only:
 
 
 # ---------------------------------------------------------------------------
-# Groq
+# Per-run model exhaustion tracking
 # ---------------------------------------------------------------------------
 
-# Run-level flag: set to True when Groq's daily token quota is exhausted.
-# Avoids wasting 62+ seconds of retries on a non-recoverable daily limit.
-_groq_daily_limit_hit = False
+_exhausted_models: set[str] = set()
 
 
-def _is_groq_daily_limit(error_str: str) -> bool:
-    """True when the 429 is a tokens-per-day quota, not a per-minute rate limit."""
-    return "per day" in error_str or "tokens per day" in error_str or "TPD" in error_str
+def _is_quota_exhausted(error_str: str) -> bool:
+    """True when the 429/503 is a non-recoverable daily quota, not a per-minute rate limit."""
+    return any(x in error_str for x in ("per day", "tokens per day", "TPD"))
 
 
-def _call_groq_with_retry(messages: list, max_retries: int = 5) -> str:
+# ---------------------------------------------------------------------------
+# Single-model caller with RPM backoff
+# ---------------------------------------------------------------------------
+
+def _call_groq(messages: list, model: str, max_retries: int = 5) -> str:
     """
-    Returns raw LLM response text.
-    Raises immediately on daily quota exhaustion (TPD).
-    Retries with exponential backoff on per-minute rate limits (RPM).
+    Call one Groq model with exponential backoff on per-minute rate limits.
+    Raises immediately on daily quota exhaustion (marks model exhausted).
+    Raises after max_retries on persistent RPM limits (marks model exhausted).
+    Any other error (auth, network, bad request) is re-raised as-is.
     """
-    global _groq_daily_limit_hit
-
-    if _groq_daily_limit_hit:
-        raise Exception("Groq daily token limit épuisé pour ce run — Gemini only")
+    if model in _exhausted_models:
+        raise Exception(f"{model} already exhausted this run")
 
     had_429 = False
     for attempt in range(max_retries):
         try:
             result = client.chat.completions.create(
-                model=GROQ_MODEL,
+                model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=0.2,
                 max_tokens=300,
             )
             if had_429:
-                time.sleep(10)  # cooldown post-retry pour protéger le job suivant
+                time.sleep(10)  # cooldown after a successful retry
             return result.choices[0].message.content
         except Exception as e:
-            if "429" in str(e):
-                if _is_groq_daily_limit(str(e)):
-                    _groq_daily_limit_hit = True
-                    raise Exception(
-                        f"Groq daily token limit (TPD) épuisé — bascule sur Gemini"
-                    ) from e
-                # RPM — exponential backoff
+            err = str(e)
+            if "404" in err or ("400" in err and "decommissioned" in err):
+                # Model unavailable or decommissioned — fall through to next model
+                _exhausted_models.add(model)
+                raise Exception(f"{model} not available") from e
+            elif "429" in err or "503" in err:
+                if _is_quota_exhausted(err):
+                    _exhausted_models.add(model)
+                    raise Exception(f"{model} daily quota exhausted") from e
+                # Per-minute rate limit — backoff and retry same model
                 had_429 = True
                 wait = 2 ** (attempt + 1)
-                print(f"  ⚠️  Groq RPM 429 — attente {wait}s (tentative {attempt+1}/{max_retries})")
+                print(f"  ⚠️  Groq RPM 429 ({model}) — attente {wait}s "
+                      f"(tentative {attempt + 1}/{max_retries})")
                 time.sleep(wait)
             else:
-                raise
+                raise  # auth error, network error → propagate immediately
 
-    _groq_daily_limit_hit = True
-    raise Exception(f"Groq rate limit persistant après {max_retries} tentatives")
+    _exhausted_models.add(model)
+    raise Exception(f"{model} rate limit persistant après {max_retries} tentatives")
 
 
 # ---------------------------------------------------------------------------
-# Gemini fallback
+# Multi-model fallback chain
 # ---------------------------------------------------------------------------
 
-def _call_gemini(prompt: str, max_retries: int = 3) -> str | None:
+def _call_groq_fallback_chain(messages: list) -> tuple[str, str]:
     """
-    Calls Gemini Flash via REST (httpx, no extra SDK needed).
-    Retries with backoff on 429.
-    Returns raw JSON string on success, None if key absent or all retries fail.
+    Try each model in FALLBACK_MODELS order.
+    Falls through to the next model on quota/rate exhaustion.
+    Re-raises immediately on non-quota errors (auth, network, bad request).
+    Returns (raw_json_text, model_name) on success.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("  ⚠️  GEMINI_API_KEY non configurée — pas de fallback Gemini")
-        return None
-
-    payload = {
-        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.2,
-            "maxOutputTokens": 512,
-            # Disable thinking: gemini-2.5-flash is a thinking model — without this,
-            # thinking tokens consume the maxOutputTokens budget before any JSON is emitted.
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
-
-    for attempt in range(max_retries):
+    last_err: Exception | None = None
+    for model in FALLBACK_MODELS:
+        if model in _exhausted_models:
+            continue
         try:
-            r = httpx.post(GEMINI_URL, json=payload, headers=headers, timeout=30)
-            r.raise_for_status()
-            data = r.json()
-            candidate = data["candidates"][0]
-            finish = candidate.get("finishReason", "")
-            parts = candidate.get("content", {}).get("parts", [])
-            # Filter out thinking parts (thought=True); take last text part
-            text_parts = [p["text"] for p in parts if "text" in p and not p.get("thought", False)]
-            if not text_parts:
-                raise ValueError(f"Gemini returned no text parts (finishReason={finish})")
-            return text_parts[-1]
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                wait = 15 * (2 ** attempt)  # 15s, 30s, 60s
-                print(f"  ⚠️  Gemini 429 — attente {wait}s (tentative {attempt+1}/{max_retries})")
-                time.sleep(wait)
-            else:
-                print(f"  ⚠️  Gemini HTTP {e.response.status_code}: {e}")
-                return None
+            raw = _call_groq(messages, model)
+            return raw, model
         except Exception as e:
-            print(f"  ⚠️  Gemini erreur: {e}")
-            return None
+            err = str(e)
+            if any(x in err for x in ("exhausted", "rate limit persistant", "not available")):
+                print(f"  ⚠️  {model} unavailable/exhausted — essai modèle suivant")
+                last_err = e
+            else:
+                raise  # non-quota error: don't fall through
 
-    print(f"  ⚠️  Gemini rate limit persistant après {max_retries} tentatives")
-    return None
+    raise Exception("All Groq models exhausted for today. Retry tomorrow.") from last_err
 
 
 # ---------------------------------------------------------------------------
@@ -233,14 +208,31 @@ def _parse_result(raw: str) -> dict:
 # Public interface
 # ---------------------------------------------------------------------------
 
-def score_job(job: dict) -> dict | None:
+def score_job(job: dict, scoring_context=None) -> dict | None:
     """
-    Scores a job posting.
+    Scores a job posting using the Groq fallback chain.
+
+    Args:
+        job: dict with keys title, company, location, base_location, description.
+        scoring_context: profile-specific instructions — either a plain string or
+            a SearchProfile object (its .scoring_context attribute is used).
 
     Returns a dict with keys: score, reason, summary, work_mode, company_size,
-    contract_type, geo_zone, scored_by ("groq" | "gemini").
-    Returns None if all backends fail — caller should save_unscored and skip.
+    contract_type, geo_zone, scored_by (model name that succeeded).
+    Returns None only when all models are exhausted — caller should save_unscored.
+    Raises on non-quota errors (bad JSON, auth failure, etc.).
     """
+    if scoring_context is None:
+        scoring_context = ""
+    elif hasattr(scoring_context, "scoring_context"):
+        scoring_context = scoring_context.scoring_context
+
+    effective_system = (
+        f"## Profile Context\n{scoring_context.strip()}\n\n---\n\n{SYSTEM_PROMPT}"
+        if scoring_context
+        else SYSTEM_PROMPT
+    )
+
     base_loc = job.get("base_location") or ""
     prompt = (
         f"Title: {job.get('title', '')}\n"
@@ -250,31 +242,22 @@ def score_job(job: dict) -> dict | None:
         f"Description: {job.get('description', '')}"
     )
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": effective_system},
         {"role": "user",   "content": prompt},
     ]
 
-    # ── Groq first ────────────────────────────────────────────────────────
     try:
-        raw = _call_groq_with_retry(messages)
+        raw, model = _call_groq_fallback_chain(messages)
         result = _parse_result(raw)
-        result["scored_by"] = "groq"
+        result["scored_by"] = model
         return result
-    except Exception as groq_err:
-        print(f"  ⚠️  Groq failed: {groq_err} — essai Gemini Flash")
-
-    # ── Gemini fallback ───────────────────────────────────────────────────
-    raw = _call_gemini(prompt)
-    if raw is not None:
-        try:
-            result = _parse_result(raw)
-            result["scored_by"] = "gemini"
-            return result
-        except Exception as parse_err:
-            print(f"  ⚠️  Gemini parse error: {parse_err}")
-
-    print(f"  ❌  score_job failed for '{job.get('title', '')}' — job exclu du digest")
-    return None
+    except Exception as e:
+        msg = str(e)
+        if "All Groq models exhausted" in msg:
+            print(f"  ❌  {msg}")
+            return None
+        print(f"  ❌  score_job failed for '{job.get('title', '')}': {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +274,7 @@ if __name__ == "__main__":
 
     result = score_job(test_job)
     if result is None:
-        print("Scoring failed")
+        print("Scoring failed — all models exhausted")
     else:
         print(f"Model        : {result['scored_by']}")
         print(f"Score        : {result['score']}/10")

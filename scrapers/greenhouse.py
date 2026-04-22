@@ -180,6 +180,9 @@ class GreenhouseScraper(BaseScraper):
                         if raw_content:
                             description = BeautifulSoup(raw_content, "html.parser").get_text(" ", strip=True)[:300]
 
+                        if base_location == "United States":
+                            continue
+
                         jobs.append(JobPosting(
                             source=self.SOURCE_NAME,
                             title=item.get("title", ""),

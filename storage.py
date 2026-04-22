@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS search_profiles (
     criteria TEXT   -- JSON sérialisé (geo_zones, work_modes, etc.)
 );
 
--- Scoring par job × profil
+-- Scoring par job × profil (pure scoring — no pipeline state)
 CREATE TABLE IF NOT EXISTS job_scores (
     job_id        TEXT NOT NULL,
     profile_id    TEXT NOT NULL,
@@ -62,18 +62,31 @@ CREATE TABLE IF NOT EXISTS job_scores (
     geo_zone      TEXT,
     company_size  TEXT,
     contract_type TEXT,
-    scored_by     TEXT,   -- 'groq' | 'gemini' | 'mock'
+    scored_by     TEXT,
     scored_at     TEXT,
-    status        TEXT NOT NULL DEFAULT 'new',
-    notes         TEXT,
     PRIMARY KEY (job_id, profile_id),
     FOREIGN KEY (job_id)     REFERENCES jobs(id),
     FOREIGN KEY (profile_id) REFERENCES search_profiles(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_jobs_last_seen    ON jobs (last_seen DESC);
-CREATE INDEX IF NOT EXISTS idx_scores_profile    ON job_scores (profile_id, score DESC);
-CREATE INDEX IF NOT EXISTS idx_scores_status     ON job_scores (profile_id, status);
+-- Pipeline status — one row per job, profile-independent
+CREATE TABLE IF NOT EXISTS job_tracking (
+    job_id  TEXT PRIMARY KEY,
+    status  TEXT NOT NULL DEFAULT 'new',
+    notes   TEXT
+);
+
+-- Application content — one row per job, profile-independent
+CREATE TABLE IF NOT EXISTS job_applications (
+    job_id       TEXT PRIMARY KEY,
+    analysis     TEXT,
+    cover_letter TEXT,
+    created_at   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_last_seen  ON jobs (last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_scores_profile  ON job_scores (profile_id, score DESC);
+CREATE INDEX IF NOT EXISTS idx_tracking_status ON job_tracking (status);
 
 -- Key-value config store (active_profile_id, etc.)
 CREATE TABLE IF NOT EXISTS config (
@@ -237,6 +250,70 @@ class JobStorage:
             },
         )
 
+    def get_jobs_for_scoring(self, profile_id: str,
+                             pre_filter: dict | None = None,
+                             rescore: bool = False) -> list[dict]:
+        """
+        Returns jobs that need scoring for this profile.
+        Applies optional SQL pre-filter before returning.
+        Always excludes jobs with status='rejected'.
+        """
+        clauses = []
+        params: list = [profile_id]
+
+        if rescore:
+            base = ("SELECT j.* FROM jobs j"
+                    " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
+                    " LEFT JOIN job_tracking t ON j.id = t.job_id")
+            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived'))")
+        else:
+            base = ("SELECT j.* FROM jobs j"
+                    " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
+                    " LEFT JOIN job_tracking t ON j.id = t.job_id")
+            clauses.append("(s.job_id IS NULL OR s.score IS NULL)")
+            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived'))")
+
+        if pre_filter:
+            loc_kws = pre_filter.get("location_contains", [])
+            if loc_kws:
+                # Any keyword matching location OR base_location is sufficient; NULL base_location is ignored
+                or_parts = " OR ".join(
+                    "(LOWER(j.location) LIKE ? OR (j.base_location IS NOT NULL AND LOWER(j.base_location) LIKE ?))"
+                    for _ in loc_kws
+                )
+                clauses.append(f"({or_parts})")
+                for kw in loc_kws:
+                    params += [f"%{kw.lower()}%", f"%{kw.lower()}%"]
+
+            excl_loc = pre_filter.get("exclude_location_contains", [])
+            if excl_loc:
+                not_parts = " AND ".join(
+                    "(LOWER(j.location) NOT LIKE ? AND (j.base_location IS NULL OR LOWER(j.base_location) NOT LIKE ?))"
+                    for _ in excl_loc
+                )
+                clauses.append(f"({not_parts})")
+                for kw in excl_loc:
+                    params += [f"%{kw.lower()}%", f"%{kw.lower()}%"]
+
+            title_kws = pre_filter.get("title_contains", [])
+            if title_kws:
+                or_parts = " OR ".join("LOWER(j.title) LIKE ?" for _ in title_kws)
+                clauses.append(f"({or_parts})")
+                params += [f"%{kw.lower()}%" for kw in title_kws]
+
+            excl_title = pre_filter.get("exclude_title_contains", [])
+            if excl_title:
+                not_parts = " AND ".join("LOWER(j.title) NOT LIKE ?" for _ in excl_title)
+                clauses.append(f"({not_parts})")
+                params += [f"%{kw.lower()}%" for kw in excl_title]
+
+        where = " AND ".join(clauses)
+        query = f"{base} WHERE {where}"
+
+        with self._conn() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
     def save_scored(self, job, score_result: dict, profile_id: str) -> None:
         """
         Sauvegarde un job avec son score pour un profil donné.
@@ -249,13 +326,11 @@ class JobStorage:
                 """INSERT INTO job_scores (
                        job_id, profile_id,
                        score, reason, summary, work_mode, geo_zone,
-                       company_size, contract_type, scored_by, scored_at,
-                       status
+                       company_size, contract_type, scored_by, scored_at
                    ) VALUES (
                        :job_id, :profile_id,
                        :score, :reason, :summary, :work_mode, :geo_zone,
-                       :company_size, :contract_type, :scored_by, :scored_at,
-                       'new'
+                       :company_size, :contract_type, :scored_by, :scored_at
                    )
                    ON CONFLICT(job_id, profile_id) DO UPDATE SET
                        score         = excluded.score,
@@ -306,21 +381,23 @@ class JobStorage:
     # Tracker — mise à jour de statut
     # ------------------------------------------------------------------
 
-    VALID_STATUSES = {"new", "saved", "applied", "rejected", "archived"}
+    VALID_STATUSES = {"new", "queued", "ready", "applied", "rejected", "archived"}
 
-    def set_status(self, job_id: str, profile_id: str, status: str, notes: str = None) -> None:
+    def set_status(self, job_id: str, status: str, notes: str = None) -> None:
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Statut invalide : {status!r}. Valides : {self.VALID_STATUSES}")
         with self._conn() as conn:
             if notes is not None:
                 conn.execute(
-                    "UPDATE job_scores SET status = ?, notes = ? WHERE job_id = ? AND profile_id = ?",
-                    (status, notes, job_id, profile_id),
+                    """INSERT INTO job_tracking (job_id, status, notes) VALUES (?, ?, ?)
+                       ON CONFLICT(job_id) DO UPDATE SET status = excluded.status, notes = excluded.notes""",
+                    (job_id, status, notes),
                 )
             else:
                 conn.execute(
-                    "UPDATE job_scores SET status = ? WHERE job_id = ? AND profile_id = ?",
-                    (status, job_id, profile_id),
+                    """INSERT INTO job_tracking (job_id, status) VALUES (?, ?)
+                       ON CONFLICT(job_id) DO UPDATE SET status = excluded.status""",
+                    (job_id, status),
                 )
 
     # ------------------------------------------------------------------
@@ -328,22 +405,19 @@ class JobStorage:
     # ------------------------------------------------------------------
 
     def get_digest(self, profile_id: str, min_score: int = 5, status: str = "new") -> list[dict]:
-        """
-        Retourne les jobs scorés ≥ min_score pour ce profil, triés par score desc.
-        Jointure jobs + job_scores pour avoir toutes les données.
-        """
         with self._conn() as conn:
             query = """
                 SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
                        s.company_size, s.contract_type, s.scored_by, s.scored_at,
-                       s.status, s.notes
+                       COALESCE(t.status, 'new') AS status, t.notes
                 FROM jobs j
                 JOIN job_scores s ON j.id = s.job_id
+                LEFT JOIN job_tracking t ON j.id = t.job_id
                 WHERE s.profile_id = ? AND s.score >= ?
             """
             params: list = [profile_id, min_score]
             if status:
-                query += " AND s.status = ?"
+                query += " AND COALESCE(t.status, 'new') = ?"
                 params.append(status)
             query += " ORDER BY s.score DESC, j.last_seen DESC"
             rows = conn.execute(query, params).fetchall()
@@ -366,7 +440,10 @@ class JobStorage:
             ).fetchone()[0]
             by_status = dict(
                 conn.execute(
-                    "SELECT status, COUNT(*) FROM job_scores WHERE profile_id = ? GROUP BY status",
+                    """SELECT COALESCE(t.status, 'new'), COUNT(*)
+                       FROM job_scores s
+                       LEFT JOIN job_tracking t ON s.job_id = t.job_id
+                       WHERE s.profile_id = ? GROUP BY COALESCE(t.status, 'new')""",
                     (profile_id,),
                 ).fetchall()
             )
@@ -377,6 +454,46 @@ class JobStorage:
             "solid":     solid,
             "by_status": by_status,
         }
+
+    # ------------------------------------------------------------------
+    # Application content (job_applications table, profile-independent)
+    # ------------------------------------------------------------------
+
+    def get_application(self, job_id: str) -> Optional[dict]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT analysis, cover_letter FROM job_applications WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def save_application(self, job_id: str, analysis: str, cover_letter: str) -> None:
+        now = _now()
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO job_applications (job_id, analysis, cover_letter, created_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(job_id) DO UPDATE SET
+                       analysis = excluded.analysis,
+                       cover_letter = excluded.cover_letter""",
+                (job_id, analysis, cover_letter, now),
+            )
+            conn.execute(
+                """INSERT INTO job_tracking (job_id, status) VALUES (?, 'ready')
+                   ON CONFLICT(job_id) DO UPDATE SET status = 'ready'""",
+                (job_id,),
+            )
+
+    def get_queued_jobs(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT j.id, j.title, j.company, j.url, j.description
+                   FROM jobs j
+                   JOIN job_tracking t ON j.id = t.job_id
+                   WHERE t.status = 'queued'
+                   ORDER BY j.last_seen DESC""",
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Config key-value store
@@ -406,19 +523,62 @@ class JobStorage:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def delete_profile(self, profile_id: str) -> tuple[int, int]:
+        """Delete a profile and all its scores. Returns (scores_deleted, profile_deleted)."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM job_scores WHERE profile_id = ?", (profile_id,))
+            scores = conn.execute("SELECT changes()").fetchone()[0]
+            conn.execute("DELETE FROM search_profiles WHERE id = ?", (profile_id,))
+            profile = conn.execute("SELECT changes()").fetchone()[0]
+            conn.commit()
+        return scores, profile
+
+    def get_all_jobs_best_score(self) -> list[dict]:
+        """All scored jobs, each shown once at its highest score across profiles.
+        Status and notes come from job_tracking (profile-independent).
+        """
+        with self._conn() as conn:
+            rows = conn.execute("""
+                SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
+                       s.company_size, s.contract_type, s.scored_by,
+                       COALESCE(t.status, 'new') AS status, t.notes,
+                       s.profile_id as best_profile_id
+                FROM jobs j
+                JOIN job_scores s ON j.id = s.job_id
+                LEFT JOIN job_tracking t ON j.id = t.job_id
+                WHERE s.score IS NOT NULL
+                  AND s.rowid = (
+                    SELECT s2.rowid FROM job_scores s2
+                    WHERE s2.job_id = j.id AND s2.score IS NOT NULL
+                    ORDER BY s2.score DESC, s2.profile_id ASC
+                    LIMIT 1
+                  )
+                ORDER BY s.score DESC, j.last_seen DESC
+            """).fetchall()
+            return [dict(r) for r in rows]
+
     def get_all_for_tracker(self, profile_id: str) -> list[dict]:
-        """Tous les jobs scorés pour le tracker Streamlit."""
+        """All jobs for the Streamlit tracker — scored and unscored.
+        Status and notes come from job_tracking (profile-independent).
+        """
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
-                          s.company_size, s.contract_type, s.scored_by, s.status, s.notes
+                          s.company_size, s.contract_type, s.scored_by,
+                          COALESCE(t.status, 'new') AS status, t.notes
                    FROM jobs j
-                   JOIN job_scores s ON j.id = s.job_id
-                   WHERE s.profile_id = ? AND s.score IS NOT NULL
-                   ORDER BY s.score DESC, j.last_seen DESC""",
+                   LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+                   LEFT JOIN job_tracking t ON j.id = t.job_id
+                   ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC""",
                 (profile_id,),
             ).fetchall()
-            return [dict(r) for r in rows]
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("score") is None:
+                    d["status"] = "unscored"
+                result.append(d)
+            return result
 
 
 # ---------------------------------------------------------------------------

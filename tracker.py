@@ -6,6 +6,7 @@ Run:
 
 import json
 import os
+from datetime import date, timedelta
 
 import streamlit as st
 
@@ -19,7 +20,7 @@ st.set_page_config(page_title="Job Tracker", layout="wide", page_icon="💼")
 
 # ─── DB check ─────────────────────────────────────────────────────────────────
 if not os.path.exists(DB_PATH):
-    st.warning("No data yet. Run main.py first.")
+    st.warning("No data yet. Run scrape.py first.")
     st.stop()
 
 db = JobStorage(DB_PATH)
@@ -33,41 +34,60 @@ if "profile_id" not in st.session_state:
     _initial = _active_id if _active_id in profile_map else (profile_ids[0] if profile_ids else DEFAULT_PROFILE_ID)
     st.session_state.profile_id = _initial
 
-# Reset source filter when profile changes
+# Reset per-profile filters when profile changes
 _cur_pid = st.session_state.get("profile_id")
 if st.session_state.get("_prev_profile_id") != _cur_pid:
     st.session_state.pop("source_filter", None)
+    st.session_state.pop("geo_zone_filter", None)
+    st.session_state.pop("location_filter", None)
+    st.session_state.pop("work_mode_filter", None)
+    st.session_state.pop("company_size_filter", None)
     st.session_state["_prev_profile_id"] = _cur_pid
 
-# ─── Sidebar: profile selectbox (first so active_profile_id is known) ─────────
+# ─── Sidebar: profile selectbox ───────────────────────────────────────────────
 with st.sidebar:
     st.header("Filters")
     if profile_ids:
         st.selectbox(
             "Profile",
-            options=profile_ids,
-            format_func=lambda pid: profile_map.get(pid, {}).get("name", pid),
+            options=[None] + profile_ids,
+            format_func=lambda pid: "— All profiles —" if pid is None else profile_map.get(pid, {}).get("name", pid),
             key="profile_id",
         )
     else:
-        st.info("No profiles in DB. Run main.py first.")
+        st.info("No profiles in DB. Run scrape.py first.")
 
-active_profile_id = st.session_state.get("profile_id") or (
-    profile_ids[0] if profile_ids else DEFAULT_PROFILE_ID
-)
+active_profile_id = st.session_state.get("profile_id")  # None = all profiles
 
-# Load all scored jobs for this profile (needed for dynamic source list)
-jobs_raw = db.get_all_for_tracker(active_profile_id)
+# Load jobs for current view
+if active_profile_id is None:
+    jobs_raw = db.get_all_jobs_best_score()
+else:
+    jobs_raw = db.get_all_for_tracker(active_profile_id)
 all_sources = sorted({j["source"] for j in jobs_raw if j.get("source")})
+all_geo_zones = sorted({j.get("geo_zone") or "unknown" for j in jobs_raw})
+all_locations = sorted({j["location"] for j in jobs_raw if j.get("location")})
 
 # ─── Sidebar: remaining filters ────────────────────────────────────────────────
 with st.sidebar:
     min_score = st.slider("Min score", 1, 10, value=5, key="min_score")
     status_filter = st.multiselect(
         "Status",
-        ["new", "saved", "applied", "rejected", "archived"],
+        ["new", "queued", "ready", "applied", "rejected", "archived", "unscored"],
         default=["new"],
         key="status_filter",
+    )
+    st.selectbox(
+        "Posted within",
+        ["Any", "1 day", "3 days", "1 week", "2 weeks", "3 weeks", "1 month"],
+        key="date_filter",
+    )
+    st.multiselect(
+        "Location",
+        options=all_locations,
+        default=[],
+        key="location_filter",
+        placeholder="All locations",
     )
     work_mode_filter = st.multiselect(
         "Work mode",
@@ -76,9 +96,9 @@ with st.sidebar:
         key="work_mode_filter",
     )
     geo_zone_filter = st.multiselect(
-        "Geo zone",
-        ["europe", "global_remote", "us_only", "unknown"],
-        default=["europe", "global_remote", "us_only", "unknown"],
+        "Geo zone (classifier)",
+        all_geo_zones,
+        default=all_geo_zones,
         key="geo_zone_filter",
     )
     company_size_filter = st.multiselect(
@@ -95,10 +115,32 @@ with st.sidebar:
     )
 
 # ─── Apply filters (Python-side, no SQL round-trip) ───────────────────────────
+_DATE_FILTER_DAYS = {
+    "1 day": 1, "3 days": 3, "1 week": 7,
+    "2 weeks": 14, "3 weeks": 21, "1 month": 30,
+}
+
+
 def apply_filters(jobs: list[dict]) -> list[dict]:
-    result = [j for j in jobs if (j.get("score") or 0) >= st.session_state.min_score]
-    if st.session_state.status_filter:
-        result = [j for j in result if j.get("status") in st.session_state.status_filter]
+    result = [j for j in jobs if
+              j.get("status") == "unscored" or (j.get("score") or 0) >= st.session_state.min_score]
+    date_filter = st.session_state.get("date_filter", "Any")
+    if date_filter and date_filter != "Any":
+        max_days = _DATE_FILTER_DAYS.get(date_filter)
+        if max_days:
+            cutoff = date.today() - timedelta(days=max_days)
+            filtered = []
+            for j in result:
+                raw = j.get("posted_date") or ""
+                try:
+                    if date.fromisoformat(str(raw)[:10]) >= cutoff:
+                        filtered.append(j)
+                except (ValueError, TypeError):
+                    pass
+            result = filtered
+    location_filter = st.session_state.get("location_filter") or []
+    if location_filter:
+        result = [j for j in result if j.get("location") in location_filter]
     if st.session_state.work_mode_filter:
         result = [j for j in result if (j.get("work_mode") or "unknown") in st.session_state.work_mode_filter]
     if st.session_state.geo_zone_filter:
@@ -107,13 +149,17 @@ def apply_filters(jobs: list[dict]) -> list[dict]:
         result = [j for j in result if (j.get("company_size") or "unknown") in st.session_state.company_size_filter]
     if st.session_state.get("source_filter"):
         result = [j for j in result if j.get("source") in st.session_state.source_filter]
+    if st.session_state.status_filter:
+        result = [j for j in result if j.get("status") in st.session_state.status_filter]
     return result
 
 
 jobs = apply_filters(jobs_raw)
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
-def score_badge(score: int) -> str:
+def score_badge(score) -> str:
+    if score is None:
+        return "❓ —/10"
     if score >= 9:
         return f"🔥 {score}/10"
     elif score >= 7:
@@ -121,7 +167,7 @@ def score_badge(score: int) -> str:
     return f"👀 {score}/10"
 
 
-def render_job_card(job: dict, profile_id: str) -> None:
+def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) -> None:
     job_id = job["id"]
     status = job.get("status", "new")
     score = job.get("score") or 0
@@ -148,17 +194,25 @@ def render_job_card(job: dict, profile_id: str) -> None:
 
         with col_meta:
             st.caption(job.get("source") or "")
+            posted = (job.get("posted_date") or "")[:10]
+            if posted:
+                st.caption(f"📅 {posted}")
+            if show_profile_tag and job.get("best_profile_id"):
+                st.caption(f"🏷 {job['best_profile_id']}")
             st.caption(f"Status: **{status}**")
+            st.caption(f"ID: `{job_id}`")
 
-        # Action buttons — Open always shown, status buttons skip current status
+        # Action buttons
         btn_defs = []
         if url:
             btn_defs.append(("🔗 Open", "link", url))
+        # Queue button — shown when status is new (not yet in pipeline)
+        if status == "new":
+            btn_defs.append(("🚀 Queue", "action", "queued"))
         for label, new_status in [
-            ("💾 Save", "saved"),
             ("✅ Applied", "applied"),
-            ("❌ Reject", "rejected"),
-            ("🗃 Archive", "archived"),
+            ("❌ Rejected", "rejected"),
+            ("🚫 Not relevant", "archived"),
         ]:
             if status != new_status:
                 btn_defs.append((label, "action", new_status))
@@ -171,7 +225,7 @@ def render_job_card(job: dict, profile_id: str) -> None:
                 else:
                     if btn_cols[i].button(label, key=f"btn_{value}_{job_id}"):
                         try:
-                            db.set_status(job_id, profile_id, value)
+                            db.set_status(job_id, value)
                             st.rerun()
                         except Exception as e:
                             st.error(str(e))
@@ -188,10 +242,28 @@ def render_job_card(job: dict, profile_id: str) -> None:
             )
             if st.button("Save notes", key=f"notes_save_{job_id}"):
                 try:
-                    db.set_status(job_id, profile_id, status, notes=notes_val)
+                    db.set_status(job_id, status, notes=notes_val)
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
+
+        # Application content — shown for jobs with status 'ready'
+        with st.expander("📋 Application"):
+            if status == "ready":
+                app = db.get_application(job_id)
+                if app:
+                    analysis = (app.get("analysis") or "").strip()
+                    cover_letter = (app.get("cover_letter") or "").strip()
+                    if analysis:
+                        st.markdown("**Analysis**")
+                        st.markdown(analysis)
+                    if cover_letter:
+                        st.markdown("**Cover Letter**")
+                        st.markdown(cover_letter)
+                else:
+                    st.info("No application content saved yet.")
+            else:
+                st.info("No application prepared yet.")
 
 
 # ─── Tabs ──────────────────────────────────────────────────────────────────────
@@ -199,37 +271,47 @@ tab_jobs, tab_settings = st.tabs(["💼 Jobs", "⚙️ Settings"])
 
 # ══ Tab 1: Jobs ════════════════════════════════════════════════════════════════
 with tab_jobs:
-    # Stats bar — score tiers from filtered list, status counts from full profile list
-    hot_count = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
-    solid_count = sum(1 for j in jobs if 7 <= (j.get("score") or 0) <= 8)
-    maybe_count = sum(1 for j in jobs if 5 <= (j.get("score") or 0) <= 6)
     by_status: dict[str, int] = {}
     for j in jobs_raw:
-        s = j.get("status", "new")
+        s = j.get("status") or "new"
         by_status[s] = by_status.get(s, 0) + 1
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total (filtered)", len(jobs))
-    col2.metric("🔥 Hot (9-10)", hot_count)
-    col3.metric("⭐ Solid (7-8)", solid_count)
-    col4.metric("👀 Maybe (5-6)", maybe_count)
+    # Section 1 — Score distribution (specific profile only)
+    if active_profile_id is not None:
+        hot_count = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
+        solid_count = sum(1 for j in jobs if 7 <= (j.get("score") or 0) <= 8)
+        maybe_count = sum(1 for j in jobs if 5 <= (j.get("score") or 0) <= 6)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total (filtered)", len(jobs))
+        col2.metric("🔥 Hot (9-10)", hot_count)
+        col3.metric("⭐ Solid (7-8)", solid_count)
+        col4.metric("👀 Maybe (5-6)", maybe_count)
+    else:
+        st.metric("Total (filtered)", len(jobs))
 
-    s1, s2, s3, s4, s5 = st.columns(5)
+    # Section 2 — Status counts (always shown)
+    s1, s2, s3, s4, s5, s6, s7 = st.columns(7)
     s1.metric("New", by_status.get("new", 0))
-    s2.metric("Saved", by_status.get("saved", 0))
-    s3.metric("Applied", by_status.get("applied", 0))
-    s4.metric("Rejected", by_status.get("rejected", 0))
-    s5.metric("Archived", by_status.get("archived", 0))
+    s2.metric("Queued", by_status.get("queued", 0))
+    s3.metric("Ready", by_status.get("ready", 0))
+    s4.metric("Applied", by_status.get("applied", 0))
+    s5.metric("Rejected", by_status.get("rejected", 0))
+    s6.metric("Archived", by_status.get("archived", 0))
+    s7.metric("❓ Unscored", by_status.get("unscored", 0))
 
     st.divider()
 
     if not jobs:
         st.info("No jobs found for this profile and filters.")
     else:
-        profile_name = profile_map.get(active_profile_id, {}).get("name", active_profile_id)
-        st.caption(f"Showing **{len(jobs)}** jobs — profile: **{profile_name}**")
+        if active_profile_id is None:
+            st.caption(f"Showing **{len(jobs)}** jobs — all profiles (best score per job)")
+        else:
+            profile_name = profile_map.get(active_profile_id, {}).get("name", active_profile_id)
+            st.caption(f"Showing **{len(jobs)}** jobs — profile: **{profile_name}**")
         for job in jobs:
-            render_job_card(job, active_profile_id)
+            card_profile_id = active_profile_id or job.get("best_profile_id") or (profile_ids[0] if profile_ids else "")
+            render_job_card(job, card_profile_id, show_profile_tag=active_profile_id is None)
 
 
 # ══ Tab 2: Settings ════════════════════════════════════════════════════════════

@@ -18,66 +18,73 @@ HEADERS = {
 class TieTalentScraper(BaseScraper):
     SOURCE_NAME = "TieTalent"
     ENABLED = True
-    URL = f"{BASE_URL}/en/jobs?q=product+manager&location=Switzerland"
+    SEARCH_TERMS = ["product+manager", "product+owner", "head+of+product", "product+lead"]
 
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
         try:
             from bs4 import BeautifulSoup
-            r = httpx.get(self.URL, headers=HEADERS, timeout=15, follow_redirects=True)
-            if r.status_code != 200:
-                print(f"[{self.SOURCE_NAME}] ⚠️ HTTP {r.status_code}")
-                return []
-
-            soup = BeautifulSoup(r.text, "html.parser")
-            script = soup.find("script", id="__NEXT_DATA__")
-            if not script:
-                print(f"[{self.SOURCE_NAME}] ⚠️ __NEXT_DATA__ not found")
-                return []
-
-            data = json.loads(script.string)
-            raw_jobs = data["props"]["pageProps"].get("liveJobs", [])
-
+            seen_ids: set = set()
             jobs = []
-            for item in raw_jobs:
-                locations = item.get("locations", [])
-                remote_only = item.get("remoteOnly", False)
-                if remote_only:
-                    location = "Remote"
-                else:
-                    location = locations[0]["name"] if locations else "Switzerland"
+            for term in self.SEARCH_TERMS:
+                url = f"{BASE_URL}/en/jobs?q={term}&location=Switzerland"
+                r = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
+                if r.status_code != 200:
+                    print(f"[{self.SOURCE_NAME}] ⚠️ HTTP {r.status_code} for term={term}")
+                    continue
 
-                posted_date = None
-                raw_date = item.get("publishedAt", "")
-                if raw_date:
-                    try:
-                        posted_date = datetime.fromisoformat(raw_date[:10]).date()
-                    except ValueError:
-                        pass
+                soup = BeautifulSoup(r.text, "html.parser")
+                script = soup.find("script", id="__NEXT_DATA__")
+                if not script:
+                    print(f"[{self.SOURCE_NAME}] ⚠️ __NEXT_DATA__ not found for term={term}")
+                    continue
 
-                description = item.get("description") or ""
-                if description:
-                    description = re.sub(r"<[^>]+>", " ", description)
-                    description = re.sub(r"\s+", " ", description).strip()
+                data = json.loads(script.string)
+                raw_jobs = data["props"]["pageProps"].get("liveJobs", [])
 
-                tags = [s["name"] for s in item.get("skills", [])]
-                work_mode = "remote" if remote_only else "unknown"
+                for item in raw_jobs:
+                    if item.get("id") in seen_ids:
+                        continue
+                    seen_ids.add(item.get("id"))
 
-                country = (locations[0].get("country") if locations else None) or None
-                base_location = country if country else ("Worldwide" if remote_only else None)
+                    locations = item.get("locations", [])
+                    remote_only = item.get("remoteOnly", False)
+                    if remote_only:
+                        location = "Remote"
+                    else:
+                        location = locations[0]["name"] if locations else "Switzerland"
 
-                jobs.append(JobPosting(
-                    source=self.SOURCE_NAME,
-                    title=item.get("name", ""),
-                    company=item.get("companyName", ""),
-                    location=location,
-                    url=f"{BASE_URL}/en/jobs/{item['id']}",
-                    posted_date=posted_date,
-                    description=description or None,
-                    tags=tags,
-                    salary=None,
-                    work_mode=work_mode,
-                    base_location=base_location,
-                ))
+                    posted_date = None
+                    raw_date = item.get("publishedAt", "")
+                    if raw_date:
+                        try:
+                            posted_date = datetime.fromisoformat(raw_date[:10]).date()
+                        except ValueError:
+                            pass
+
+                    description = item.get("description") or ""
+                    if description:
+                        description = re.sub(r"<[^>]+>", " ", description)
+                        description = re.sub(r"\s+", " ", description).strip()
+
+                    tags = [s["name"] for s in item.get("skills", [])]
+                    work_mode = "remote" if remote_only else "unknown"
+
+                    country = (locations[0].get("country") if locations else None) or None
+                    base_location = country if country else ("Worldwide" if remote_only else None)
+
+                    jobs.append(JobPosting(
+                        source=self.SOURCE_NAME,
+                        title=item.get("name", ""),
+                        company=item.get("companyName", ""),
+                        location=location,
+                        url=f"{BASE_URL}/en/jobs/{item['id']}",
+                        posted_date=posted_date,
+                        description=description or None,
+                        tags=tags,
+                        salary=None,
+                        work_mode=work_mode,
+                        base_location=base_location,
+                    ))
             print(f"[{self.SOURCE_NAME}] {len(jobs)} jobs fetched")
             return jobs
         except Exception as e:

@@ -6,17 +6,25 @@ from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
 
 SEARCH_TERMS_LINKEDIN = [
-    "product manager crypto",
-    "product manager blockchain",
-    "product manager DeFi",
-    "product manager web3",
+    "product manager",
+    "product owner",
+    "head of product",
+    "product lead",
 ]
 
 SEARCH_TERMS_INDEED = [
-    "product manager crypto remote",
-    "product manager blockchain remote",
-    "product manager web3 remote",
-    "product manager AI fintech remote",
+    "product manager",
+    "product owner",
+    "head of product",
+    "product lead",
+]
+
+# Always queried against Switzerland directly — not subject to the worldwide-first skip
+SEARCH_TERMS_INDEED_CH = [
+    "product manager",
+    "product owner",
+    "head of product",
+    "product lead",
 ]
 
 INDEED_COUNTRIES = [
@@ -54,7 +62,8 @@ class JobSpyScraper(BaseScraper):
                 df = scrape_jobs(
                     site_name=["linkedin"],
                     search_term=term,
-                    results_wanted=20,
+                    location="Europe",
+                    results_wanted=20,  # keep conservative — LinkedIn rate-limits aggressively
                     hours_old=120,
                     linkedin_fetch_description=True,
                     verbose=0,
@@ -74,7 +83,7 @@ class JobSpyScraper(BaseScraper):
                 df = scrape_jobs(
                     site_name=["indeed"],
                     search_term=term,
-                    results_wanted=20,
+                    results_wanted=30,
                     hours_old=120,
                     country_indeed="worldwide",
                     verbose=0,
@@ -96,7 +105,7 @@ class JobSpyScraper(BaseScraper):
                     df = scrape_jobs(
                         site_name=["indeed"],
                         search_term=term,
-                        results_wanted=20,
+                        results_wanted=30,
                         hours_old=120,
                         country_indeed=country,
                         verbose=0,
@@ -109,6 +118,25 @@ class JobSpyScraper(BaseScraper):
                 except Exception as e:
                     print(f"  ⚠️ Indeed '{term}' [{country}]: {e}")
                 time.sleep(2)
+
+        # Switzerland — always queried directly, bypasses worldwide-first logic
+        for term in SEARCH_TERMS_INDEED_CH:
+            try:
+                df = scrape_jobs(
+                    site_name=["indeed"],
+                    search_term=term,
+                    results_wanted=50,
+                    hours_old=120,
+                    country_indeed="switzerland",
+                    verbose=0,
+                )
+                new, skipped = self._add_unique(df, "Indeed", seen_urls, all_jobs)
+                indeed_total += new
+                dupes += skipped
+                print(f"  [Indeed]   '{term}' [switzerland]: {new} new, {skipped} dupes")
+            except Exception as e:
+                print(f"  ⚠️ Indeed '{term}' [switzerland]: {e}")
+            time.sleep(2)
 
         elapsed = time.time() - start
         print(
