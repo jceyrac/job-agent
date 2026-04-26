@@ -1,6 +1,7 @@
 import importlib
 import os
 import pkgutil
+import re
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -43,6 +44,39 @@ def deduplicate(jobs: list[JobPosting]) -> list[JobPosting]:
     return unique
 
 
+def _normalize_key(title: str, company: str) -> str:
+    if not title or not company:
+        return ""
+    combined = f"{title.lower()} {company.lower()}"
+    cleaned = re.sub(r"[^a-z0-9 ]", "", combined)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def dedupe_cross_source(jobs: list[JobPosting]) -> list[JobPosting]:
+    groups: dict[str, list[JobPosting]] = {}
+    no_key: list[JobPosting] = []
+    for job in jobs:
+        key = _normalize_key(job.title, job.company)
+        if not key:
+            no_key.append(job)
+        else:
+            groups.setdefault(key, []).append(job)
+
+    deduped: list[JobPosting] = list(no_key)
+    for group in groups.values():
+        if len(group) == 1:
+            deduped.append(group[0])
+        else:
+            def _sort_key(j: JobPosting):
+                desc_len = len(j.description or "")
+                # None posted_date loses to any real date
+                date_val = j.posted_date.toordinal() if j.posted_date else 0
+                return (desc_len, date_val)
+            deduped.append(max(group, key=_sort_key))
+
+    return deduped
+
+
 def main():
     # Universal PM/PO filter — no profile dependency.
     # remote_or_hybrid=False so on-site CH jobs are kept; web3_remote's
@@ -73,6 +107,9 @@ def main():
         all_jobs.extend(filtered)
 
     all_jobs = deduplicate(all_jobs)
+    before_cross = len(all_jobs)
+    all_jobs = dedupe_cross_source(all_jobs)
+    print(f"Cross-source dedup: {before_cross} → {len(all_jobs)} unique")
     print(f"\nTotal unique jobs after dedup: {len(all_jobs)}")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
