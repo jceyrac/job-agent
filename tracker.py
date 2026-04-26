@@ -29,10 +29,8 @@ profile_ids = [p["id"] for p in profiles]
 profile_map = {p["id"]: p for p in profiles}
 
 # ─── Session state init ────────────────────────────────────────────────────────
-_active_id = db.get_config("active_profile_id", default=DEFAULT_PROFILE_ID)
 if "profile_id" not in st.session_state:
-    _initial = _active_id if _active_id in profile_map else (profile_ids[0] if profile_ids else DEFAULT_PROFILE_ID)
-    st.session_state.profile_id = _initial
+    st.session_state.profile_id = None  # default to "All profiles"
 
 # Reset per-profile filters when profile changes
 _cur_pid = st.session_state.get("profile_id")
@@ -70,7 +68,7 @@ all_locations = sorted({j["location"] for j in jobs_raw if j.get("location")})
 
 # ─── Sidebar: remaining filters ────────────────────────────────────────────────
 with st.sidebar:
-    min_score = st.slider("Min score", 1, 10, value=5, key="min_score")
+    min_score = st.slider("Min score", 0, 10, value=0, key="min_score")
     status_filter = st.multiselect(
         "Status",
         ["new", "queued", "ready", "applied", "rejected", "archived", "unscored"],
@@ -81,6 +79,11 @@ with st.sidebar:
         "Posted within",
         ["Any", "1 day", "3 days", "1 week", "2 weeks", "3 weeks", "1 month"],
         key="date_filter",
+    )
+    st.selectbox(
+        "Scraped within",
+        ["Any", "1 day", "3 days", "1 week", "2 weeks"],
+        key="scraped_filter",
     )
     st.multiselect(
         "Location",
@@ -132,6 +135,20 @@ def apply_filters(jobs: list[dict]) -> list[dict]:
             filtered = []
             for j in result:
                 raw = j.get("posted_date") or ""
+                try:
+                    if date.fromisoformat(str(raw)[:10]) >= cutoff:
+                        filtered.append(j)
+                except (ValueError, TypeError):
+                    pass
+            result = filtered
+    scraped_filter = st.session_state.get("scraped_filter", "Any")
+    if scraped_filter and scraped_filter != "Any":
+        max_days = _DATE_FILTER_DAYS.get(scraped_filter)
+        if max_days:
+            cutoff = date.today() - timedelta(days=max_days)
+            filtered = []
+            for j in result:
+                raw = j.get("last_seen") or ""
                 try:
                     if date.fromisoformat(str(raw)[:10]) >= cutoff:
                         filtered.append(j)
@@ -224,11 +241,38 @@ def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) 
                     btn_cols[i].link_button(label, value)
                 else:
                     if btn_cols[i].button(label, key=f"btn_{value}_{job_id}"):
-                        try:
-                            db.set_status(job_id, value)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(str(e))
+                        if value == "archived":
+                            st.session_state[f"pending_archive_{job_id}"] = True
+                        else:
+                            try:
+                                db.set_status(job_id, value)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(str(e))
+
+        if st.session_state.get(f"pending_archive_{job_id}"):
+            st.warning("Please add a note before marking this job as not relevant.")
+            current_notes = (job.get("notes") or "").strip()
+            archive_note = st.text_area(
+                "Note",
+                value=current_notes,
+                key=f"archive_note_{job_id}",
+                height=70,
+            )
+            confirm_col, cancel_col = st.columns(2)
+            if confirm_col.button("Confirm archive", key=f"archive_confirm_{job_id}"):
+                if not archive_note.strip():
+                    st.error("A note is required.")
+                else:
+                    try:
+                        db.set_status(job_id, "archived", notes=archive_note.strip())
+                        st.session_state.pop(f"pending_archive_{job_id}", None)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
+            if cancel_col.button("Cancel", key=f"archive_cancel_{job_id}"):
+                st.session_state.pop(f"pending_archive_{job_id}", None)
+                st.rerun()
 
         # Notes (collapsed by default)
         with st.expander("📝 Notes"):
@@ -276,28 +320,34 @@ with tab_jobs:
         s = j.get("status") or "new"
         by_status[s] = by_status.get(s, 0) + 1
 
-    # Section 1 — Score distribution (specific profile only)
+    profile_name = profile_map.get(active_profile_id, {}).get("name", active_profile_id) if active_profile_id else None
+
+    # Row 1 — Job counts
+    j1, j2, j3, j4 = st.columns(4)
+    j1.metric("In DB", len(jobs_raw))
+    j2.metric("New", by_status.get("new", 0))
+    j3.metric("❓ Unscored", by_status.get("unscored", 0))
+    j4.metric("Showing", len(jobs))
+
+    # Row 2 — Score distribution (profile view only)
     if active_profile_id is not None:
-        hot_count = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
+        hot_count  = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
         solid_count = sum(1 for j in jobs if 7 <= (j.get("score") or 0) <= 8)
         maybe_count = sum(1 for j in jobs if 5 <= (j.get("score") or 0) <= 6)
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total (filtered)", len(jobs))
-        col2.metric("🔥 Hot (9-10)", hot_count)
-        col3.metric("⭐ Solid (7-8)", solid_count)
-        col4.metric("👀 Maybe (5-6)", maybe_count)
-    else:
-        st.metric("Total (filtered)", len(jobs))
+        st.caption(f"Scores — **{profile_name}**")
+        sc1, sc2, sc3 = st.columns(3)
+        sc1.metric("🔥 Hot (9-10)", hot_count)
+        sc2.metric("⭐ Solid (7-8)", solid_count)
+        sc3.metric("👀 Maybe (5-6)", maybe_count)
 
-    # Section 2 — Status counts (always shown)
-    s1, s2, s3, s4, s5, s6, s7 = st.columns(7)
-    s1.metric("New", by_status.get("new", 0))
-    s2.metric("Queued", by_status.get("queued", 0))
-    s3.metric("Ready", by_status.get("ready", 0))
-    s4.metric("Applied", by_status.get("applied", 0))
-    s5.metric("Rejected", by_status.get("rejected", 0))
-    s6.metric("Archived", by_status.get("archived", 0))
-    s7.metric("❓ Unscored", by_status.get("unscored", 0))
+    # Row 3 — Pipeline
+    st.caption("Pipeline")
+    p1, p2, p3, p4, p5 = st.columns(5)
+    p1.metric("Queued",   by_status.get("queued", 0))
+    p2.metric("Ready",    by_status.get("ready", 0))
+    p3.metric("Applied",  by_status.get("applied", 0))
+    p4.metric("Rejected", by_status.get("rejected", 0))
+    p5.metric("Archived", by_status.get("archived", 0))
 
     st.divider()
 
@@ -307,7 +357,6 @@ with tab_jobs:
         if active_profile_id is None:
             st.caption(f"Showing **{len(jobs)}** jobs — all profiles (best score per job)")
         else:
-            profile_name = profile_map.get(active_profile_id, {}).get("name", active_profile_id)
             st.caption(f"Showing **{len(jobs)}** jobs — profile: **{profile_name}**")
         for job in jobs:
             card_profile_id = active_profile_id or job.get("best_profile_id") or (profile_ids[0] if profile_ids else "")

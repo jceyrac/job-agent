@@ -534,28 +534,36 @@ class JobStorage:
         return scores, profile
 
     def get_all_jobs_best_score(self) -> list[dict]:
-        """All scored jobs, each shown once at its highest score across profiles.
+        """All jobs (scored and unscored), each shown once at its highest score across profiles.
+        Unscored jobs appear with score=None and status='unscored'.
         Status and notes come from job_tracking (profile-independent).
         """
         with self._conn() as conn:
             rows = conn.execute("""
                 SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
                        s.company_size, s.contract_type, s.scored_by,
+                       t.status AS tracked_status,
                        COALESCE(t.status, 'new') AS status, t.notes,
                        s.profile_id as best_profile_id
                 FROM jobs j
-                JOIN job_scores s ON j.id = s.job_id
-                LEFT JOIN job_tracking t ON j.id = t.job_id
-                WHERE s.score IS NOT NULL
+                LEFT JOIN job_scores s ON j.id = s.job_id
+                  AND s.score IS NOT NULL
                   AND s.rowid = (
                     SELECT s2.rowid FROM job_scores s2
                     WHERE s2.job_id = j.id AND s2.score IS NOT NULL
                     ORDER BY s2.score DESC, s2.profile_id ASC
                     LIMIT 1
                   )
-                ORDER BY s.score DESC, j.last_seen DESC
+                LEFT JOIN job_tracking t ON j.id = t.job_id
+                ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC
             """).fetchall()
-            return [dict(r) for r in rows]
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("score") is None and d.get("tracked_status") is None:
+                    d["status"] = "unscored"
+                result.append(d)
+            return result
 
     def get_all_for_tracker(self, profile_id: str) -> list[dict]:
         """All jobs for the Streamlit tracker — scored and unscored.
@@ -565,6 +573,7 @@ class JobStorage:
             rows = conn.execute(
                 """SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
                           s.company_size, s.contract_type, s.scored_by,
+                          t.status AS tracked_status,
                           COALESCE(t.status, 'new') AS status, t.notes
                    FROM jobs j
                    LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
@@ -575,7 +584,7 @@ class JobStorage:
             result = []
             for row in rows:
                 d = dict(row)
-                if d.get("score") is None:
+                if d.get("score") is None and d.get("tracked_status") is None:
                     d["status"] = "unscored"
                 result.append(d)
             return result
