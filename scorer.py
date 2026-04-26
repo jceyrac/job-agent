@@ -62,8 +62,8 @@ Priority rule: if Base location names a specific country or city, use that count
 - "us_only"       : Base location or description mentions US city/state, "United States", "US only", "must be authorized to work in the US", "US-based", EST/PST/CST/MST timezone, UTC-5 to UTC-8, "Americas", "North America only"
 - "apac"          : Base location or description mentions Asia, Singapore, Hong Kong, Japan, South Korea, Australia, "UTC+5 to UTC+12", APAC
 - "latam"         : Base location or description mentions Latin America, Brazil, Mexico, UTC-3 to UTC-5 (excluding US)
-- "global_remote" : ONLY when there is explicit positive evidence — description or title says "anywhere", "worldwide", "no timezone restriction", "fully async", "open to all locations", "global team" — AND there is no specific country requirement
-- "unknown"       : Location is "Remote" OR "Worldwide" with no base location and no geographic clues in description — USE THIS as the safe default when in doubt. Do NOT assign global_remote unless the evidence is explicit.
+- "global_remote" : ONLY when one of these is true: (1) the company is on the known global-remote list below (Aave, Consensys, Gnosis, MakerDAO, Uniswap Foundation, Ethereum Foundation); OR (2) the description explicitly contains "work from anywhere", "worldwide", "no timezone restriction", "fully async", or equivalent unambiguous language. If base_location is empty AND location is just "Remote" AND neither condition is met → assign "unknown", NOT "global_remote".
+- "unknown"       : Safe default when base_location is empty and location is "Remote" or "Worldwide" with no geographic clues. Do NOT assign global_remote based on absence of country information.
 
 IMPORTANT — company geography: if the company is well-known to operate primarily from a specific region, use that region even without explicit location info:
 - Binance, OKX, Bybit, Huobi, HashKey → apac
@@ -151,8 +151,14 @@ def _call_groq(messages: list, model: str, max_retries: int = 5) -> str:
                 print(f"  ⚠️  Groq RPM 429 ({model}) — attente {wait}s "
                       f"(tentative {attempt + 1}/{max_retries})")
                 time.sleep(wait)
+            elif "timed out" in err.lower() or "timeout" in err.lower():
+                # Transient network timeout — retry with backoff
+                wait = 2 ** (attempt + 1)
+                print(f"  ⚠️  Groq timeout ({model}) — retry in {wait}s "
+                      f"(tentative {attempt + 1}/{max_retries})")
+                time.sleep(wait)
             else:
-                raise  # auth error, network error → propagate immediately
+                raise  # auth error, bad request → propagate immediately
 
     _exhausted_models.add(model)
     raise Exception(f"{model} rate limit persistant après {max_retries} tentatives")
