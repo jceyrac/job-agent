@@ -5,6 +5,31 @@ from datetime import date, datetime
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
 
+KNOWN_COUNTRIES = [
+    "United States", "USA", "U.S.",
+    "Canada",
+    "United Kingdom", "UK", "Ireland",
+    "Germany", "France", "Switzerland", "Netherlands", "Belgium",
+    "Luxembourg", "Spain", "Portugal", "Italy", "Austria",
+    "Sweden", "Norway", "Denmark", "Finland",
+    "Poland", "Czech Republic", "Czechia", "Romania", "Hungary",
+    "Singapore", "India", "Australia", "Japan", "Hong Kong", "China",
+    "Brazil", "Mexico", "Argentina",
+    "United Arab Emirates", "UAE", "Israel",
+]
+
+_COUNTRY_PATTERN = re.compile(
+    r"<span[^>]*>\s*(" + "|".join(re.escape(c) for c in KNOWN_COUNTRIES) + r")\s*</span>",
+    re.IGNORECASE,
+)
+
+
+def _extract_country_from_html(html: str) -> str | None:
+    if not html:
+        return None
+    m = _COUNTRY_PATTERN.search(html)
+    return m.group(1) if m else None
+
 SEARCH_TERMS_LINKEDIN = [
     "product manager",
     "product owner",
@@ -169,8 +194,10 @@ class JobSpyScraper(BaseScraper):
             s_max = None if (s_max is None or (isinstance(s_max, float) and math.isnan(s_max))) else int(s_max)
             salary = f"{currency} {s_min or 0:,}–{s_max or 0:,}".strip() if (s_min or s_max) else None
 
-            # Description — strip markdown/HTML
-            description = row.get("description") or ""
+            # Description — extract country from raw HTML before stripping
+            raw_description = row.get("description") or ""
+            html_country = _extract_country_from_html(raw_description) if source == "LinkedIn" else None
+            description = raw_description
             if description:
                 description = re.sub(r"<[^>]+>", " ", description)
                 description = re.sub(r"[#*`>\[\]]+", " ", description)
@@ -202,8 +229,10 @@ class JobSpyScraper(BaseScraper):
                 work_mode = "on-site"
                 location = raw_loc
 
-            # base_location: the city/state from the raw LinkedIn/Indeed location field
+            # base_location: prefer raw location field; fall back to HTML-extracted country (LinkedIn only)
             base_location = raw_loc if raw_loc and raw_loc.lower() not in ("remote", "") else None
+            if not base_location and html_country:
+                base_location = html_country
 
             postings.append(JobPosting(
                 source=source,
