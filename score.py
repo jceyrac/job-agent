@@ -176,9 +176,8 @@ def main():
         rescore=args.rescore,
     )
     skipped = total_in_db - len(jobs_to_score)
-    if effective_pre_filter:
-        print(f"Pre-filter applied: {total_in_db} jobs → {len(jobs_to_score)} after SQL filter "
-              f"({skipped} skipped)")
+    print(f"Pre-filter applied: {total_in_db} jobs → {len(jobs_to_score)} after SQL filter "
+          f"({skipped} skipped, including jobs older than 30 days)")
 
     scored_count = 0
     error_count = 0
@@ -192,6 +191,8 @@ def main():
         for i, job_dict in enumerate(jobs_to_score, 1):
             title   = job_dict.get("title", "")
             company = job_dict.get("company", "")
+            if not job_dict.get("posted_date"):
+                print(f"  ⚠️  Scoring job with NULL posted_date: {title} @ {company} ({job_dict.get('source', '?')})")
             print(f"  Scoring {i}/{len(jobs_to_score)}: {title[:50]} @ {company[:30]}")
 
             result = score_job(

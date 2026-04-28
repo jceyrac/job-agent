@@ -307,6 +307,9 @@ class JobStorage:
                 clauses.append(f"({not_parts})")
                 params += [f"%{kw.lower()}%" for kw in excl_title]
 
+        clauses.append(
+            "(j.posted_date >= date('now', '-30 days') OR j.posted_date IS NULL OR j.posted_date = '')"
+        )
         where = " AND ".join(clauses)
         query = f"{base} WHERE {where}"
 
