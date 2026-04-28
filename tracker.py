@@ -116,6 +116,7 @@ with st.sidebar:
         default=all_sources,
         key="source_filter",
     )
+    st.checkbox("Show stale jobs (>30 days)", value=False, key="show_stale")
 
 # ─── Apply filters (Python-side, no SQL round-trip) ───────────────────────────
 _DATE_FILTER_DAYS = {
@@ -123,8 +124,23 @@ _DATE_FILTER_DAYS = {
     "2 weeks": 14, "3 weeks": 21, "1 month": 30,
 }
 
+_ENGAGED_STATUSES = {"applied", "rejected", "archived", "saved", "queued", "ready"}
+_STALE_CUTOFF_DAYS = 30
+
+
+def _is_stale_unengaged(j: dict) -> bool:
+    if j.get("status") in _ENGAGED_STATUSES:
+        return False
+    raw = j.get("posted_date") or ""
+    try:
+        return date.fromisoformat(str(raw)[:10]) < date.today() - timedelta(days=_STALE_CUTOFF_DAYS)
+    except (ValueError, TypeError):
+        return False
+
 
 def apply_filters(jobs: list[dict]) -> list[dict]:
+    if not st.session_state.get("show_stale", False):
+        jobs = [j for j in jobs if not _is_stale_unengaged(j)]
     result = [j for j in jobs if
               j.get("status") == "unscored" or (j.get("score") or 0) >= st.session_state.min_score]
     date_filter = st.session_state.get("date_filter", "Any")
@@ -320,6 +336,7 @@ with tab_jobs:
         s = j.get("status") or "new"
         by_status[s] = by_status.get(s, 0) + 1
 
+    stale_hidden_count = sum(1 for j in jobs_raw if _is_stale_unengaged(j))
     profile_name = profile_map.get(active_profile_id, {}).get("name", active_profile_id) if active_profile_id else None
 
     # Row 1 — Job counts
@@ -328,6 +345,8 @@ with tab_jobs:
     j2.metric("New", by_status.get("new", 0))
     j3.metric("❓ Unscored", by_status.get("unscored", 0))
     j4.metric("Showing", len(jobs))
+    if stale_hidden_count and not st.session_state.get("show_stale", False):
+        st.caption(f"Hidden: {stale_hidden_count} stale jobs without engagement")
 
     # Row 2 — Score distribution (profile view only)
     if active_profile_id is not None:
