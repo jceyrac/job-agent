@@ -258,7 +258,14 @@ def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) 
                 else:
                     if btn_cols[i].button(label, key=f"btn_{value}_{job_id}"):
                         if value == "archived":
-                            st.session_state[f"pending_archive_{job_id}"] = True
+                            if (job.get("notes") or "").strip():
+                                try:
+                                    db.set_status(job_id, "archived", notes=job["notes"])
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
+                            else:
+                                st.session_state[f"pending_archive_{job_id}"] = True
                         else:
                             try:
                                 db.set_status(job_id, value)
