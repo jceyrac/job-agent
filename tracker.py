@@ -13,6 +13,46 @@ import streamlit as st
 from profiles import ALL_PROFILES, DEFAULT_PROFILE_ID, SearchProfile
 from storage import JobStorage
 
+COUNTRY_OPTIONS = [
+    "Switzerland", "Germany", "France", "United Kingdom", "Ireland",
+    "Netherlands", "Belgium", "Luxembourg", "Spain", "Portugal",
+    "Italy", "Austria", "Sweden", "Norway", "Denmark", "Finland",
+    "Poland", "Czechia", "Romania", "Estonia", "Lithuania",
+    "United States", "Canada", "Singapore", "Israel",
+    "United Arab Emirates", "Australia", "Japan",
+]
+
+SECTOR_LABELS = {
+    "Web3 / Crypto":              "web3_crypto",
+    "Fintech":                    "fintech",
+    "Tech / SaaS":                "tech_saas",
+    "AI / ML":                    "ai_ml",
+    "E-commerce":                 "e_commerce",
+    "Healthcare":                 "healthcare",
+    "Pharma":                     "pharma",
+    "Retail / FMCG":              "retail",
+    "Manufacturing / Industrial": "manufacturing",
+    "Government / Public sector": "government",
+    "Consulting":                 "consulting",
+    "Education":                  "education",
+    "Media / Entertainment":      "media",
+    "Energy / Utilities":         "energy",
+    "Other":                      "other",
+}
+_SECTOR_CODE_TO_LABEL = {v: k for k, v in SECTOR_LABELS.items()}
+
+COUNTRY_FLAG = {
+    "Switzerland": "🇨🇭", "Germany": "🇩🇪", "France": "🇫🇷",
+    "United Kingdom": "🇬🇧", "Ireland": "🇮🇪", "Netherlands": "🇳🇱",
+    "Belgium": "🇧🇪", "Luxembourg": "🇱🇺", "Spain": "🇪🇸", "Portugal": "🇵🇹",
+    "Italy": "🇮🇹", "Austria": "🇦🇹", "Sweden": "🇸🇪", "Norway": "🇳🇴",
+    "Denmark": "🇩🇰", "Finland": "🇫🇮", "Poland": "🇵🇱", "Czechia": "🇨🇿",
+    "Romania": "🇷🇴", "Estonia": "🇪🇪", "Lithuania": "🇱🇹",
+    "United States": "🇺🇸", "Canada": "🇨🇦", "Singapore": "🇸🇬",
+    "Israel": "🇮🇱", "United Arab Emirates": "🇦🇪",
+    "Australia": "🇦🇺", "Japan": "🇯🇵",
+}
+
 DB_PATH = "data/jobs.db"
 
 # ─── Page config ──────────────────────────────────────────────────────────────
@@ -221,6 +261,20 @@ def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) 
                 job.get("company_size", ""),
             ]
             st.caption("  ".join(p for p in parts if p))
+            # Phase 1d metadata badges
+            meta_parts = []
+            country = job.get("company_country") or ""
+            if country and country != "unknown":
+                flag = COUNTRY_FLAG.get(country, "🌐")
+                meta_parts.append(f"{flag} {country}")
+            sector = job.get("industry_sector") or ""
+            if sector and sector != "other":
+                meta_parts.append(_SECTOR_CODE_TO_LABEL.get(sector, sector))
+            lang = job.get("language_required") or ""
+            if lang and lang not in ("english", "unknown"):
+                meta_parts.append(f"🗣 {lang}")
+            if meta_parts:
+                st.caption("  ·  ".join(meta_parts))
             summary = (job.get("summary") or "").strip()
             if summary:
                 st.text(summary[:250] + "…" if len(summary) > 250 else summary)
@@ -460,6 +514,26 @@ with tab_settings:
                     value=criteria.get("remote_or_hybrid", True),
                 )
 
+                st.divider()
+                st.caption("Phase 1d filters — applied after scoring")
+
+                _cur_allowed = criteria.get("allowed_countries")  # None or list
+                allowed_countries_sel = st.multiselect(
+                    "Allowed countries (none = no restriction, unknown always passes)",
+                    options=COUNTRY_OPTIONS,
+                    default=_cur_allowed if _cur_allowed is not None else [],
+                )
+                excluded_sectors_labels = st.multiselect(
+                    "Excluded sectors",
+                    options=list(SECTOR_LABELS.keys()),
+                    default=[_SECTOR_CODE_TO_LABEL.get(c, c) for c in criteria.get("excluded_sectors", [])],
+                )
+                excluded_languages = st.multiselect(
+                    "Excluded languages",
+                    options=["english", "french", "german", "italian", "spanish", "multiple", "unknown"],
+                    default=criteria.get("excluded_languages", []),
+                )
+
                 if st.form_submit_button("💾 Save profile"):
                     updated = SearchProfile(
                         id=settings_profile["id"],
@@ -475,6 +549,9 @@ with tab_settings:
                         company_sizes=company_sizes,
                         score_threshold=score_threshold,
                         remote_or_hybrid=remote_or_hybrid,
+                        allowed_countries=allowed_countries_sel if allowed_countries_sel else None,
+                        excluded_sectors=[SECTOR_LABELS[lbl] for lbl in excluded_sectors_labels],
+                        excluded_languages=excluded_languages,
                     )
                     db.upsert_profile(updated)
                     st.success("Profile saved. Changes apply on next run.")

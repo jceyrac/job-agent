@@ -41,6 +41,9 @@ class SearchProfile:
             "company_sizes":      self.company_sizes,
             "score_threshold":    self.score_threshold,
             "remote_or_hybrid":   self.remote_or_hybrid,
+            "allowed_countries":  self.allowed_countries,
+            "excluded_sectors":   self.excluded_sectors,
+            "excluded_languages": self.excluded_languages,
         }
 
 
