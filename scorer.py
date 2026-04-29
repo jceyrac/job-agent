@@ -187,7 +187,11 @@ def _call_groq(messages: list, model: str, max_retries: int = 5) -> str:
             return result.choices[0].message.content
         except Exception as e:
             err = str(e)
-            if "404" in err or ("400" in err and "decommissioned" in err):
+            if "413" in err or "request_too_large" in err.lower():
+                # Prompt too large for this model's context window — skip it
+                _exhausted_models.add(model)
+                raise Exception(f"{model} request too large") from e
+            elif "404" in err or ("400" in err and "decommissioned" in err):
                 # Model unavailable or decommissioned — fall through to next model
                 _exhausted_models.add(model)
                 raise Exception(f"{model} not available") from e
@@ -234,7 +238,7 @@ def _call_groq_fallback_chain(messages: list) -> tuple[str, str]:
             return raw, model
         except Exception as e:
             err = str(e)
-            if any(x in err for x in ("exhausted", "rate limit persistant", "not available")):
+            if any(x in err for x in ("exhausted", "rate limit persistant", "not available", "request too large")):
                 print(f"  ⚠️  {model} unavailable/exhausted — essai modèle suivant")
                 last_err = e
             else:
