@@ -507,6 +507,99 @@ def test_pre_migration_null_defaults():
     assert r["language_required"] == "unknown", f"Got {r['language_required']!r}"
 
 
+def test_migration_idempotent():
+    """Running the migration twice must not raise or double-backfill data."""
+    from models import JobPosting
+    from datetime import date
+
+    job = JobPosting(
+        source="Test", title="PM", company="Acme", location="Remote",
+        url="https://example.com/idem", posted_date=date(2026, 4, 1),
+    )
+
+    # First init — creates tables + runs migration
+    db1 = JobStorage(":memory:")
+    db1.upsert_profile(_FakeProfile())
+    db1.save_scored(job, _score(7), PROFILE_ID)
+
+    # Second init on the same DB — migration should be a no-op
+    db2 = JobStorage(":memory:")
+    with db2._conn() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    for col in ("summary", "work_mode", "geo_zone", "company_size",
+                "contract_type", "company_country", "industry_sector",
+                "language_required", "extracted_at"):
+        assert col in cols, f"Column {col!r} missing after re-init"
+
+    # Reading back must still work
+    db2.upsert_profile(_FakeProfile())
+    db2.save_scored(job, _score(7), PROFILE_ID)
+    rows = db2.get_digest(PROFILE_ID, min_score=5)
+    assert len(rows) == 1
+
+
+def test_backfill_correctness():
+    """save_scored writes structured fields to jobs table; re-init preserves them."""
+    from datetime import date
+
+    jobs_data = [
+        ("https://example.com/j1", "Company A", "Switzerland", "fintech", "english", 8),
+        ("https://example.com/j2", "Company B", "Germany", "ai_ml", "german", 7),
+        ("https://example.com/j3", "Company C", "United States", "web3_crypto", "english", 9),
+    ]
+
+    # Simulate pre-1e flow: create a DB, save scored jobs (writes to both tables)
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        db = JobStorage(tmp_path)
+        db.upsert_profile(_FakeProfile())
+        for url, company, country, sector, lang, score in jobs_data:
+            job = JobPosting(
+                source="Test", title="PM", company=company, location="Remote",
+                url=url, posted_date=date(2026, 4, 1),
+            )
+            sd = _score(score)
+            sd.update({"company_country": country, "industry_sector": sector,
+                       "language_required": lang})
+            db.save_scored(job, sd, PROFILE_ID)
+        del db
+
+        # Re-initialize — migration should pick up existing data
+        db2 = JobStorage(tmp_path)
+
+        # Verify structured fields on jobs table directly
+        with db2._conn() as conn:
+            rows = conn.execute(
+                "SELECT company_country, industry_sector, language_required, "
+                "extracted_at FROM jobs ORDER BY company_country"
+            ).fetchall()
+        assert len(rows) == 3
+        countries = {r["company_country"] for r in rows}
+        languages = {r["language_required"] for r in rows}
+        assert "Switzerland" in countries
+        assert "Germany" in countries
+        assert "english" in languages
+        assert "german" in languages
+        for r in rows:
+            assert r["industry_sector"] in ("fintech", "ai_ml", "web3_crypto")
+            assert r["extracted_at"] is not None, \
+                f"extracted_at should not be NULL for {r['company_country']}"
+
+        # Verify get_digest reads from jobs table
+        db2.upsert_profile(_FakeProfile())
+        digest = db2.get_digest(PROFILE_ID, min_score=5)
+        assert len(digest) == 3
+        for j in digest:
+            assert j["company_country"] in ("Switzerland", "Germany", "United States")
+            assert j["industry_sector"] in ("fintech", "ai_ml", "web3_crypto")
+            assert j["language_required"] in ("english", "german")
+
+    finally:
+        os.unlink(tmp_path)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -538,6 +631,8 @@ TESTS = [
     test_filter_language_not_excluded_kept,
     test_filter_language_empty_list_keeps_all,
     test_filter_all_inactive_keeps_all,
+    test_migration_idempotent,
+    test_backfill_correctness,
 ]
 
 

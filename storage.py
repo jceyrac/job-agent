@@ -131,15 +131,87 @@ class JobStorage:
             if "base_location" not in jobs_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN base_location TEXT")
                 logger.info("[Storage] Migration: added base_location column to jobs")
+
+            # Phase 1e — move structured fields from job_scores to jobs
+            _p1e_cols = [
+                ("summary",            "TEXT"),
+                ("work_mode",          "TEXT"),
+                ("geo_zone",           "TEXT"),
+                ("company_size",       "TEXT"),
+                ("contract_type",      "TEXT"),
+                ("company_country",    "TEXT"),
+                ("industry_sector",    "TEXT"),
+                ("language_required",  "TEXT"),
+                ("extracted_at",       "TEXT"),
+                ("extracted_by",       "TEXT"),
+            ]
+            need_backfill = False
+            for col, defn in _p1e_cols:
+                if col not in jobs_cols:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {defn}")
+                    logger.info(f"[Storage] Phase 1e migration: added {col} column to jobs")
+                    if col != "extracted_at":
+                        need_backfill = True
+
+            if need_backfill:
+                # Check source columns exist on job_scores before backfilling
+                _p1e_src_cols = {row[1] for row in
+                                 conn.execute("PRAGMA table_info(job_scores)").fetchall()}
+                if "company_country" not in _p1e_src_cols:
+                    # Columns already removed by Phase 1e.4 cleanup — nothing to backfill
+                    pass
+                else:
+                    # Backfill structured fields from job_scores to jobs
+                    src_rows = conn.execute("""
+                        SELECT job_id, summary, work_mode, geo_zone,
+                           company_size, contract_type,
+                           company_country, industry_sector, language_required,
+                           scored_at
+                    FROM (
+                        SELECT job_id, summary, work_mode, geo_zone,
+                               company_size, contract_type,
+                               company_country, industry_sector, language_required,
+                               scored_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY job_id ORDER BY scored_at DESC
+                               ) AS rn
+                        FROM job_scores
+                        WHERE score IS NOT NULL
+                          AND (summary IS NOT NULL OR work_mode IS NOT NULL
+                               OR company_country IS NOT NULL)
+                    ) WHERE rn = 1
+                """).fetchall()
+                    backfilled = 0
+                    for row in src_rows:
+                        conn.execute(
+                            """UPDATE jobs SET
+                                   summary = ?, work_mode = ?, geo_zone = ?,
+                                   company_size = ?, contract_type = ?,
+                                   company_country = ?, industry_sector = ?,
+                                   language_required = ?, extracted_at = ?
+                             WHERE id = ? AND extracted_at IS NULL""",
+                            (row["summary"], row["work_mode"], row["geo_zone"],
+                             row["company_size"], row["contract_type"],
+                             row["company_country"], row["industry_sector"],
+                             row["language_required"], row["scored_at"],
+                             row["job_id"]),
+                        )
+                        backfilled += 1
+                    if backfilled:
+                        logger.info(
+                            f"[Storage] Phase 1e migration: backfilled {backfilled} jobs "
+                            f"from job_scores"
+                        )
+
+            # Phase 1e.4 — drop redundant columns from job_scores (now on jobs table)
             score_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
-            for col, defn in [
-                ("company_country",   "TEXT"),
-                ("industry_sector",   "TEXT"),
-                ("language_required", "TEXT"),
-            ]:
-                if col not in score_cols:
-                    conn.execute(f"ALTER TABLE job_scores ADD COLUMN {col} {defn}")
-                    logger.info(f"[Storage] Migration: added {col} column to job_scores")
+            for col in ("summary", "work_mode", "geo_zone", "company_size",
+                        "contract_type", "company_country", "industry_sector",
+                        "language_required"):
+                if col in score_cols:
+                    conn.execute(f"ALTER TABLE job_scores DROP COLUMN {col}")
+                    logger.info(f"[Storage] Phase 1e.4 cleanup: dropped {col} from job_scores")
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     @contextmanager
@@ -188,12 +260,18 @@ class JobStorage:
         """Retourne le dict de scoring pour ce job+profil, None si absent."""
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT score, reason, summary, work_mode, geo_zone,
-                          company_size, contract_type, scored_by,
-                          COALESCE(company_country,   'unknown') AS company_country,
-                          COALESCE(industry_sector,   'other')   AS industry_sector,
-                          COALESCE(language_required, 'unknown') AS language_required
-                   FROM job_scores WHERE job_id = ? AND profile_id = ?""",
+                """SELECT s.score, s.reason, s.scored_by,
+                          COALESCE(j.summary, '') AS summary,
+                          COALESCE(j.work_mode, 'unknown') AS work_mode,
+                          COALESCE(j.geo_zone, 'unknown') AS geo_zone,
+                          COALESCE(j.company_size, 'unknown') AS company_size,
+                          COALESCE(j.contract_type, 'unknown') AS contract_type,
+                          COALESCE(j.company_country, 'unknown') AS company_country,
+                          COALESCE(j.industry_sector, 'other') AS industry_sector,
+                          COALESCE(j.language_required, 'unknown') AS language_required
+                   FROM job_scores s
+                   JOIN jobs j ON j.id = s.job_id
+                   WHERE s.job_id = ? AND s.profile_id = ?""",
                 (job_id, profile_id),
             ).fetchone()
             if row is None or row["score"] is None:
@@ -329,10 +407,86 @@ class JobStorage:
             rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def get_jobs_for_extraction(self) -> list[dict]:
+        """Returns jobs where extraction has not run (extracted_at IS NULL)."""
+        with self._conn() as conn:
+            rows = conn.execute("""
+                SELECT j.* FROM jobs j
+                WHERE j.extracted_at IS NULL
+                ORDER BY j.last_seen DESC
+            """).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_job_extraction(self, job_id: str, fields: dict,
+                               extracted_at: str | None = None) -> None:
+        """Writes extraction fields to the jobs table (Phase 1e.2).
+
+        Args:
+            job_id: the job to update.
+            fields: dict with keys company_country, industry_sector,
+                    language_required, work_mode, geo_zone, company_size,
+                    contract_type, summary.
+            extracted_at: ISO timestamp. If None, uses current UTC time.
+        """
+        ts = extracted_at or _now()
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE jobs SET
+                       company_country = ?,
+                       industry_sector = ?,
+                       language_required = ?,
+                       work_mode = ?,
+                       geo_zone = ?,
+                       company_size = ?,
+                       contract_type = ?,
+                       summary = ?,
+                       extracted_at = ?,
+                       extracted_by = ?
+                 WHERE id = ?""",
+                (
+                    fields.get("company_country", "unknown"),
+                    fields.get("industry_sector", "other"),
+                    fields.get("language_required", "unknown"),
+                    fields.get("work_mode", "unknown"),
+                    fields.get("geo_zone", "unknown"),
+                    fields.get("company_size", "unknown"),
+                    fields.get("contract_type", "unknown"),
+                    fields.get("summary", ""),
+                    ts,
+                    fields.get("extracted_by"),
+                    job_id,
+                ),
+            )
+
+    def _update_job_extraction_fields(self, job, score_result: dict, conn, now: str) -> None:
+        """Write structured fields to the jobs table (Phase 1e)."""
+        extracted_by = getattr(job, "extracted_by", None) or score_result.get("scored_by")
+        conn.execute(
+            """UPDATE jobs SET
+                   summary = ?, work_mode = ?, geo_zone = ?,
+                   company_size = ?, contract_type = ?,
+                   company_country = ?, industry_sector = ?,
+                   language_required = ?, extracted_at = ?, extracted_by = ?
+             WHERE id = ?""",
+            (
+                score_result.get("summary"),
+                score_result.get("work_mode", "unknown"),
+                score_result.get("geo_zone", "unknown"),
+                score_result.get("company_size", "unknown"),
+                score_result.get("contract_type", "unknown"),
+                score_result.get("company_country", "unknown"),
+                score_result.get("industry_sector", "other"),
+                score_result.get("language_required", "unknown"),
+                now,
+                extracted_by,
+                job.id,
+            ),
+        )
+
     def save_scored(self, job, score_result: dict, profile_id: str) -> None:
         """
         Sauvegarde un job avec son score pour un profil donné.
-        `score_result` est le dict retourné par scorer.score_job().
+        Après Phase 1e.4: only writes profile-dependent columns to job_scores.
         """
         now = _now()
         with self._conn() as conn:
@@ -340,45 +494,21 @@ class JobStorage:
             conn.execute(
                 """INSERT INTO job_scores (
                        job_id, profile_id,
-                       score, reason, summary, work_mode, geo_zone,
-                       company_size, contract_type, scored_by, scored_at,
-                       company_country, industry_sector, language_required
+                       score, reason, scored_by, scored_at
                    ) VALUES (
-                       :job_id, :profile_id,
-                       :score, :reason, :summary, :work_mode, :geo_zone,
-                       :company_size, :contract_type, :scored_by, :scored_at,
-                       :company_country, :industry_sector, :language_required
+                       ?, ?, ?, ?, ?, ?
                    )
                    ON CONFLICT(job_id, profile_id) DO UPDATE SET
-                       score            = excluded.score,
-                       reason           = excluded.reason,
-                       summary          = excluded.summary,
-                       work_mode        = excluded.work_mode,
-                       geo_zone         = excluded.geo_zone,
-                       company_size     = excluded.company_size,
-                       contract_type    = excluded.contract_type,
-                       scored_by        = excluded.scored_by,
-                       scored_at        = excluded.scored_at,
-                       company_country  = excluded.company_country,
-                       industry_sector  = excluded.industry_sector,
-                       language_required = excluded.language_required""",
-                {
-                    "job_id":            job.id,
-                    "profile_id":        profile_id,
-                    "score":             score_result.get("score"),
-                    "reason":            score_result.get("reason"),
-                    "summary":           score_result.get("summary"),
-                    "work_mode":         score_result.get("work_mode", "unknown"),
-                    "geo_zone":          score_result.get("geo_zone", "unknown"),
-                    "company_size":      score_result.get("company_size", "unknown"),
-                    "contract_type":     score_result.get("contract_type", "unknown"),
-                    "scored_by":         score_result.get("scored_by", "unknown"),
-                    "scored_at":         now,
-                    "company_country":   score_result.get("company_country", "unknown"),
-                    "industry_sector":   score_result.get("industry_sector", "other"),
-                    "language_required": score_result.get("language_required", "unknown"),
-                },
+                       score     = excluded.score,
+                       reason    = excluded.reason,
+                       scored_by = excluded.scored_by,
+                       scored_at = excluded.scored_at""",
+                (job.id, profile_id, score_result.get("score"),
+                 score_result.get("reason"), score_result.get("scored_by", "unknown"),
+                 now),
             )
+            # Also write structured fields to jobs table (Phase 1e)
+            self._update_job_extraction_fields(job, score_result, conn, now)
 
     def save_unscored(self, job) -> None:
         """
@@ -430,11 +560,18 @@ class JobStorage:
     def get_digest(self, profile_id: str, min_score: int = 5, status: str = "new") -> list[dict]:
         with self._conn() as conn:
             query = """
-                SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
-                       s.company_size, s.contract_type, s.scored_by, s.scored_at,
-                       COALESCE(s.company_country,   'unknown') AS company_country,
-                       COALESCE(s.industry_sector,   'other')   AS industry_sector,
-                       COALESCE(s.language_required, 'unknown') AS language_required,
+                SELECT j.id, j.title, j.company, j.url, j.source, j.location,
+                       j.base_location, j.posted_date, j.description,
+                       j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
+                       COALESCE(j.summary, '') AS summary,
+                       COALESCE(j.work_mode, 'unknown') AS work_mode,
+                       COALESCE(j.geo_zone, 'unknown') AS geo_zone,
+                       COALESCE(j.company_size, 'unknown') AS company_size,
+                       COALESCE(j.contract_type, 'unknown') AS contract_type,
+                       COALESCE(j.company_country, 'unknown') AS company_country,
+                       COALESCE(j.industry_sector, 'other') AS industry_sector,
+                       COALESCE(j.language_required, 'unknown') AS language_required,
+                       s.score, s.reason, s.scored_by, s.scored_at,
                        COALESCE(t.status, 'new') AS status, t.notes
                 FROM jobs j
                 JOIN job_scores s ON j.id = s.job_id
@@ -563,14 +700,22 @@ class JobStorage:
         """All jobs (scored and unscored), each shown once at its highest score across profiles.
         Unscored jobs appear with score=None and status='unscored'.
         Status and notes come from job_tracking (profile-independent).
+        Structured fields read from jobs table (Phase 1e).
         """
         with self._conn() as conn:
             rows = conn.execute("""
-                SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
-                       s.company_size, s.contract_type, s.scored_by,
-                       COALESCE(s.company_country,   'unknown') AS company_country,
-                       COALESCE(s.industry_sector,   'other')   AS industry_sector,
-                       COALESCE(s.language_required, 'unknown') AS language_required,
+                SELECT j.id, j.title, j.company, j.url, j.source, j.location,
+                       j.base_location, j.posted_date, j.description,
+                       j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
+                       COALESCE(j.summary, '') AS summary,
+                       COALESCE(j.work_mode, 'unknown') AS work_mode,
+                       COALESCE(j.geo_zone, 'unknown') AS geo_zone,
+                       COALESCE(j.company_size, 'unknown') AS company_size,
+                       COALESCE(j.contract_type, 'unknown') AS contract_type,
+                       COALESCE(j.company_country, 'unknown') AS company_country,
+                       COALESCE(j.industry_sector, 'other') AS industry_sector,
+                       COALESCE(j.language_required, 'unknown') AS language_required,
+                       s.score, s.reason, s.scored_by,
                        t.status AS tracked_status,
                        COALESCE(t.status, 'new') AS status, t.notes,
                        s.profile_id as best_profile_id
@@ -597,14 +742,22 @@ class JobStorage:
     def get_all_for_tracker(self, profile_id: str) -> list[dict]:
         """All jobs for the Streamlit tracker — scored and unscored.
         Status and notes come from job_tracking (profile-independent).
+        Structured fields read from jobs table (Phase 1e).
         """
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
-                          s.company_size, s.contract_type, s.scored_by,
-                          COALESCE(s.company_country,   'unknown') AS company_country,
-                          COALESCE(s.industry_sector,   'other')   AS industry_sector,
-                          COALESCE(s.language_required, 'unknown') AS language_required,
+                """SELECT j.id, j.title, j.company, j.url, j.source, j.location,
+                          j.base_location, j.posted_date, j.description,
+                          j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
+                          COALESCE(j.summary, '') AS summary,
+                          COALESCE(j.work_mode, 'unknown') AS work_mode,
+                          COALESCE(j.geo_zone, 'unknown') AS geo_zone,
+                          COALESCE(j.company_size, 'unknown') AS company_size,
+                          COALESCE(j.contract_type, 'unknown') AS contract_type,
+                          COALESCE(j.company_country, 'unknown') AS company_country,
+                          COALESCE(j.industry_sector, 'other') AS industry_sector,
+                          COALESCE(j.language_required, 'unknown') AS language_required,
+                          s.score, s.reason, s.scored_by,
                           t.status AS tracked_status,
                           COALESCE(t.status, 'new') AS status, t.notes
                    FROM jobs j

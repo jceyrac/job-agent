@@ -80,6 +80,9 @@ if st.session_state.get("_prev_profile_id") != _cur_pid:
     st.session_state.pop("location_filter", None)
     st.session_state.pop("work_mode_filter", None)
     st.session_state.pop("company_size_filter", None)
+    st.session_state.pop("company_size_filter", None)
+    st.session_state.pop("sector_filter", None)
+    st.session_state.pop("language_filter", None)
     st.session_state["_prev_profile_id"] = _cur_pid
 
 # ─── Sidebar: profile selectbox ───────────────────────────────────────────────
@@ -105,6 +108,8 @@ else:
 all_sources = sorted({j["source"] for j in jobs_raw if j.get("source")})
 all_geo_zones = sorted({j.get("geo_zone") or "unknown" for j in jobs_raw})
 all_locations = sorted({j["location"] for j in jobs_raw if j.get("location")})
+all_sectors = sorted({j.get("industry_sector") or "other" for j in jobs_raw})
+all_languages = sorted({j.get("language_required") or "unknown" for j in jobs_raw})
 
 # ─── Sidebar: remaining filters ────────────────────────────────────────────────
 with st.sidebar:
@@ -149,6 +154,18 @@ with st.sidebar:
         ["startup", "scaleup", "sme", "large", "unknown"],
         default=["startup", "scaleup", "sme", "large", "unknown"],
         key="company_size_filter",
+    )
+    sector_filter = st.multiselect(
+        "Industry sector",
+        options=all_sectors,
+        default=all_sectors,
+        key="sector_filter",
+    )
+    language_filter = st.multiselect(
+        "Language required",
+        options=all_languages,
+        default=all_languages,
+        key="language_filter",
     )
     source_filter = st.multiselect(
         "Source",
@@ -220,6 +237,10 @@ def apply_filters(jobs: list[dict]) -> list[dict]:
         result = [j for j in result if (j.get("geo_zone") or "unknown") in st.session_state.geo_zone_filter]
     if st.session_state.company_size_filter:
         result = [j for j in result if (j.get("company_size") or "unknown") in st.session_state.company_size_filter]
+    if st.session_state.sector_filter:
+        result = [j for j in result if (j.get("industry_sector") or "other") in st.session_state.sector_filter]
+    if st.session_state.language_filter:
+        result = [j for j in result if (j.get("language_required") or "unknown") in st.session_state.language_filter]
     if st.session_state.get("source_filter"):
         result = [j for j in result if j.get("source") in st.session_state.source_filter]
     if st.session_state.status_filter:

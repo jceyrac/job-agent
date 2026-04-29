@@ -12,7 +12,7 @@ load_dotenv()
 from models import JobPosting
 from notifier import send_email_digest, export_joplin
 from profiles import ALL_PROFILES
-from scorer import score_job
+from scorer import evaluate_for_profile, extract_job_fields, score_job
 from storage import JobStorage
 
 DB_PATH = "data/jobs.db"
@@ -82,6 +82,63 @@ def _run_mock(profile) -> None:
         print()
 
 
+def _run_extraction(limit: int | None = None) -> None:
+    """Field extraction pass — profile-independent. Fills extracted_at + structured fields."""
+    db = JobStorage(DB_PATH)
+    jobs_to_extract = db.get_jobs_for_extraction()
+    print(f"Extraction: {len(jobs_to_extract)} jobs need extraction")
+
+    if limit and len(jobs_to_extract) > limit:
+        print(f"  --limit {limit}: processing {limit}/{len(jobs_to_extract)} "
+              f"({len(jobs_to_extract) - limit} deferred to next run)")
+        jobs_to_extract = jobs_to_extract[:limit]
+
+    if not jobs_to_extract:
+        print("All jobs already extracted — nothing to do.")
+        return
+
+    extracted_count = 0
+    error_count = 0
+    for i, job_dict in enumerate(jobs_to_extract, 1):
+        title = job_dict.get("title", "")
+        company = job_dict.get("company", "")
+        print(f"  Extracting {i}/{len(jobs_to_extract)}: {title[:50]} @ {company[:30]}")
+
+        job = JobPosting(
+            source=job_dict.get("source") or "",
+            title=title,
+            company=company,
+            location=job_dict.get("location") or "",
+            url=job_dict.get("url") or "",
+            posted_date=None,
+            description=job_dict.get("description") or "",
+            base_location=job_dict.get("base_location") or "",
+        )
+
+        result = extract_job_fields(job)
+        if result is None:
+            error_count += 1
+            continue
+
+        db.update_job_extraction(job.id, {
+            "company_country":   result.company_country or "unknown",
+            "industry_sector":   result.industry_sector or "other",
+            "language_required": result.language_required or "unknown",
+            "work_mode":         result.work_mode or "unknown",
+            "geo_zone":          result.geo_zone or "unknown",
+            "company_size":      result.company_size or "unknown",
+            "contract_type":     result.contract_type or "unknown",
+            "summary":           result.summary or "",
+            "extracted_by":      result.extracted_by,
+        })
+        extracted_count += 1
+
+        if i < len(jobs_to_extract):
+            time.sleep(4)
+
+    print(f"\nExtraction complete: {extracted_count} extracted, {error_count} errors")
+
+
 def _get_jobs_to_score(db_path: str, profile_id: str, rescore: bool) -> list[dict]:
     """Read jobs from DB that need scoring for this profile.
     Read-only query — writes go through storage.py as usual."""
@@ -105,7 +162,8 @@ def _get_jobs_to_score(db_path: str, profile_id: str, rescore: bool) -> list[dic
 
 
 def _dict_to_posting(d: dict) -> JobPosting:
-    """Reconstruct a JobPosting from a DB row dict (for storage write calls)."""
+    """Reconstruct a JobPosting from a DB row dict (for storage write calls).
+    Includes Phase 1e extraction fields if present."""
     posted_date = None
     raw_date = d.get("posted_date")
     if raw_date:
@@ -113,6 +171,12 @@ def _dict_to_posting(d: dict) -> JobPosting:
             posted_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
         except (ValueError, TypeError):
             pass
+    extracted_at = d.get("extracted_at")
+    if extracted_at:
+        try:
+            extracted_at = datetime.strptime(str(extracted_at)[:19], "%Y-%m-%dT%H:%M:%S")
+        except (ValueError, TypeError):
+            extracted_at = None
     return JobPosting(
         source=d.get("source") or "",
         title=d.get("title") or "",
@@ -125,38 +189,66 @@ def _dict_to_posting(d: dict) -> JobPosting:
         salary=None,
         work_mode=d.get("work_mode"),
         base_location=d.get("base_location"),
+        summary=d.get("summary"),
+        company_size=d.get("company_size"),
+        contract_type=d.get("contract_type"),
+        geo_zone=d.get("geo_zone"),
+        company_country=d.get("company_country"),
+        industry_sector=d.get("industry_sector"),
+        language_required=d.get("language_required"),
+        extracted_at=extracted_at,
+        extracted_by=d.get("extracted_by"),
     )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="score.py — score jobs for a profile")
-    parser.add_argument("--profile", required=True, help="Profile ID to score for")
+    parser = argparse.ArgumentParser(description="score.py — score jobs for a profile / extract job fields")
+    parser.add_argument("--profile", default=None, help="Profile ID to score for")
+    parser.add_argument("--extract", action="store_true",
+                        help="Run profile-independent field extraction (no evaluation)")
     parser.add_argument("--rescore", action="store_true",
                         help="Delete existing scores for this profile and re-score all jobs")
     parser.add_argument("--mock", action="store_true",
                         help="Score 3 hardcoded test jobs to verify profile context; no DB writes")
     parser.add_argument("--limit", type=int, default=None, metavar="N",
-                        help="Cap the number of jobs scored this run (for quota management)")
+                        help="Cap the number of jobs processed this run")
     args = parser.parse_args()
 
-    if args.profile not in ALL_PROFILES:
-        print(f"Unknown profile '{args.profile}'. Valid: {list(ALL_PROFILES.keys())}")
+    if not args.extract and not args.profile:
+        print("Specify --profile or --extract.")
         sys.exit(1)
 
-    profile = ALL_PROFILES[args.profile]
+    if args.extract and args.profile:
+        print("--extract and --profile are mutually exclusive. Run them separately.")
+        sys.exit(1)
 
     if args.mock and args.rescore:
         print("--mock and --rescore are mutually exclusive.")
         sys.exit(1)
 
     if args.mock:
-        _run_mock(profile)
+        if not args.profile:
+            print("--mock requires --profile.")
+            sys.exit(1)
+        if args.profile not in ALL_PROFILES:
+            print(f"Unknown profile '{args.profile}'. Valid: {list(ALL_PROFILES.keys())}")
+            sys.exit(1)
+        _run_mock(ALL_PROFILES[args.profile])
         return
 
     if not os.path.exists(DB_PATH):
         print("DB not found — run scrape.py first.")
         sys.exit(1)
 
+    if args.extract:
+        _run_extraction(args.limit)
+        return
+
+    if args.profile not in ALL_PROFILES:
+        print(f"Unknown profile '{args.profile}'. Valid: {list(ALL_PROFILES.keys())}")
+        sys.exit(1)
+
+    profile = ALL_PROFILES[args.profile]
     db = JobStorage(DB_PATH)
     db.upsert_profile(profile)
     print(f"Profile: {profile.name} ({profile.id})")
@@ -186,53 +278,91 @@ def main():
               f"({len(jobs_to_score) - args.limit} deferred to next run)")
         jobs_to_score = jobs_to_score[:args.limit]
 
-    scored_count = 0
+    # ── Phase 1: extraction of unextracted survivors ────────────────────────────
+    extracted_count = 0
     error_count = 0
+    unextracted = [j for j in jobs_to_score if not j.get("extracted_at")]
+    if unextracted:
+        print(f"Extraction: {len(unextracted)} of {len(jobs_to_score)} need extraction...")
+        for i, job_dict in enumerate(unextracted, 1):
+            title   = job_dict.get("title", "")
+            company = job_dict.get("company", "")
+            print(f"  Extracting {i}/{len(unextracted)}: {title[:50]} @ {company[:30]}")
+            job_obj = _dict_to_posting(job_dict)
+            result = extract_job_fields(job_obj)
+            if result is None:
+                db.save_unscored(job_obj)
+                error_count += 1
+                continue
+            db.update_job_extraction(result.id, {
+                "company_country":   result.company_country or "unknown",
+                "industry_sector":   result.industry_sector or "other",
+                "language_required": result.language_required or "unknown",
+                "work_mode":         result.work_mode or "unknown",
+                "geo_zone":          result.geo_zone or "unknown",
+                "company_size":      result.company_size or "unknown",
+                "contract_type":     result.contract_type or "unknown",
+                "summary":           result.summary or "",
+                "extracted_by":      result.extracted_by,
+            })
+            extracted_count += 1
+            if i < len(unextracted):
+                time.sleep(4)
+        print(f"  Extraction complete: {extracted_count} extracted, {error_count} errors")
+
+    # ── Phase 2: evaluation — evaluate_for_profile on all survivors ─────────────
+    tier0_count = 0
+    tier0_details: dict[str, int] = {}
+    tier1_count = 0
+    scored_count = 0
+
+    # Re-read from DB to pick up freshly extracted fields
+    jobs_to_score = db.get_jobs_for_scoring(
+        profile_id=profile.id,
+        pre_filter=effective_pre_filter or None,
+        rescore=args.rescore,
+    )
+    if args.limit and len(jobs_to_score) > args.limit:
+        jobs_to_score = jobs_to_score[:args.limit]
 
     if not jobs_to_score:
         print("All jobs already scored for this profile — nothing to do.")
     else:
-        print(f"Scoring {len(jobs_to_score)} jobs "
-              f"(~{len(jobs_to_score) * 2.5 / 60:.1f} min with rate-limit delay)...")
-
         for i, job_dict in enumerate(jobs_to_score, 1):
             title   = job_dict.get("title", "")
             company = job_dict.get("company", "")
-            if not job_dict.get("posted_date"):
-                print(f"  ⚠️  Scoring job with NULL posted_date: {title} @ {company} ({job_dict.get('source', '?')})")
-            print(f"  Scoring {i}/{len(jobs_to_score)}: {title[:50]} @ {company[:30]}")
-
-            result = score_job(
-                {
-                    "title":         title,
-                    "company":       company,
-                    "location":      job_dict.get("location", ""),
-                    "base_location": job_dict.get("base_location") or "",
-                    "description":   job_dict.get("description") or "",
-                },
-                scoring_context=profile.scoring_context,
-            )
+            print(f"  Evaluating {i}/{len(jobs_to_score)}: {title[:50]} @ {company[:30]}")
 
             job_obj = _dict_to_posting(job_dict)
+            result = evaluate_for_profile(job_obj, profile)
 
             if result is None:
                 db.save_unscored(job_obj)
                 error_count += 1
                 continue
 
-            job_obj.summary       = result["summary"]
-            job_obj.work_mode     = result["work_mode"]
-            job_obj.company_size  = result["company_size"]
-            job_obj.contract_type = result["contract_type"]
-            job_obj.geo_zone      = result["geo_zone"]
-
             db.save_scored(job_obj, result, profile.id)
             scored_count += 1
 
-            if i < len(jobs_to_score):
-                time.sleep(4)
+            if result["scored_by"] == "tier_0":
+                tier0_count += 1
+                # Track filter type for detail
+                reason = result.get("reason", "")
+                for key in ("language", "sector", "country", "work_mode"):
+                    if key in reason:
+                        tier0_details[key] = tier0_details.get(key, 0) + 1
+                        break
+                else:
+                    tier0_details["other"] = tier0_details.get("other", 0) + 1
+            else:
+                tier1_count += 1
 
         print(f"\nScoring complete: {scored_count} scored, {error_count} errors")
+        if tier0_count:
+            details = ", ".join(f"{k}: {v}" for k, v in sorted(tier0_details.items()))
+            print(f"  Tier 0 (deterministic): {tier0_count} filtered  ({details})")
+        if tier1_count:
+            print(f"  Tier 1 (LLM):           {tier1_count} evaluated")
 
     # ── Build digest ─────────────────────────────────────────────────────────
     all_scored = db.get_digest(profile.id, min_score=profile.score_threshold, status=None)
