@@ -84,6 +84,53 @@ If description is empty → summary = "Description non disponible — consulter 
 
 Always return a score — never skip.
 
+## Additional structured fields (REQUIRED)
+
+In addition to the existing fields, every response MUST include:
+
+### company_country
+The country where the company has its primary office relevant to this role.
+Extract from explicit signals in the description:
+- "Headquartered in [city, country]"
+- "Based in [country]"
+- Address blocks
+- "Our [country] office"
+- Job location field (e.g., "London, UK" → "United Kingdom")
+
+If the description mentions multiple countries, pick the one most relevant to THIS role's location.
+If no clear signal exists, return "unknown". Do NOT guess from company name alone.
+
+### industry_sector
+Pick exactly one from this controlled list:
+- web3_crypto: blockchain, crypto exchanges, DeFi, DAOs, NFT, Web3 infrastructure
+- fintech: payments, banking tech, neobanks, lending, insurtech, wealth tech
+- tech_saas: B2B SaaS, developer tools, productivity, infrastructure software
+- ai_ml: AI-first companies, ML platforms, generative AI products
+- e_commerce: online retail, marketplaces, D2C platforms
+- healthcare: hospitals, telemedicine, health platforms (NOT pharma)
+- pharma: pharmaceutical R&D, drug development (Roche, Novartis, Sanofi, Pfizer)
+- retail: physical retail, FMCG, supermarkets (Migros, Coop, M&S, IKEA, Carrefour)
+- manufacturing: industrial, heavy equipment, machinery (Siemens industrial, Bosch, BOBST)
+- government: public sector, federal/cantonal/state administration
+- consulting: management consulting, professional services
+- education: schools, edtech, universities
+- media: publishing, broadcasting, gaming, entertainment
+- energy: utilities, oil/gas, renewables, power systems
+- other: anything that doesn't fit cleanly above
+
+### language_required
+The primary language a candidate must speak fluently for this role.
+Detection signals:
+- "Fluent in [language]" / "[language] required"
+- "Deutschkenntnisse erforderlich" → german
+- "Maîtrise du français" → french
+- Job description written entirely in non-English with no English version → that language
+- Multiple languages explicitly required → "multiple"
+- No language mentioned and description is in English → "english"
+- No clear signal → "unknown"
+
+These three fields are REQUIRED in every JSON response. Use the fallback ("unknown" / "other" / "unknown") when uncertain — never omit the field.
+
 Respond with JSON only:
 {
   "score": <int 1-10>,
@@ -92,7 +139,10 @@ Respond with JSON only:
   "work_mode": "<remote|hybrid|on-site|unknown>",
   "company_size": "<startup|scaleup|sme|large|unknown>",
   "contract_type": "<permanent|freelance|contract|internship|unknown>",
-  "geo_zone": "<europe|us_only|global_remote|apac|latam|unknown>"
+  "geo_zone": "<europe|us_only|global_remote|apac|latam|unknown>",
+  "company_country": "<country name or unknown>",
+  "industry_sector": "<one of the 15 codes above>",
+  "language_required": "<english|french|german|italian|spanish|multiple|unknown>"
 }"""
 
 
@@ -197,16 +247,40 @@ def _call_groq_fallback_chain(messages: list) -> tuple[str, str]:
 # Shared parser
 # ---------------------------------------------------------------------------
 
+_VALID_SECTORS = {
+    "web3_crypto", "fintech", "tech_saas", "ai_ml", "e_commerce",
+    "healthcare", "pharma", "retail", "manufacturing", "government",
+    "consulting", "education", "media", "energy", "other",
+}
+_VALID_LANGUAGES = {
+    "english", "french", "german", "italian", "spanish", "multiple", "unknown",
+}
+
+
 def _parse_result(raw: str) -> dict:
     result = json.loads(raw)
+
+    sector = (result.get("industry_sector") or "other").strip().lower()
+    if sector not in _VALID_SECTORS:
+        print(f"  ⚠️  Unknown industry_sector {sector!r} — coercing to 'other'")
+        sector = "other"
+
+    language = (result.get("language_required") or "unknown").strip().lower()
+    if language not in _VALID_LANGUAGES:
+        print(f"  ⚠️  Unknown language_required {language!r} — coercing to 'unknown'")
+        language = "unknown"
+
     return {
-        "score":         int(result["score"]),
-        "reason":        result["reason"],
-        "summary":       result.get("summary", "Description non disponible — consulter l'offre directement."),
-        "work_mode":     result.get("work_mode", "unknown"),
-        "company_size":  result.get("company_size", "unknown"),
-        "contract_type": result.get("contract_type", "unknown"),
-        "geo_zone":      result.get("geo_zone", "unknown"),
+        "score":            int(result["score"]),
+        "reason":           result["reason"],
+        "summary":          result.get("summary", "Description non disponible — consulter l'offre directement."),
+        "work_mode":        result.get("work_mode", "unknown"),
+        "company_size":     result.get("company_size", "unknown"),
+        "contract_type":    result.get("contract_type", "unknown"),
+        "geo_zone":         result.get("geo_zone", "unknown"),
+        "company_country":  (result.get("company_country") or "unknown").strip(),
+        "industry_sector":  sector,
+        "language_required": language,
     }
 
 
@@ -282,11 +356,14 @@ if __name__ == "__main__":
     if result is None:
         print("Scoring failed — all models exhausted")
     else:
-        print(f"Model        : {result['scored_by']}")
-        print(f"Score        : {result['score']}/10")
-        print(f"Reason       : {result['reason']}")
-        print(f"Summary      : {result['summary']}")
-        print(f"Work mode    : {result['work_mode']}")
-        print(f"Company size : {result['company_size']}")
-        print(f"Contract type: {result['contract_type']}")
-        print(f"Geo zone     : {result['geo_zone']}")
+        print(f"Model          : {result['scored_by']}")
+        print(f"Score          : {result['score']}/10")
+        print(f"Reason         : {result['reason']}")
+        print(f"Summary        : {result['summary']}")
+        print(f"Work mode      : {result['work_mode']}")
+        print(f"Company size   : {result['company_size']}")
+        print(f"Contract type  : {result['contract_type']}")
+        print(f"Geo zone       : {result['geo_zone']}")
+        print(f"Company country: {result['company_country']}")
+        print(f"Industry sector: {result['industry_sector']}")
+        print(f"Language req'd : {result['language_required']}")
