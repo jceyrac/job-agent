@@ -88,20 +88,19 @@ junior roles, US-only or no remote option, non-PM titles.""",
 CH_HYBRID = SearchProfile(
     id="ch_hybrid",
     name="Switzerland Hybrid",
-    allowed_geo_zones=["europe", "unknown"],
-    allowed_work_modes=["hybrid", "on-site", "unknown"],
+    allowed_geo_zones=["europe", "global_remote", "unknown"],
+    allowed_work_modes=["hybrid", "remote"],
     location_keywords=[
-        "switzerland", "suisse", "zürich", "zurich",
-        "geneva", "genève", "lausanne", "bern", "basel",
+        "Switzerland", "Suisse", "Schweiz", "Svizzera",
+        "Zürich", "Zurich", "Geneva", "Genève", "Genf",
+        "Basel", "Bâle", "Bern", "Berne", "Lausanne", "Lugano",
+        "Winterthur", "St. Gallen", "Sankt Gallen", "Zug", "Luzern", "Lucerne",
     ],
     boost_keywords=["fintech", "banking", "AI", "crypto"],
     company_sizes=["startup", "scaleup", "sme"],
     score_threshold=5,
-    remote_or_hybrid=False,         # on-site jobs autorisés
+    remote_or_hybrid=True,
     pre_filter={
-        "location_contains": [
-            "remote", "europe", "hybrid", "worldwide", "anywhere",
-        ],
         "exclude_location_contains": [
             "united states", " usa ", "new york", "san francisco",
             "los angeles", "seattle", "boston", "chicago",
@@ -115,23 +114,12 @@ CH_HYBRID = SearchProfile(
             "engineer", "developer", "data scientist",
         ],
     },
-    scoring_context="""You are evaluating jobs for a Senior PM with 10+ years in fintech, Web3, and AI,
-based in Lausanne Switzerland, open to hybrid or onsite roles in Switzerland
-and remote roles across Europe.
+    scoring_context="""This profile is strictly for Product Manager / Product Owner roles based in Switzerland (Zürich, Geneva, Basel, Lausanne, Bern, Zug, Lugano, etc.) where the company has a Swiss office. Hybrid and fully-remote work modes are both acceptable, but the role must be anchored to Switzerland — not 'remote anywhere in EU' or 'remote from any office.' Roles based outside Switzerland should score 1-3 regardless of how strong the company or role looks otherwise. Web3/crypto experience is welcome but not required — fintech, banking, insurance, and operations-heavy tech roles are equally valued.
 
-Score HIGH (8-10) if: Senior PM/PO role in Switzerland (any tech vertical),
-fintech, banking, AI products, ops-tech, B2B SaaS, or Web3 companies with
-Swiss presence. Hybrid or remote. Swiss companies or EU remote.
-
-Score MEDIUM (5-7) if: solid PM role in Europe remote, or Switzerland-based
-but non-tech vertical (food-tech, logistics, healthcare ops). Product Owner
-titles with real ownership and technical context.
-
-Score LOW (1-4) if: junior roles, non-PM titles, US-only, no European
-eligibility, pure non-tech sectors with no digital product angle.
-
-Do NOT penalize for absence of Web3 — Swiss market depth and seniority
-matter more for this profile.""",
+OVERRIDE the default scoring scale for this profile:
+- Score 7-9: Senior PM/PO role in Switzerland, hybrid or remote, with fintech/banking/Web3/AI/insurance/ops-tech/B2B SaaS context — seniority and Swiss anchoring matter most
+- Score 6-7: PM/PO role in Switzerland, hybrid or remote, any vertical (food-tech, logistics, healthcare ops, government digital) — Swiss presence alone is enough to qualify
+- Score 1-3: role based outside Switzerland, pure on-site with no hybrid option, or non-PM/PO title""",
 )
 
 # ---------------------------------------------------------------------------
