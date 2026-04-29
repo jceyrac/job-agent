@@ -135,6 +135,8 @@ def main():
                         help="Delete existing scores for this profile and re-score all jobs")
     parser.add_argument("--mock", action="store_true",
                         help="Score 3 hardcoded test jobs to verify profile context; no DB writes")
+    parser.add_argument("--limit", type=int, default=None, metavar="N",
+                        help="Cap the number of jobs scored this run (for quota management)")
     args = parser.parse_args()
 
     if args.profile not in ALL_PROFILES:
@@ -178,6 +180,11 @@ def main():
     skipped = total_in_db - len(jobs_to_score)
     print(f"Pre-filter applied: {total_in_db} jobs → {len(jobs_to_score)} after SQL filter "
           f"({skipped} skipped, including jobs older than 30 days)")
+
+    if args.limit and len(jobs_to_score) > args.limit:
+        print(f"--limit {args.limit}: capping run at {args.limit}/{len(jobs_to_score)} jobs "
+              f"({len(jobs_to_score) - args.limit} deferred to next run)")
+        jobs_to_score = jobs_to_score[:args.limit]
 
     scored_count = 0
     error_count = 0
