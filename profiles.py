@@ -89,7 +89,7 @@ CH_HYBRID = SearchProfile(
     id="ch_hybrid",
     name="Switzerland Hybrid",
     allowed_geo_zones=["europe", "global_remote", "unknown"],
-    allowed_work_modes=["hybrid", "remote"],
+    allowed_work_modes=["hybrid", "remote", "unknown"],
     location_keywords=[
         "Switzerland", "Suisse", "Schweiz", "Svizzera",
         "Zürich", "Zurich", "Geneva", "Genève", "Genf",
