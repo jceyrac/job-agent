@@ -127,10 +127,19 @@ class JobStorage:
         with self._conn() as conn:
             conn.executescript(SCHEMA)
             # Migrations — add columns introduced after initial schema
-            existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
-            if "base_location" not in existing:
+            jobs_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "base_location" not in jobs_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN base_location TEXT")
                 logger.info("[Storage] Migration: added base_location column to jobs")
+            score_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
+            for col, defn in [
+                ("company_country",   "TEXT"),
+                ("industry_sector",   "TEXT"),
+                ("language_required", "TEXT"),
+            ]:
+                if col not in score_cols:
+                    conn.execute(f"ALTER TABLE job_scores ADD COLUMN {col} {defn}")
+                    logger.info(f"[Storage] Migration: added {col} column to job_scores")
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     @contextmanager
@@ -180,7 +189,10 @@ class JobStorage:
         with self._conn() as conn:
             row = conn.execute(
                 """SELECT score, reason, summary, work_mode, geo_zone,
-                          company_size, contract_type, scored_by
+                          company_size, contract_type, scored_by,
+                          COALESCE(company_country,   'unknown') AS company_country,
+                          COALESCE(industry_sector,   'other')   AS industry_sector,
+                          COALESCE(language_required, 'unknown') AS language_required
                    FROM job_scores WHERE job_id = ? AND profile_id = ?""",
                 (job_id, profile_id),
             ).fetchone()
@@ -329,34 +341,42 @@ class JobStorage:
                 """INSERT INTO job_scores (
                        job_id, profile_id,
                        score, reason, summary, work_mode, geo_zone,
-                       company_size, contract_type, scored_by, scored_at
+                       company_size, contract_type, scored_by, scored_at,
+                       company_country, industry_sector, language_required
                    ) VALUES (
                        :job_id, :profile_id,
                        :score, :reason, :summary, :work_mode, :geo_zone,
-                       :company_size, :contract_type, :scored_by, :scored_at
+                       :company_size, :contract_type, :scored_by, :scored_at,
+                       :company_country, :industry_sector, :language_required
                    )
                    ON CONFLICT(job_id, profile_id) DO UPDATE SET
-                       score         = excluded.score,
-                       reason        = excluded.reason,
-                       summary       = excluded.summary,
-                       work_mode     = excluded.work_mode,
-                       geo_zone      = excluded.geo_zone,
-                       company_size  = excluded.company_size,
-                       contract_type = excluded.contract_type,
-                       scored_by     = excluded.scored_by,
-                       scored_at     = excluded.scored_at""",
+                       score            = excluded.score,
+                       reason           = excluded.reason,
+                       summary          = excluded.summary,
+                       work_mode        = excluded.work_mode,
+                       geo_zone         = excluded.geo_zone,
+                       company_size     = excluded.company_size,
+                       contract_type    = excluded.contract_type,
+                       scored_by        = excluded.scored_by,
+                       scored_at        = excluded.scored_at,
+                       company_country  = excluded.company_country,
+                       industry_sector  = excluded.industry_sector,
+                       language_required = excluded.language_required""",
                 {
-                    "job_id":       job.id,
-                    "profile_id":   profile_id,
-                    "score":        score_result.get("score"),
-                    "reason":       score_result.get("reason"),
-                    "summary":      score_result.get("summary"),
-                    "work_mode":    score_result.get("work_mode", "unknown"),
-                    "geo_zone":     score_result.get("geo_zone", "unknown"),
-                    "company_size": score_result.get("company_size", "unknown"),
-                    "contract_type": score_result.get("contract_type", "unknown"),
-                    "scored_by":    score_result.get("scored_by", "unknown"),
-                    "scored_at":    now,
+                    "job_id":            job.id,
+                    "profile_id":        profile_id,
+                    "score":             score_result.get("score"),
+                    "reason":            score_result.get("reason"),
+                    "summary":           score_result.get("summary"),
+                    "work_mode":         score_result.get("work_mode", "unknown"),
+                    "geo_zone":          score_result.get("geo_zone", "unknown"),
+                    "company_size":      score_result.get("company_size", "unknown"),
+                    "contract_type":     score_result.get("contract_type", "unknown"),
+                    "scored_by":         score_result.get("scored_by", "unknown"),
+                    "scored_at":         now,
+                    "company_country":   score_result.get("company_country", "unknown"),
+                    "industry_sector":   score_result.get("industry_sector", "other"),
+                    "language_required": score_result.get("language_required", "unknown"),
                 },
             )
 
@@ -412,6 +432,9 @@ class JobStorage:
             query = """
                 SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
                        s.company_size, s.contract_type, s.scored_by, s.scored_at,
+                       COALESCE(s.company_country,   'unknown') AS company_country,
+                       COALESCE(s.industry_sector,   'other')   AS industry_sector,
+                       COALESCE(s.language_required, 'unknown') AS language_required,
                        COALESCE(t.status, 'new') AS status, t.notes
                 FROM jobs j
                 JOIN job_scores s ON j.id = s.job_id
@@ -545,6 +568,9 @@ class JobStorage:
             rows = conn.execute("""
                 SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
                        s.company_size, s.contract_type, s.scored_by,
+                       COALESCE(s.company_country,   'unknown') AS company_country,
+                       COALESCE(s.industry_sector,   'other')   AS industry_sector,
+                       COALESCE(s.language_required, 'unknown') AS language_required,
                        t.status AS tracked_status,
                        COALESCE(t.status, 'new') AS status, t.notes,
                        s.profile_id as best_profile_id
@@ -576,6 +602,9 @@ class JobStorage:
             rows = conn.execute(
                 """SELECT j.*, s.score, s.reason, s.summary, s.work_mode, s.geo_zone,
                           s.company_size, s.contract_type, s.scored_by,
+                          COALESCE(s.company_country,   'unknown') AS company_country,
+                          COALESCE(s.industry_sector,   'other')   AS industry_sector,
+                          COALESCE(s.language_required, 'unknown') AS language_required,
                           t.status AS tracked_status,
                           COALESCE(t.status, 'new') AS status, t.notes
                    FROM jobs j

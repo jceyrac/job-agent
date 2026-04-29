@@ -1,0 +1,439 @@
+"""
+tests/test_storage.py — storage layer unit tests
+
+All tests use an in-memory SQLite DB (:memory:) so they never touch
+data/jobs.db and are safe to run at any time.
+
+Usage:
+    python tests/test_storage.py
+"""
+
+import sys
+import os
+import dataclasses
+import sqlite3
+import traceback
+from datetime import date
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from models import JobPosting
+from storage import JobStorage
+
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+def _job(url: str = "https://example.com/jobs/1", **kwargs) -> JobPosting:
+    """Return a fully-populated JobPosting fixture."""
+    defaults = dict(
+        source="TestSource",
+        title="Senior Product Manager",
+        company="Acme Corp",
+        location="Remote",
+        url=url,
+        posted_date=date(2026, 4, 1),
+        description="Lead our crypto product team.",
+        tags=["crypto", "web3"],
+        salary="$120k–$160k",
+        work_mode="remote",
+        base_location="United States",
+        company_size="startup",
+        contract_type="permanent",
+        geo_zone="us_only",
+    )
+    defaults.update(kwargs)
+    return JobPosting(**defaults)
+
+
+def _score(score: int = 8) -> dict:
+    return {
+        "score":            score,
+        "reason":           "Strong crypto PM fit",
+        "summary":          "Crypto-focused PM role at a startup.",
+        "work_mode":        "remote",
+        "geo_zone":         "us_only",
+        "company_size":     "startup",
+        "contract_type":    "permanent",
+        "scored_by":        "mock",
+        "company_country":  "United States",
+        "industry_sector":  "web3_crypto",
+        "language_required": "english",
+    }
+
+
+PROFILE_ID  = "test_profile"
+PROFILE_ID2 = "test_profile_2"
+
+
+class _FakeProfile:
+    id = PROFILE_ID
+    name = "Test Profile"
+    def to_criteria_dict(self): return {}
+
+
+class _FakeProfile2:
+    id = PROFILE_ID2
+    name = "Test Profile 2"
+    def to_criteria_dict(self): return {}
+
+
+# ── Test runner ───────────────────────────────────────────────────────────────
+
+_results: list[tuple[str, bool, str]] = []
+
+
+def _run(fn):
+    try:
+        fn()
+        _results.append((fn.__name__, True, ""))
+        print(f"  ✅ {fn.__name__}")
+    except Exception as e:
+        _results.append((fn.__name__, False, str(e)))
+        print(f"  ❌ {fn.__name__}: {e}")
+        traceback.print_exc()
+
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+def test_db_initialises():
+    db = JobStorage(":memory:")
+    with db._conn() as c:
+        tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "jobs"             in tables, "missing table: jobs"
+    assert "job_scores"       in tables, "missing table: job_scores"
+    assert "job_tracking"     in tables, "missing table: job_tracking"
+    assert "job_applications"  in tables, "missing table: job_applications"
+    assert "search_profiles"  in tables, "missing table: search_profiles"
+
+
+def test_schema_matches_model():
+    """Every JobPosting field (excluding computed/excluded) maps to a jobs column."""
+    db = JobStorage(":memory:")
+    with db._conn() as conn:
+        db_cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+
+    model_fields = {f.name for f in dataclasses.fields(JobPosting)}
+    scorer_owned = {"work_mode", "company_size", "contract_type", "geo_zone", "summary"}
+    excluded = {"tags", "salary"}
+
+    required_in_jobs = model_fields - scorer_owned - excluded
+    missing = required_in_jobs - db_cols
+    assert not missing, f"Fields in JobPosting but missing from jobs table: {missing}"
+
+
+def test_job_scores_has_no_status_column():
+    """status/notes must live in job_tracking, not job_scores."""
+    db = JobStorage(":memory:")
+    with db._conn() as conn:
+        score_cols = {r[1] for r in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
+        track_cols = {r[1] for r in conn.execute("PRAGMA table_info(job_tracking)").fetchall()}
+    assert "status" not in score_cols, "status column should not be in job_scores"
+    assert "notes"  not in score_cols, "notes column should not be in job_scores"
+    assert "status" in track_cols, "status column missing from job_tracking"
+    assert "notes"  in track_cols, "notes column missing from job_tracking"
+
+
+def test_job_applications_has_no_profile_id():
+    """job_applications must be keyed on job_id only."""
+    db = JobStorage(":memory:")
+    with db._conn() as conn:
+        app_cols = {r[1] for r in conn.execute("PRAGMA table_info(job_applications)").fetchall()}
+    assert "profile_id" not in app_cols, "profile_id should not be in job_applications"
+    assert "job_id" in app_cols, "job_id missing from job_applications"
+
+
+def test_upsert_and_retrieve():
+    """save_scored → get_digest round-trips all key fields correctly."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    job = _job()
+    db.save_scored(job, _score(8), PROFILE_ID)
+
+    rows = db.get_digest(PROFILE_ID, min_score=5)
+    assert len(rows) == 1, f"Expected 1 row, got {len(rows)}"
+    r = rows[0]
+
+    assert r["title"]         == job.title,        f"title mismatch: {r['title']!r}"
+    assert r["company"]       == job.company,       f"company mismatch"
+    assert r["url"]           == job.url,           f"url mismatch"
+    assert r["location"]      == job.location,      f"location mismatch"
+    assert r["base_location"] == job.base_location, f"base_location mismatch: {r['base_location']!r}"
+    assert r["source"]        == job.source,        f"source mismatch"
+    assert r["score"]         == 8,                 f"score mismatch: {r['score']}"
+    assert r["work_mode"]     == "remote",          f"work_mode mismatch"
+
+
+def test_cache_split():
+    """A scored job goes to cached; an unseen job goes to new."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    scored_job = _job("https://example.com/jobs/scored")
+    new_job    = _job("https://example.com/jobs/new")
+
+    db.save_scored(scored_job, _score(7), PROFILE_ID)
+
+    new_jobs, cached_jobs = db.split_new_cached([scored_job, new_job], PROFILE_ID)
+    assert len(new_jobs)    == 1, f"Expected 1 new, got {len(new_jobs)}"
+    assert len(cached_jobs) == 1, f"Expected 1 cached, got {len(cached_jobs)}"
+    assert new_jobs[0].url    == new_job.url
+    assert cached_jobs[0]["url"] == scored_job.url
+
+
+def test_no_rescore_on_second_run():
+    """Simulates two consecutive runs — the second produces 0 new jobs."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    jobs = [_job(f"https://example.com/jobs/{i}") for i in range(5)]
+
+    new1, cached1 = db.split_new_cached(jobs, PROFILE_ID)
+    assert len(new1) == 5 and len(cached1) == 0, "First run: all should be new"
+
+    for job in new1:
+        db.save_scored(job, _score(), PROFILE_ID)
+
+    new2, cached2 = db.split_new_cached(jobs, PROFILE_ID)
+    assert len(new2)    == 0, f"Second run: expected 0 new, got {len(new2)}"
+    assert len(cached2) == 5, f"Second run: expected 5 cached, got {len(cached2)}"
+
+
+def test_id_stability():
+    """Two JobPosting objects with the same URL always produce the same id."""
+    url = "https://example.com/jobs/stable"
+    j1 = JobPosting(source="A", title="PM",    company="X", location="Remote", url=url)
+    j2 = JobPosting(source="B", title="Other", company="Y", location="NYC",    url=url, posted_date=date.today())
+    assert j1.id == j2.id, f"IDs differ for same URL: {j1.id!r} vs {j2.id!r}"
+
+    j3 = JobPosting(source="S", title="T", company="C", location="L", url="")
+    j4 = JobPosting(source="S", title="T", company="C", location="L", url="")
+    assert j3.id == j4.id, "IDs differ for same title+company+source"
+
+
+def test_status_update():
+    """set_status persists status and notes in job_tracking (profile-independent)."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    job = _job()
+    db.save_scored(job, _score(), PROFILE_ID)
+
+    db.set_status(job.id, "queued", notes="looks good")
+
+    with db._conn() as conn:
+        row = conn.execute(
+            "SELECT status, notes FROM job_tracking WHERE job_id = ?",
+            (job.id,),
+        ).fetchone()
+    assert row is not None,            "no job_tracking row found"
+    assert row["status"] == "queued",  f"status not updated: {row['status']!r}"
+    assert row["notes"]  == "looks good", f"notes not updated: {row['notes']!r}"
+
+
+def test_status_is_profile_independent():
+    """Setting status for one profile is visible when querying via another profile."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    db.upsert_profile(_FakeProfile2())
+
+    job = _job()
+    db.save_scored(job, _score(7), PROFILE_ID)
+    db.save_scored(job, _score(5), PROFILE_ID2)
+
+    db.set_status(job.id, "applied")
+
+    # Status must be "applied" regardless of which profile we query through
+    tracker1 = db.get_all_for_tracker(PROFILE_ID)
+    tracker2 = db.get_all_for_tracker(PROFILE_ID2)
+
+    j1 = next(j for j in tracker1 if j["id"] == job.id)
+    j2 = next(j for j in tracker2 if j["id"] == job.id)
+
+    assert j1["status"] == "applied", f"wrong status via profile 1: {j1['status']!r}"
+    assert j2["status"] == "applied", f"wrong status via profile 2: {j2['status']!r}"
+
+
+def test_invalid_status_rejected():
+    """set_status raises ValueError for an unrecognised status string."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    db.save_scored(job, _score(), PROFILE_ID)
+
+    try:
+        db.set_status(job.id, "banana")
+        raise AssertionError("Expected ValueError was not raised")
+    except ValueError:
+        pass  # expected
+
+
+def test_application_profile_independent():
+    """save_application and get_application are keyed on job_id only."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    db.upsert_profile(_FakeProfile2())
+
+    job = _job()
+    db.save_scored(job, _score(9), PROFILE_ID)
+    db.save_scored(job, _score(6), PROFILE_ID2)
+
+    db.save_application(job.id, "Great fit analysis", "Dear Hiring Manager...")
+
+    app = db.get_application(job.id)
+    assert app is not None,                          "get_application returned None"
+    assert app["analysis"]     == "Great fit analysis", f"analysis mismatch: {app['analysis']!r}"
+    assert app["cover_letter"] == "Dear Hiring Manager...", f"cover_letter mismatch"
+
+    # Status should have been promoted to 'ready'
+    with db._conn() as conn:
+        row = conn.execute("SELECT status FROM job_tracking WHERE job_id = ?", (job.id,)).fetchone()
+    assert row is not None,           "no job_tracking row after save_application"
+    assert row["status"] == "ready",  f"status not promoted to ready: {row['status']!r}"
+
+
+def test_get_digest():
+    """get_digest returns only jobs above min_score, ordered by score desc."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    for i, score in enumerate([4, 7, 9]):
+        job = _job(url=f"https://example.com/jobs/{i}", title=f"Job score {score}")
+        db.save_scored(job, _score(score), PROFILE_ID)
+
+    digest = db.get_digest(PROFILE_ID, min_score=5)
+    assert len(digest) == 2, f"Expected 2 results (score≥5), got {len(digest)}"
+    assert digest[0]["score"] == 9, f"First result should be score=9, got {digest[0]['score']}"
+    assert digest[1]["score"] == 7, f"Second result should be score=7, got {digest[1]['score']}"
+
+
+def test_rejected_excluded_from_scoring():
+    """Jobs with status='rejected' or 'archived' are not returned by get_jobs_for_scoring."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    job_a = _job("https://example.com/a")
+    job_b = _job("https://example.com/b")
+
+    db.save_unscored(job_a)
+    db.save_unscored(job_b)
+    db.set_status(job_a.id, "rejected")
+
+    to_score = db.get_jobs_for_scoring(PROFILE_ID)
+    ids = {j["id"] for j in to_score}
+    assert job_a.id not in ids, "rejected job should be excluded from scoring"
+    assert job_b.id in ids,     "non-rejected job should be included"
+
+
+def test_best_score_view_status():
+    """get_all_jobs_best_score returns the single profile-independent status."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    db.upsert_profile(_FakeProfile2())
+
+    job = _job()
+    db.save_scored(job, _score(9), PROFILE_ID)   # high score, new
+    db.save_scored(job, _score(5), PROFILE_ID2)  # low score, ready
+    db.set_status(job.id, "ready")
+
+    results = db.get_all_jobs_best_score()
+    r = next(j for j in results if j["id"] == job.id)
+    assert r["score"]  == 9,       f"expected best score=9, got {r['score']}"
+    assert r["status"] == "ready", f"expected status=ready, got {r['status']!r}"
+
+
+def test_score_new_fields_round_trip():
+    """company_country, industry_sector, language_required persist and read back correctly."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    score = _score()
+    score["company_country"]   = "Switzerland"
+    score["industry_sector"]   = "fintech"
+    score["language_required"] = "french"
+    db.save_scored(job, score, PROFILE_ID)
+
+    rows = db.get_digest(PROFILE_ID, min_score=5)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["company_country"]   == "Switzerland", f"Got {r['company_country']!r}"
+    assert r["industry_sector"]   == "fintech",     f"Got {r['industry_sector']!r}"
+    assert r["language_required"] == "french",      f"Got {r['language_required']!r}"
+
+
+def test_pre_migration_null_defaults():
+    """Rows with NULLs in the three new columns (pre-migration) read back with correct defaults."""
+    from storage import _now
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+
+    # Insert job and a minimal score row without the three new fields
+    with db._conn() as conn:
+        conn.execute(
+            """INSERT INTO jobs (id, title, company, url, source, location,
+               base_location, posted_date, description, first_seen, last_seen)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (job.id, job.title, job.company, job.url, job.source, job.location,
+             job.base_location, str(job.posted_date), job.description, _now(), _now()),
+        )
+        conn.execute(
+            """INSERT INTO job_scores (job_id, profile_id, score, scored_at)
+               VALUES (?, ?, ?, ?)""",
+            (job.id, PROFILE_ID, 7, _now()),
+        )
+
+    rows = db.get_digest(PROFILE_ID, min_score=5)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["company_country"]   == "unknown", f"Got {r['company_country']!r}"
+    assert r["industry_sector"]   == "other",   f"Got {r['industry_sector']!r}"
+    assert r["language_required"] == "unknown", f"Got {r['language_required']!r}"
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+TESTS = [
+    test_db_initialises,
+    test_schema_matches_model,
+    test_job_scores_has_no_status_column,
+    test_job_applications_has_no_profile_id,
+    test_upsert_and_retrieve,
+    test_cache_split,
+    test_no_rescore_on_second_run,
+    test_id_stability,
+    test_status_update,
+    test_status_is_profile_independent,
+    test_invalid_status_rejected,
+    test_application_profile_independent,
+    test_get_digest,
+    test_rejected_excluded_from_scoring,
+    test_best_score_view_status,
+    test_score_new_fields_round_trip,
+    test_pre_migration_null_defaults,
+]
+
+
+def run_storage_tests() -> list[tuple[str, bool, str]]:
+    global _results
+    _results = []
+    for fn in TESTS:
+        _run(fn)
+    return _results
+
+
+if __name__ == "__main__":
+    print("Storage tests (in-memory DB)\n")
+    results = run_storage_tests()
+
+    passed = sum(1 for _, ok, _ in results if ok)
+    total  = len(results)
+
+    print(f"\n{'─'*50}")
+    print(f"  {passed}/{total} passed")
+    if passed < total:
+        for name, ok, err in results:
+            if not ok:
+                print(f"  ❌ {name}: {err}")
+
+    sys.exit(0 if passed == total else 1)
