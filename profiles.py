@@ -11,6 +11,7 @@ Each profile drives:
 """
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass
@@ -26,6 +27,9 @@ class SearchProfile:
     remote_or_hybrid: bool = True         # pre-scoring: exclude fully on-site jobs
     scoring_context: str = ""             # injected at top of scorer system prompt
     pre_filter: dict = field(default_factory=dict)  # SQL pre-filter before LLM scoring
+    allowed_countries: Optional[list[str]] = None   # None = no restriction; list = allowlist (unknown always passes)
+    excluded_sectors: list[str] = field(default_factory=list)   # sector codes to exclude from digest
+    excluded_languages: list[str] = field(default_factory=list) # language codes to exclude from digest
 
     def to_criteria_dict(self) -> dict:
         """Serialisable en JSON pour stockage dans search_profiles.criteria."""
@@ -79,6 +83,9 @@ Strong PM fundamentals with clear technical depth.
 
 Score LOW (1-4) if: no Web3/AI/crypto context, non-tech verticals,
 junior roles, US-only or no remote option, non-PM titles.""",
+    allowed_countries=None,
+    excluded_sectors=["pharma", "retail", "manufacturing", "government", "healthcare"],
+    excluded_languages=["german"],
 )
 
 # ---------------------------------------------------------------------------
@@ -120,6 +127,9 @@ OVERRIDE the default scoring scale for this profile:
 - Score 7-9: Senior PM/PO role in Switzerland, hybrid or remote, with fintech/banking/Web3/AI/insurance/ops-tech/B2B SaaS context — seniority and Swiss anchoring matter most
 - Score 6-7: PM/PO role in Switzerland, hybrid or remote, any vertical (food-tech, logistics, healthcare ops, government digital) — Swiss presence alone is enough to qualify
 - Score 1-3: role based outside Switzerland, pure on-site with no hybrid option, or non-PM/PO title""",
+    allowed_countries=["Switzerland"],
+    excluded_sectors=["pharma", "retail", "manufacturing", "government"],
+    excluded_languages=["german"],
 )
 
 # ---------------------------------------------------------------------------

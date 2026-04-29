@@ -342,6 +342,122 @@ def test_best_score_view_status():
     assert r["status"] == "ready", f"expected status=ready, got {r['status']!r}"
 
 
+def _apply_digest_filters(jobs: list[dict], profile) -> list[dict]:
+    """Mirror of score.py's post-scoring filter logic for unit testing."""
+    result = []
+    for j in jobs:
+        geo_zone          = j.get("geo_zone", "unknown")
+        work_mode         = j.get("work_mode", "unknown")
+        company_country   = j.get("company_country", "unknown")
+        industry_sector   = j.get("industry_sector", "other")
+        language_required = j.get("language_required", "unknown")
+
+        allowed_geo   = getattr(profile, "allowed_geo_zones", [])
+        allowed_mode  = getattr(profile, "allowed_work_modes", [])
+        allowed_ctry  = getattr(profile, "allowed_countries", None)
+        excl_sectors  = getattr(profile, "excluded_sectors", [])
+        excl_langs    = getattr(profile, "excluded_languages", [])
+
+        if allowed_geo and geo_zone and geo_zone not in allowed_geo:
+            continue
+        if allowed_mode and work_mode and work_mode not in allowed_mode:
+            continue
+        if allowed_ctry is not None and company_country != "unknown" and company_country not in allowed_ctry:
+            continue
+        if industry_sector in excl_sectors:
+            continue
+        if language_required in excl_langs:
+            continue
+        result.append(j)
+    return result
+
+
+class _ProfileAllFilters:
+    allowed_geo_zones  = ["europe"]
+    allowed_work_modes = ["hybrid", "remote"]
+    allowed_countries  = ["Switzerland"]
+    excluded_sectors   = ["pharma", "retail"]
+    excluded_languages = ["german"]
+
+
+class _ProfileNoFilters:
+    allowed_geo_zones  = []
+    allowed_work_modes = []
+    allowed_countries  = None
+    excluded_sectors   = []
+    excluded_languages = []
+
+
+def _job_dict(**overrides) -> dict:
+    base = {
+        "geo_zone":          "europe",
+        "work_mode":         "hybrid",
+        "company_country":   "Switzerland",
+        "industry_sector":   "fintech",
+        "language_required": "english",
+        "score":             7,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_filter_country_known_not_in_allowlist_excluded():
+    jobs = [_job_dict(company_country="Germany")]
+    assert _apply_digest_filters(jobs, _ProfileAllFilters()) == []
+
+
+def test_filter_country_known_in_allowlist_kept():
+    jobs = [_job_dict(company_country="Switzerland")]
+    assert len(_apply_digest_filters(jobs, _ProfileAllFilters())) == 1
+
+
+def test_filter_country_unknown_always_passes():
+    jobs = [_job_dict(company_country="unknown")]
+    assert len(_apply_digest_filters(jobs, _ProfileAllFilters())) == 1
+
+
+def test_filter_country_none_means_no_restriction():
+    jobs = [_job_dict(company_country="United States")]
+    assert len(_apply_digest_filters(jobs, _ProfileNoFilters())) == 1
+
+
+def test_filter_sector_excluded():
+    jobs = [_job_dict(industry_sector="pharma")]
+    assert _apply_digest_filters(jobs, _ProfileAllFilters()) == []
+
+
+def test_filter_sector_not_excluded_kept():
+    jobs = [_job_dict(industry_sector="fintech")]
+    assert len(_apply_digest_filters(jobs, _ProfileAllFilters())) == 1
+
+
+def test_filter_sector_empty_list_keeps_all():
+    jobs = [_job_dict(industry_sector="pharma")]
+    assert len(_apply_digest_filters(jobs, _ProfileNoFilters())) == 1
+
+
+def test_filter_language_excluded():
+    jobs = [_job_dict(language_required="german")]
+    assert _apply_digest_filters(jobs, _ProfileAllFilters()) == []
+
+
+def test_filter_language_not_excluded_kept():
+    jobs = [_job_dict(language_required="english")]
+    assert len(_apply_digest_filters(jobs, _ProfileAllFilters())) == 1
+
+
+def test_filter_language_empty_list_keeps_all():
+    jobs = [_job_dict(language_required="german")]
+    assert len(_apply_digest_filters(jobs, _ProfileNoFilters())) == 1
+
+
+def test_filter_all_inactive_keeps_all():
+    jobs = [
+        _job_dict(company_country="United States", industry_sector="pharma", language_required="german"),
+    ]
+    assert len(_apply_digest_filters(jobs, _ProfileNoFilters())) == 1
+
+
 def test_score_new_fields_round_trip():
     """company_country, industry_sector, language_required persist and read back correctly."""
     db = JobStorage(":memory:")
@@ -411,6 +527,17 @@ TESTS = [
     test_best_score_view_status,
     test_score_new_fields_round_trip,
     test_pre_migration_null_defaults,
+    test_filter_country_known_not_in_allowlist_excluded,
+    test_filter_country_known_in_allowlist_kept,
+    test_filter_country_unknown_always_passes,
+    test_filter_country_none_means_no_restriction,
+    test_filter_sector_excluded,
+    test_filter_sector_not_excluded_kept,
+    test_filter_sector_empty_list_keeps_all,
+    test_filter_language_excluded,
+    test_filter_language_not_excluded_kept,
+    test_filter_language_empty_list_keeps_all,
+    test_filter_all_inactive_keeps_all,
 ]
 
 

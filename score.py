@@ -230,16 +230,33 @@ def main():
     # ── Build digest ─────────────────────────────────────────────────────────
     all_scored = db.get_digest(profile.id, min_score=profile.score_threshold, status=None)
 
-    # Post-scoring geo/work_mode filters (mirrors main.py lines 119-130)
-    total_excluded_geo = 0
+    # Post-scoring filters — applied at digest assembly, not at scoring
+    excl_geo = excl_work_mode = excl_country = excl_sector = excl_language = 0
     digest_jobs = []
     for job_dict in all_scored:
-        geo_zone  = job_dict.get("geo_zone", "unknown")
-        work_mode = job_dict.get("work_mode", "unknown")
+        geo_zone         = job_dict.get("geo_zone", "unknown")
+        work_mode        = job_dict.get("work_mode", "unknown")
+        company_country  = job_dict.get("company_country", "unknown")
+        industry_sector  = job_dict.get("industry_sector", "other")
+        language_required = job_dict.get("language_required", "unknown")
+
         if profile.allowed_geo_zones and geo_zone and geo_zone not in profile.allowed_geo_zones:
-            total_excluded_geo += 1
+            excl_geo += 1
             continue
         if profile.allowed_work_modes and work_mode and work_mode not in profile.allowed_work_modes:
+            excl_work_mode += 1
+            continue
+        # country allowlist: unknown always passes through
+        if (profile.allowed_countries is not None
+                and company_country != "unknown"
+                and company_country not in profile.allowed_countries):
+            excl_country += 1
+            continue
+        if industry_sector in profile.excluded_sectors:
+            excl_sector += 1
+            continue
+        if language_required in profile.excluded_languages:
+            excl_language += 1
             continue
         digest_jobs.append(job_dict)
 
@@ -248,9 +265,12 @@ def main():
     mid = [j for j in digest_jobs if 5 <= j["score"] <= 7]
 
     stats = db.get_stats(profile.id)
+    total_excl = excl_geo + excl_work_mode + excl_country + excl_sector + excl_language
     print(f"\n--- Stats [{profile.name}] ---")
-    if total_excluded_geo:
-        print(f"🌍 {total_excluded_geo} jobs excluded (geo/work_mode filter)")
+    if total_excl:
+        print(f"🌍 {total_excl} jobs excluded "
+              f"(geo/work_mode: {excl_geo + excl_work_mode}, "
+              f"country: {excl_country}, sector: {excl_sector}, language: {excl_language})")
     print(f"✅ {len(digest_jobs)} jobs in digest  (🔥 {len(hot)} hot  ⭐ {len(mid)} solid)")
     print(f"📊 DB: {stats['total']} jobs total · {stats['hot']} 🔥 hot · {stats['solid']} ⭐ solid")
 
