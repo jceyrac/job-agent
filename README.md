@@ -2,31 +2,46 @@
 
 Multi-profile job scraping and scoring system for **Senior Product Manager** roles.
 
-Scrapes 12+ job boards, stores everything in SQLite, scores each posting with a Groq LLM per search profile, and delivers a digest via email and Joplin. A Streamlit tracker UI lets you browse, filter, and track application status.
+Scrapes 12+ job boards, extracts structured fields from descriptions with LLMs, scores each posting per search profile (deterministic Tier 0 + LLM Tier 1), and delivers a digest via email and Joplin. A Streamlit tracker UI lets you browse, filter, and track application status.
 
 ---
 
 ## How it works
 
+The pipeline has two distinct phases after scraping: **extraction** (profile-independent, fills structured fields) and **evaluation** (per-profile scoring using those fields).
+
 ```
-scrape.py → SQLite DB → score.py (Groq LLM, per profile) → tracker.py (Streamlit UI)
-                                                           → email digest + Joplin note
+scrape.py → SQLite DB ─┬─ score.py --extract (field extraction)
+                        └─ score.py --profile <id> (per-profile scoring)
+                                   └→ tracker.py (Streamlit UI)
+                                   └→ email digest + Joplin note
 ```
 
 1. **`scrape.py`** fetches raw job postings from all enabled scrapers and stores only new ones in the DB (deduplication by URL).
-2. **`score.py`** reads unscored jobs from the DB, applies SQL pre-filters, runs each through a Groq LLM with profile-specific context, and writes scores back. Multiple profiles can score the same job independently.
-3. **`tracker.py`** is a Streamlit app for reviewing scored jobs, filtering by date/location/geo/status, and tracking applications.
+2. **`score.py --extract`** reads jobs that haven't been extracted yet and fills structured fields (`company_country`, `industry_sector`, `language_required`, `work_mode`, `geo_zone`, `company_size`, `contract_type`, `summary`). This is profile-independent — run it once, not per profile.
+3. **`score.py --profile <id>`** evaluates jobs for a specific profile. It auto-extracts any unextracted survivors first, then applies a two-tier scoring system:
+   - **Tier 0** — deterministic filters using the extracted fields (language, sector, country, work mode mismatches are rejected with score 0).
+   - **Tier 1** — LLM evaluation for jobs that pass Tier 0.
+4. **`tracker.py`** is a Streamlit app for reviewing scored jobs, filtering by date/location/geo/status, and tracking applications.
 
-### Scoring model chain (Groq, with automatic fallback)
+### Model chains (Groq, with automatic fallback)
 
-| Priority | Model |
-|----------|-------|
-| 1 | `llama-3.3-70b-versatile` |
-| 2 | `meta-llama/llama-4-scout-17b-16e-instruct` |
-| 3 | `groq/compound` |
-| 4 | `llama-3.1-8b-instant` |
+**Extraction** (`--extract`). Groq first, DeepSeek as last resort. Writes `extracted_by` to the DB to track which model filled the fields.
 
-If a model hits its daily quota, the next one in the chain is tried automatically.
+| Priority | Model | Provider |
+|----------|-------|----------|
+| 1 | `llama-3.3-70b-versatile` | Groq |
+| 2 | `meta-llama/llama-4-scout-17b-16e-instruct` | Groq |
+| 3 | `deepseek-chat` (V3) | DeepSeek |
+
+**Evaluation** (`--profile`). Small/cheap models only. Writes `scored_by` to the DB (`tier_0` for deterministic rejection, the model name for Tier 1).
+
+| Priority | Model | Provider |
+|----------|-------|----------|
+| 1 | `llama-3.1-8b-instant` | Groq |
+| 2 | `meta-llama/llama-4-scout-17b-16e-instruct` | Groq |
+
+If a model hits its daily quota, the next one in the chain is tried automatically. Extraction falls back from Groq to DeepSeek if all Groq models are exhausted.
 
 ---
 
@@ -60,15 +75,34 @@ After saving, run the scorer:
 python score.py --profile <profile_id>
 ```
 
+### Extract structured fields from job descriptions
+
+Profile-independent — run once after scraping, not per profile. Fills `company_country`, `industry_sector`, `language_required`, `work_mode`, `geo_zone`, `company_size`, `contract_type`, and `summary` by reading the job description. Skips jobs already extracted (idempotent). Respects `--limit N`.
+
+```bash
+python score.py --extract
+```
+
 ### Score unscored jobs for an existing profile
 
-Only jobs not yet scored for this profile are processed. Safe to re-run after scraping new jobs.
+Only jobs not yet scored for this profile are processed. Auto-extracts any unextracted survivors first (the `--profile` path includes extraction + evaluation). Safe to re-run after scraping new jobs.
 
 ```bash
 python score.py --profile <profile_id>
 ```
 
+### Cap the number of jobs processed
+
+Limits the run to at most N jobs. The remainder are deferred to the next run — useful for staying within API rate limits.
+
+```bash
+python score.py --extract --limit 20
+python score.py --profile <profile_id> --limit 15
+```
+
 ### Rescore all jobs for a profile (wipes existing scores)
+
+Deletes all existing scores for the profile and re-evaluates every job that passes the SQL pre-filter.
 
 ```bash
 python score.py --profile <profile_id> --rescore
@@ -127,12 +161,12 @@ Three core tables:
 
 | Table | Key | Purpose |
 |-------|-----|---------|
-| `jobs` | `id` (SHA-256 of URL) | Raw job postings, shared across all profiles |
-| `job_scores` | `(job_id, profile_id)` | LLM scores and metadata — pure scoring, no pipeline state |
+| `jobs` | `id` (SHA-256 of URL) | Raw job postings + extracted fields (`company_country`, `industry_sector`, `language_required`, `work_mode`, `geo_zone`, `company_size`, `contract_type`, `summary`). `extracted_by` records which model filled the fields; `extracted_at` is the timestamp. |
+| `job_scores` | `(job_id, profile_id)` | Per-profile scores and evaluation metadata. `scored_by` is `tier_0` for deterministic rejections or the model name for Tier 1 LLM evaluations. |
 | `job_tracking` | `job_id` | Pipeline status (`new→queued→ready→applied→rejected→archived`) and notes — profile-independent |
 | `job_applications` | `job_id` | Application analysis and cover letter — profile-independent |
 
-The status of a job is **profile-independent**: marking a job "applied" in one profile view marks it applied everywhere. Scores remain per-profile since the same job can be evaluated differently under different search criteria.
+The status of a job is **profile-independent**: marking a job "applied" in one profile view marks it applied everywhere. Scores remain per-profile since the same job can be evaluated differently under different search criteria. Extraction is profile-independent — fields are filled once and reused by all profiles.
 
 ---
 
@@ -204,11 +238,14 @@ cp .env.example .env
 # 1. Fetch new jobs from all scrapers
 python scrape.py
 
-# 2. Score new jobs for each profile
+# 2. Extract structured fields from new job descriptions (once, not per profile)
+python score.py --extract
+
+# 3. Evaluate jobs for each profile (includes auto-extraction of any missed jobs)
 python score.py --profile web3_remote
 python score.py --profile ch_hybrid
 
-# 3. Review in the tracker UI
+# 4. Review in the tracker UI
 streamlit run tracker.py
 ```
 
@@ -235,12 +272,12 @@ Live integration tests — each scraper makes real HTTP calls. Exit code `0` if 
 ```
 job_agent/
 ├── scrape.py                              # Scrape all enabled sources → SQLite
-├── score.py                               # Score jobs per profile with Groq LLM
+├── score.py                               # Extract fields (--extract) and evaluate per profile (--profile)
 ├── tracker.py                             # Streamlit review UI
 ├── create_profile.py                      # CLI: create / list / delete profiles
 ├── main.py                                # Orchestrator: scrape → score
 ├── profiles.py                            # Built-in profile definitions
-├── scorer.py                              # Groq LLM scoring (4-model fallback chain)
+├── scorer.py                              # Field extraction (Groq → DeepSeek) + evaluation (Groq 8b → scout)
 ├── storage.py                             # SQLite persistence layer
 ├── models.py                              # JobPosting dataclass
 ├── filters.py                             # Pre-LLM filter engine
