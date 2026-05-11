@@ -131,7 +131,7 @@ Generates a full application package: tailored cover letter, CV bullet selection
 ```bash
 python prepare.py --job <job_id>                    # auto-pick profile from job's scores
 python prepare.py --job <job_id> --profile <id>     # explicit profile
-python prepare.py --ready                           # prepare all jobs in status=ready
+python prepare.py --ready                           # prepare all queued jobs (queued → ready)
 python prepare.py --ready --limit 5
 python prepare.py --job <id> --redo                 # overwrite existing application
 python prepare.py --job <id> --mock                 # dry-run: print to stdout, no writes
