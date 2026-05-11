@@ -124,9 +124,9 @@ Removes the profile and all its scores from the DB. Prompts for confirmation.
 python create_profile.py --delete <profile_id>
 ```
 
-### Prepare applications for jobs in 'ready' status
+### Prepare applications for queued jobs
 
-Generates a full application package: tailored cover letter, CV bullet selection/re-ordering, company research notes, and screening Q&A drafts. Requires the job to have status `ready` (set via the tracker UI).
+Generates a full application package: tailored cover letter, CV bullet selection/re-ordering, company research notes, and screening Q&A drafts. Picks up jobs with status `queued` (set via the tracker UI's "Queue" button) and promotes them to `ready` on success.
 
 ```bash
 python prepare.py --job <job_id>                    # auto-pick profile from job's scores

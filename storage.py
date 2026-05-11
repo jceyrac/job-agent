@@ -726,14 +726,14 @@ class JobStorage:
             ).fetchone()
             return dict(row) if row else None
 
-    def get_ready_jobs_unprepared(self) -> list[dict]:
-        """Jobs with status='ready' that have no prepared application yet."""
+    def get_queued_jobs_unprepared(self) -> list[dict]:
+        """Jobs with status='queued' that have no prepared application yet."""
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT j.* FROM jobs j
                    JOIN job_tracking t ON j.id = t.job_id
                    LEFT JOIN job_applications a ON j.id = a.job_id
-                   WHERE t.status = 'ready'
+                   WHERE t.status = 'queued'
                      AND (a.job_id IS NULL OR a.prepared_at IS NULL)
                    ORDER BY j.last_seen DESC"""
             ).fetchall()

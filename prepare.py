@@ -3,7 +3,8 @@
 prepare.py — application prep module for job_agent
 
 Generates: cover letter, CV bullet selection, company research notes,
-and screening Q&A drafts for jobs in 'ready' status.
+and screening Q&A drafts for jobs in 'queued' status, then promotes
+them to 'ready' (ready to apply).
 
 Usage:
     python prepare.py --job <job_id>
@@ -711,10 +712,10 @@ def _write_markdown(job: dict, result: dict) -> None:
 def _run_ready(limit: int | None = None) -> None:
     """Prepare all jobs with status='ready' that haven't been prepared yet."""
     db = JobStorage(DB_PATH)
-    jobs = db.get_ready_jobs_unprepared()
+    jobs = db.get_queued_jobs_unprepared()
 
     if not jobs:
-        print("No unprepared 'ready' jobs found.")
+        print("No unprepared 'queued' jobs found.")
         return
 
     print(f"Found {len(jobs)} unprepared 'ready' jobs")
@@ -775,7 +776,7 @@ def main():
     parser.add_argument("--job", default=None, help="Job ID to prepare")
     parser.add_argument("--profile", default=None, help="Profile ID to use")
     parser.add_argument("--ready", action="store_true",
-                        help="Prepare all jobs with status='ready'")
+                        help="Prepare all queued jobs that haven't been prepared yet")
     parser.add_argument("--limit", type=int, default=None, metavar="N",
                         help="Cap number of jobs processed")
     parser.add_argument("--redo", action="store_true",
