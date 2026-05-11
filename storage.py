@@ -76,12 +76,19 @@ CREATE TABLE IF NOT EXISTS job_tracking (
     notes   TEXT
 );
 
--- Application content — one row per job, profile-independent
+-- Application content — one row per job
 CREATE TABLE IF NOT EXISTS job_applications (
-    job_id       TEXT PRIMARY KEY,
-    analysis     TEXT,
-    cover_letter TEXT,
-    created_at   TEXT
+    job_id              TEXT PRIMARY KEY,
+    profile_id          TEXT,
+    analysis            TEXT,
+    cover_letter        TEXT,
+    cv_bullets_selected  TEXT,
+    company_research     TEXT,
+    screening_answers    TEXT,
+    language             TEXT,
+    prepared_by          TEXT,
+    prepared_at          TEXT,
+    created_at           TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen  ON jobs (last_seen DESC);
@@ -211,6 +218,22 @@ class JobStorage:
                 if col in score_cols:
                     conn.execute(f"ALTER TABLE job_scores DROP COLUMN {col}")
                     logger.info(f"[Storage] Phase 1e.4 cleanup: dropped {col} from job_scores")
+
+            # Phase 2 — prepare.py: add application prep columns to job_applications
+            app_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_applications)").fetchall()}
+            _p2_cols = [
+                ("profile_id",          "TEXT"),
+                ("cv_bullets_selected",  "TEXT"),
+                ("company_research",     "TEXT"),
+                ("screening_answers",    "TEXT"),
+                ("language",             "TEXT"),
+                ("prepared_by",          "TEXT"),
+                ("prepared_at",          "TEXT"),
+            ]
+            for col, defn in _p2_cols:
+                if col not in app_cols:
+                    conn.execute(f"ALTER TABLE job_applications ADD COLUMN {col} {defn}")
+                    logger.info(f"[Storage] Phase 2 migration: added {col} to job_applications")
 
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
@@ -625,7 +648,7 @@ class JobStorage:
     def get_application(self, job_id: str) -> Optional[dict]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT analysis, cover_letter FROM job_applications WHERE job_id = ?",
+                "SELECT * FROM job_applications WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
             return dict(row) if row else None
@@ -646,6 +669,75 @@ class JobStorage:
                    ON CONFLICT(job_id) DO UPDATE SET status = 'ready'""",
                 (job_id,),
             )
+
+    def save_prepared_application(self, job_id: str, profile_id: str,
+                                  cover_letter: str,
+                                  cv_bullets_selected: dict | None,
+                                  company_research: dict | None,
+                                  screening_answers: dict | None,
+                                  language: str,
+                                  prepared_by: str) -> None:
+        """Upsert a full application package from prepare.py."""
+        now = _now()
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO job_applications (
+                       job_id, profile_id, cover_letter,
+                       cv_bullets_selected, company_research, screening_answers,
+                       language, prepared_by, prepared_at, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(job_id) DO UPDATE SET
+                       profile_id         = excluded.profile_id,
+                       cover_letter        = excluded.cover_letter,
+                       cv_bullets_selected  = excluded.cv_bullets_selected,
+                       company_research     = excluded.company_research,
+                       screening_answers    = excluded.screening_answers,
+                       language             = excluded.language,
+                       prepared_by          = excluded.prepared_by,
+                       prepared_at          = excluded.prepared_at""",
+                (job_id, profile_id, cover_letter,
+                 json.dumps(cv_bullets_selected, ensure_ascii=False) if cv_bullets_selected else None,
+                 json.dumps(company_research, ensure_ascii=False) if company_research else None,
+                 json.dumps(screening_answers, ensure_ascii=False) if screening_answers else None,
+                 language, prepared_by, now, now),
+            )
+            conn.execute(
+                """INSERT INTO job_tracking (job_id, status) VALUES (?, 'ready')
+                   ON CONFLICT(job_id) DO UPDATE SET status = 'ready'""",
+                (job_id,),
+            )
+
+    def get_job_for_prepare(self, job_id: str) -> dict | None:
+        """Fetch a single job with all extracted fields for preparation."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT j.*,
+                          COALESCE(j.summary, '') AS summary,
+                          COALESCE(j.work_mode, 'unknown') AS work_mode,
+                          COALESCE(j.geo_zone, 'unknown') AS geo_zone,
+                          COALESCE(j.company_size, 'unknown') AS company_size,
+                          COALESCE(j.contract_type, 'unknown') AS contract_type,
+                          COALESCE(j.company_country, 'unknown') AS company_country,
+                          COALESCE(j.industry_sector, 'other') AS industry_sector,
+                          COALESCE(j.language_required, 'unknown') AS language_required
+                   FROM jobs j
+                   WHERE j.id = ?""",
+                (job_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_ready_jobs_unprepared(self) -> list[dict]:
+        """Jobs with status='ready' that have no prepared application yet."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT j.* FROM jobs j
+                   JOIN job_tracking t ON j.id = t.job_id
+                   LEFT JOIN job_applications a ON j.id = a.job_id
+                   WHERE t.status = 'ready'
+                     AND (a.job_id IS NULL OR a.prepared_at IS NULL)
+                   ORDER BY j.last_seen DESC"""
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def get_queued_jobs(self) -> list[dict]:
         with self._conn() as conn:

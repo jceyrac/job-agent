@@ -133,13 +133,15 @@ def test_job_scores_has_no_status_column():
     assert "notes"  in track_cols, "notes column missing from job_tracking"
 
 
-def test_job_applications_has_no_profile_id():
-    """job_applications must be keyed on job_id only."""
+def test_job_applications_has_required_columns():
+    """job_applications must have the core prepare.py columns."""
     db = JobStorage(":memory:")
     with db._conn() as conn:
         app_cols = {r[1] for r in conn.execute("PRAGMA table_info(job_applications)").fetchall()}
-    assert "profile_id" not in app_cols, "profile_id should not be in job_applications"
     assert "job_id" in app_cols, "job_id missing from job_applications"
+    assert "profile_id" in app_cols, "profile_id missing from job_applications"
+    assert "cover_letter" in app_cols, "cover_letter missing from job_applications"
+    assert "prepared_by" in app_cols, "prepared_by missing from job_applications"
 
 
 def test_upsert_and_retrieve():
@@ -268,8 +270,8 @@ def test_invalid_status_rejected():
         pass  # expected
 
 
-def test_application_profile_independent():
-    """save_application and get_application are keyed on job_id only."""
+def test_application_persistence():
+    """save_prepared_application and get_application round-trip correctly."""
     db = JobStorage(":memory:")
     db.upsert_profile(_FakeProfile())
     db.upsert_profile(_FakeProfile2())
@@ -278,18 +280,28 @@ def test_application_profile_independent():
     db.save_scored(job, _score(9), PROFILE_ID)
     db.save_scored(job, _score(6), PROFILE_ID2)
 
-    db.save_application(job.id, "Great fit analysis", "Dear Hiring Manager...")
+    db.save_prepared_application(
+        job_id=job.id,
+        profile_id=PROFILE_ID,
+        cover_letter="Dear Hiring Manager...",
+        cv_bullets_selected={"bullets": [{"text": "Led API product", "rationale": "Matches JD"}]},
+        company_research={"what_company_does": "A fintech startup"},
+        screening_answers={"why_company": "I admire your work"},
+        language="en",
+        prepared_by="llama-3.3-70b-versatile",
+    )
 
     app = db.get_application(job.id)
-    assert app is not None,                          "get_application returned None"
-    assert app["analysis"]     == "Great fit analysis", f"analysis mismatch: {app['analysis']!r}"
+    assert app is not None, "get_application returned None"
     assert app["cover_letter"] == "Dear Hiring Manager...", f"cover_letter mismatch"
+    assert app["profile_id"] == PROFILE_ID, f"profile_id mismatch: {app['profile_id']!r}"
+    assert app["language"] == "en", f"language mismatch: {app['language']!r}"
 
     # Status should have been promoted to 'ready'
     with db._conn() as conn:
         row = conn.execute("SELECT status FROM job_tracking WHERE job_id = ?", (job.id,)).fetchone()
-    assert row is not None,           "no job_tracking row after save_application"
-    assert row["status"] == "ready",  f"status not promoted to ready: {row['status']!r}"
+    assert row is not None, "no job_tracking row after save_prepared_application"
+    assert row["status"] == "ready", f"status not promoted to ready: {row['status']!r}"
 
 
 def test_get_digest():
@@ -312,8 +324,8 @@ def test_rejected_excluded_from_scoring():
     db = JobStorage(":memory:")
     db.upsert_profile(_FakeProfile())
 
-    job_a = _job("https://example.com/a")
-    job_b = _job("https://example.com/b")
+    job_a = _job("https://example.com/a", posted_date=date.today())
+    job_b = _job("https://example.com/b", posted_date=date.today())
 
     db.save_unscored(job_a)
     db.save_unscored(job_b)
@@ -606,7 +618,7 @@ TESTS = [
     test_db_initialises,
     test_schema_matches_model,
     test_job_scores_has_no_status_column,
-    test_job_applications_has_no_profile_id,
+    test_job_applications_has_required_columns,
     test_upsert_and_retrieve,
     test_cache_split,
     test_no_rescore_on_second_run,
@@ -614,7 +626,7 @@ TESTS = [
     test_status_update,
     test_status_is_profile_independent,
     test_invalid_status_rejected,
-    test_application_profile_independent,
+    test_application_persistence,
     test_get_digest,
     test_rejected_excluded_from_scoring,
     test_best_score_view_status,

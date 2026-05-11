@@ -306,7 +306,8 @@ def _is_quota_exhausted(error_str: str) -> bool:
 # Single-model caller with RPM backoff
 # ---------------------------------------------------------------------------
 
-def _call_groq(messages: list, model: str, max_retries: int = 5) -> str:
+def _call_groq(messages: list, model: str, max_retries: int = 5,
+              json_mode: bool = True, max_tokens: int = 300) -> str:
     """
     Call one Groq model with exponential backoff on per-minute rate limits.
     Raises immediately on daily quota exhaustion (marks model exhausted).
@@ -319,13 +320,15 @@ def _call_groq(messages: list, model: str, max_retries: int = 5) -> str:
     had_429 = False
     for attempt in range(max_retries):
         try:
-            result = client.chat.completions.create(
+            kwargs = dict(
                 model=model,
                 messages=messages,
-                response_format={"type": "json_object"},
                 temperature=0.2,
-                max_tokens=300,
+                max_tokens=max_tokens,
             )
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            result = client.chat.completions.create(**kwargs)
             if had_429:
                 time.sleep(10)  # cooldown after a successful retry
             return result.choices[0].message.content
@@ -367,7 +370,9 @@ def _call_groq(messages: list, model: str, max_retries: int = 5) -> str:
 # ---------------------------------------------------------------------------
 
 def _call_groq_fallback_chain(messages: list,
-                               models: list[str] | None = None) -> tuple[str, str]:
+                               models: list[str] | None = None,
+                               json_mode: bool = True,
+                               max_tokens: int = 300) -> tuple[str, str]:
     """
     Try each model in order. Defaults to FALLBACK_MODELS if no model list given.
     Falls through to the next model on quota/rate exhaustion.
@@ -381,7 +386,7 @@ def _call_groq_fallback_chain(messages: list,
         if model in _exhausted_models:
             continue
         try:
-            raw = _call_groq(messages, model)
+            raw = _call_groq(messages, model, json_mode=json_mode, max_tokens=max_tokens)
             return raw, model
         except Exception as e:
             err = str(e)
@@ -398,19 +403,22 @@ def _call_groq_fallback_chain(messages: list,
 # DeepSeek caller (last-resort for extraction)
 # ---------------------------------------------------------------------------
 
-def _call_deepseek(messages: list) -> str:
-    """Call DeepSeek V3 via OpenAI-compatible endpoint. Returns raw response text."""
+def _call_deepseek(messages: list, model: str = "deepseek-v4-pro",
+                   json_mode: bool = True, max_tokens: int = 300) -> str:
+    """Call DeepSeek via OpenAI-compatible endpoint. Returns raw response text."""
     if _deepseek_client is None:
         raise Exception("DEEPSEEK_API_KEY not set — cannot call DeepSeek")
 
     try:
-        result = _deepseek_client.chat.completions.create(
-            model="deepseek-chat",
+        kwargs = dict(
+            model=model,
             messages=messages,
-            response_format={"type": "json_object"},
             temperature=0.2,
-            max_tokens=300,
+            max_tokens=max_tokens,
         )
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        result = _deepseek_client.chat.completions.create(**kwargs)
         return result.choices[0].message.content
     except Exception as e:
         print(f"  ❌  DeepSeek API error: {e}")
@@ -580,7 +588,7 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
     if raw is None:
         try:
             raw = _call_deepseek(messages)
-            model = "deepseek-chat"
+            model = "deepseek-v4-pro"
             time.sleep(1)  # rate-limit safety
         except Exception as e:
             print(f"  ❌  DeepSeek extraction failed for '{job.title}': {e}")

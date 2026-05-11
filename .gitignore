@@ -11,8 +11,8 @@ __pycache__/
 *.pyo
 .venv/
 
-# Test / scratch files
-test_*.py
+# Test / scratch files (root only)
+/test_*.py
 
 # macOS
 .DS_Store

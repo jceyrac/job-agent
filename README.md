@@ -32,7 +32,7 @@ scrape.py → SQLite DB ─┬─ score.py --extract (field extraction)
 |----------|-------|----------|
 | 1 | `llama-3.3-70b-versatile` | Groq |
 | 2 | `meta-llama/llama-4-scout-17b-16e-instruct` | Groq |
-| 3 | `deepseek-chat` (V3) | DeepSeek |
+| 3 | `deepseek-v4-pro` | DeepSeek |
 
 **Evaluation** (`--profile`). Small/cheap models only. Writes `scored_by` to the DB (`tier_0` for deterministic rejection, the model name for Tier 1).
 
@@ -123,6 +123,23 @@ Removes the profile and all its scores from the DB. Prompts for confirmation.
 ```bash
 python create_profile.py --delete <profile_id>
 ```
+
+### Prepare applications for jobs in 'ready' status
+
+Generates a full application package: tailored cover letter, CV bullet selection/re-ordering, company research notes, and screening Q&A drafts. Requires the job to have status `ready` (set via the tracker UI).
+
+```bash
+python prepare.py --job <job_id>                    # auto-pick profile from job's scores
+python prepare.py --job <job_id> --profile <id>     # explicit profile
+python prepare.py --ready                           # prepare all jobs in status=ready
+python prepare.py --ready --limit 5
+python prepare.py --job <id> --redo                 # overwrite existing application
+python prepare.py --job <id> --mock                 # dry-run: print to stdout, no writes
+```
+
+Outputs land in the `job_applications` SQLite table and as markdown files at `outputs/applications/<job_id>__<company>__<title>.md`.
+
+Model chain: Groq primary (`llama-3.3-70b-versatile` for cover letter and screening answers, `llama-4-scout` for bullet selection and company research), with `deepseek-v4-pro` as automatic fallback if Groq daily quota is exhausted. Language matches `jobs.language_required`, defaulting to English.
 
 ### Launch the tracker UI
 
@@ -273,6 +290,7 @@ Live integration tests — each scraper makes real HTTP calls. Exit code `0` if 
 job_agent/
 ├── scrape.py                              # Scrape all enabled sources → SQLite
 ├── score.py                               # Extract fields (--extract) and evaluate per profile (--profile)
+├── prepare.py                             # Generate application packages from jobs in 'ready' status
 ├── tracker.py                             # Streamlit review UI
 ├── create_profile.py                      # CLI: create / list / delete profiles
 ├── main.py                                # Orchestrator: scrape → score
