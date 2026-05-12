@@ -270,6 +270,40 @@ def test_invalid_status_rejected():
         pass  # expected
 
 
+def test_status_history_append_only():
+    """Each set_status call inserts a row into status_history."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    db.save_scored(job, _score(), PROFILE_ID)
+
+    db.set_status(job.id, "queued")
+    db.set_status(job.id, "ready")
+    db.set_status(job.id, "applied")
+
+    with db._conn() as conn:
+        rows = conn.execute(
+            "SELECT status FROM status_history WHERE job_id = ? ORDER BY changed_at",
+            (job.id,),
+        ).fetchall()
+    history = [r["status"] for r in rows]
+    assert history == ["queued", "ready", "applied"], \
+        f"Expected queued→ready→applied, got {history!r}"
+
+
+def test_status_history_present_in_tracker():
+    """Tracker queries return status_changed_at."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    db.save_scored(job, _score(), PROFILE_ID)
+    db.set_status(job.id, "queued")
+
+    rows = db.get_all_for_tracker(PROFILE_ID)
+    j = next(r for r in rows if r["id"] == job.id)
+    assert j["status_changed_at"] is not None, "status_changed_at should not be None"
+
+
 def test_application_persistence():
     """save_prepared_application and get_application round-trip correctly."""
     db = JobStorage(":memory:")
@@ -626,6 +660,8 @@ TESTS = [
     test_status_update,
     test_status_is_profile_independent,
     test_invalid_status_rejected,
+    test_status_history_append_only,
+    test_status_history_present_in_tracker,
     test_application_persistence,
     test_get_digest,
     test_rejected_excluded_from_scoring,

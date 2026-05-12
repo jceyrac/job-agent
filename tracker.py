@@ -307,7 +307,16 @@ def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) 
                 st.caption(f"📅 {posted}")
             if show_profile_tag and job.get("best_profile_id"):
                 st.caption(f"🏷 {job['best_profile_id']}")
-            st.caption(f"Status: **{status}**")
+            changed = job.get("status_changed_at", "")
+            if changed:
+                try:
+                    from datetime import datetime as dt
+                    d = dt.strptime(str(changed)[:10], "%Y-%m-%d")
+                    changed = d.strftime("%d %b %Y")
+                except Exception:
+                    pass
+            date_suffix = f" (since {changed})" if changed else ""
+            st.caption(f"Status: **{status}**{date_suffix}")
             st.caption(f"ID: `{job_id}`")
 
         # Action buttons
@@ -332,10 +341,13 @@ def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) 
                     btn_cols[i].link_button(label, value)
                 else:
                     if btn_cols[i].button(label, key=f"btn_{value}_{job_id}"):
+                        # Auto-save any unsaved notes from the text area
+                        unsaved = (st.session_state.get(f"notes_text_{job_id}") or "").strip()
+                        db_notes = (job.get("notes") or "").strip()
                         if value == "archived":
-                            if (job.get("notes") or "").strip():
+                            if unsaved or db_notes:
                                 try:
-                                    db.set_status(job_id, "archived", notes=job["notes"])
+                                    db.set_status(job_id, "archived", notes=unsaved or db_notes)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(str(e))
@@ -343,14 +355,17 @@ def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) 
                                 st.session_state[f"pending_archive_{job_id}"] = True
                         else:
                             try:
-                                db.set_status(job_id, value)
+                                db.set_status(job_id, value, notes=unsaved or None)
                                 st.rerun()
                             except Exception as e:
                                 st.error(str(e))
 
         if st.session_state.get(f"pending_archive_{job_id}"):
             st.warning("Please add a note before marking this job as not relevant.")
-            current_notes = (job.get("notes") or "").strip()
+            # Pre-fill with unsaved notes from text area, falling back to DB notes
+            textarea_notes = (st.session_state.get(f"notes_text_{job_id}") or "").strip()
+            db_notes = (job.get("notes") or "").strip()
+            current_notes = textarea_notes or db_notes
             archive_note = st.text_area(
                 "Note",
                 value=current_notes,
@@ -382,13 +397,6 @@ def render_job_card(job: dict, profile_id: str, show_profile_tag: bool = False) 
                 label_visibility="collapsed",
                 height=80,
             )
-            if st.button("Save notes", key=f"notes_save_{job_id}"):
-                try:
-                    db.set_status(job_id, status, notes=notes_val)
-                    st.rerun()
-                except Exception as e:
-                    st.error(str(e))
-
         # Application content — shown for jobs with status 'ready'
         with st.expander("📋 Application"):
             if status == "ready":

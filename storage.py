@@ -76,6 +76,16 @@ CREATE TABLE IF NOT EXISTS job_tracking (
     notes   TEXT
 );
 
+-- Status change history — one row per transition, append-only
+CREATE TABLE IF NOT EXISTS status_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id     TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    changed_at TEXT NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_status_history_job ON status_history (job_id, changed_at DESC);
+
 -- Application content — one row per job
 CREATE TABLE IF NOT EXISTS job_applications (
     job_id              TEXT PRIMARY KEY,
@@ -234,6 +244,18 @@ class JobStorage:
                 if col not in app_cols:
                     conn.execute(f"ALTER TABLE job_applications ADD COLUMN {col} {defn}")
                     logger.info(f"[Storage] Phase 2 migration: added {col} to job_applications")
+
+            # Phase 2.1 — backfill status_history from existing job_tracking rows
+            backfill_count = conn.execute("""
+                INSERT OR IGNORE INTO status_history (job_id, status, changed_at)
+                SELECT t.job_id, t.status, COALESCE(a.prepared_at, datetime('now'))
+                FROM job_tracking t
+                LEFT JOIN job_applications a ON t.job_id = a.job_id
+            """).rowcount
+            if backfill_count:
+                logger.info(
+                    f"[Storage] Phase 2.1 backfill: {backfill_count} status_history rows"
+                )
 
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
@@ -562,6 +584,7 @@ class JobStorage:
     def set_status(self, job_id: str, status: str, notes: str = None) -> None:
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Statut invalide : {status!r}. Valides : {self.VALID_STATUSES}")
+        now = _now()
         with self._conn() as conn:
             if notes is not None:
                 conn.execute(
@@ -575,6 +598,10 @@ class JobStorage:
                        ON CONFLICT(job_id) DO UPDATE SET status = excluded.status""",
                     (job_id, status),
                 )
+            conn.execute(
+                "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
+                (job_id, status, now),
+            )
 
     # ------------------------------------------------------------------
     # Requêtes pour digest / tracker
@@ -595,10 +622,15 @@ class JobStorage:
                        COALESCE(j.industry_sector, 'other') AS industry_sector,
                        COALESCE(j.language_required, 'unknown') AS language_required,
                        s.score, s.reason, s.scored_by, s.scored_at,
-                       COALESCE(t.status, 'new') AS status, t.notes
+                       COALESCE(t.status, 'new') AS status, t.notes,
+                       h.changed_at AS status_changed_at
                 FROM jobs j
                 JOIN job_scores s ON j.id = s.job_id
                 LEFT JOIN job_tracking t ON j.id = t.job_id
+                LEFT JOIN (
+                    SELECT job_id, MAX(changed_at) AS changed_at
+                    FROM status_history GROUP BY job_id
+                ) h ON j.id = h.job_id
                 WHERE s.profile_id = ? AND s.score >= ?
             """
             params: list = [profile_id, min_score]
@@ -810,7 +842,8 @@ class JobStorage:
                        s.score, s.reason, s.scored_by,
                        t.status AS tracked_status,
                        COALESCE(t.status, 'new') AS status, t.notes,
-                       s.profile_id as best_profile_id
+                       s.profile_id as best_profile_id,
+                       h.changed_at AS status_changed_at
                 FROM jobs j
                 LEFT JOIN job_scores s ON j.id = s.job_id
                   AND s.score IS NOT NULL
@@ -821,6 +854,10 @@ class JobStorage:
                     LIMIT 1
                   )
                 LEFT JOIN job_tracking t ON j.id = t.job_id
+                LEFT JOIN (
+                    SELECT job_id, MAX(changed_at) AS changed_at
+                    FROM status_history GROUP BY job_id
+                ) h ON j.id = h.job_id
                 ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC
             """).fetchall()
             result = []
@@ -851,10 +888,15 @@ class JobStorage:
                           COALESCE(j.language_required, 'unknown') AS language_required,
                           s.score, s.reason, s.scored_by,
                           t.status AS tracked_status,
-                          COALESCE(t.status, 'new') AS status, t.notes
+                          COALESCE(t.status, 'new') AS status, t.notes,
+                          h.changed_at AS status_changed_at
                    FROM jobs j
                    LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
                    LEFT JOIN job_tracking t ON j.id = t.job_id
+                   LEFT JOIN (
+                       SELECT job_id, MAX(changed_at) AS changed_at
+                       FROM status_history GROUP BY job_id
+                   ) h ON j.id = h.job_id
                    ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC""",
                 (profile_id,),
             ).fetchall()
