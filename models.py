@@ -1,6 +1,6 @@
 import hashlib
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 
@@ -21,6 +21,13 @@ class JobPosting:
     company_size: Optional[str] = None   # "startup" | "scaleup" | "sme" | "large" | "unknown"
     contract_type: Optional[str] = None  # "permanent" | "freelance" | "contract" | "internship" | "unknown"
     geo_zone: Optional[str] = None       # "europe" | "us_only" | "apac" | "latam" | "global_remote" | "unknown"
+
+    # Phase 1e — profile-independent extraction fields, persisted on the jobs table
+    company_country: Optional[str] = None    # extracted by LLM
+    industry_sector: Optional[str] = None    # controlled list (web3_crypto, fintech, ...)
+    language_required: Optional[str] = None  # controlled list (english, french, ...)
+    extracted_at: Optional[datetime] = None  # NULL = extraction not yet run
+    extracted_by: Optional[str] = None        # model identifier that performed extraction
 
     def __post_init__(self):
         if self.description and len(self.description) > 3000:
@@ -50,6 +57,11 @@ class JobPosting:
             "company_size": self.company_size,
             "contract_type": self.contract_type,
             "geo_zone": self.geo_zone,
+            "company_country": self.company_country,
+            "industry_sector": self.industry_sector,
+            "language_required": self.language_required,
+            "extracted_at": self.extracted_at.isoformat() if self.extracted_at else None,
+            "extracted_by": self.extracted_by,
         }
 
 
