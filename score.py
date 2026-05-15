@@ -82,6 +82,140 @@ def _run_mock(profile) -> None:
         print()
 
 
+def _discover_contacts(job, description: str, company_id: int | None, db) -> tuple[int, int]:
+    """Extract contacts from a job description via regex + optional gated LLM.
+
+    Returns (regex_count, llm_count).
+    """
+    from scrapers.contact_extract import extract_contact_references
+
+    if company_id is None:
+        return 0, 0
+
+    regex_count = 0
+    llm_count = 0
+    desc = description or ""
+
+    # ── Regex extraction (always runs) ──────────────────────────────────────
+    try:
+        refs = extract_contact_references(desc)
+    except Exception as e:
+        print(f"    ⚠️  Contact regex extraction error: {e}")
+        refs = []
+
+    regex_emails: set[str] = set()
+    regex_linkedins: set[str] = set()
+    for ref in refs:
+        try:
+            cid = db.upsert_contact(
+                company_id=company_id,
+                email=ref.get("email"),
+                linkedin_url=ref.get("linkedin_url"),
+                email_status="role_account" if ref.get("role_account") else "unknown",
+                is_unverified=True,
+            )
+            db.log_interaction(
+                company_id=company_id,
+                contact_id=cid,
+                job_id=job.id,
+                type="discovered_on_posting",
+                direction="none",
+                body_excerpt=desc[:200],
+            )
+            regex_count += 1
+            if ref.get("email"):
+                regex_emails.add(ref["email"])
+            if ref.get("linkedin_url"):
+                regex_linkedins.add(ref["linkedin_url"])
+        except Exception as e:
+            print(f"    ⚠️  Contact upsert error: {e}")
+
+    # ── Gated LLM extraction (JOB_AGENT_LLM_CONTACTS=1) ────────────────────
+    if os.environ.get("JOB_AGENT_LLM_CONTACTS") != "1":
+        if regex_count:
+            print(f"    Contacts: {regex_count} found via regex "
+                  f"({len(regex_emails)} email, {len(regex_linkedins)} linkedin)")
+        print(f"    LLM contact extraction: skipped (env disabled)")
+        return regex_count, 0
+
+    # Pre-gate: skip LLM if description has no contact signals
+    pre_gate = re.search(
+        r"@|linkedin\.com|recruiter|hiring\s*manager|talent|please\s*contact|"
+        r"apply\s*directly|for\s*questions",
+        desc, re.IGNORECASE,
+    )
+    if not pre_gate:
+        if regex_count:
+            print(f"    Contacts: {regex_count} found via regex "
+                  f"({len(regex_emails)} email, {len(regex_linkedins)} linkedin)")
+        print(f"    LLM contact extraction: skipped (pre-gate: no contact signals)")
+        return regex_count, 0
+
+    print(f"    LLM contact extraction: enabled, running...")
+    try:
+        from scorer import CONTACT_EXTRACTION_PROMPT, _call_groq_fallback_chain
+
+        prompt = (
+            f"Title: {job.title}\n"
+            f"Company: {job.company}\n"
+            f"Description: {desc[:3000]}"
+        )
+        messages = [
+            {"role": "system", "content": CONTACT_EXTRACTION_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        raw, model = _call_groq_fallback_chain(messages, max_tokens=500)
+        result = json.loads(raw)
+        llm_contacts = result.get("contacts", []) if isinstance(result, dict) else []
+    except Exception as e:
+        print(f"    ⚠️  LLM contact extraction failed: {e}")
+        llm_contacts = []
+
+    for contact in llm_contacts:
+        email = (contact.get("email") or "").lower().strip() or None
+        linkedin = contact.get("linkedin_url") or None
+        if linkedin:
+            # Normalize LinkedIn URL
+            li_match = re.search(r"linkedin\.com/in/([\w\-%]+)", linkedin, re.IGNORECASE)
+            if li_match:
+                linkedin = f"https://www.linkedin.com/in/{li_match.group(1)}"
+
+        # Dedupe: skip if regex already found this
+        if email and email in regex_emails:
+            continue
+        if linkedin and linkedin in regex_linkedins:
+            continue
+
+        try:
+            cid = db.upsert_contact(
+                company_id=company_id,
+                email=email,
+                linkedin_url=linkedin,
+                full_name=contact.get("name"),
+                role_title=contact.get("role_title"),
+                x_handle=contact.get("x_handle"),
+                is_unverified=True,
+            )
+            db.log_interaction(
+                company_id=company_id,
+                contact_id=cid,
+                job_id=job.id,
+                type="discovered_on_posting",
+                direction="none",
+                body_excerpt=desc[:200],
+            )
+            llm_count += 1
+        except Exception as e:
+            print(f"    ⚠️  LLM contact upsert error: {e}")
+
+    total = regex_count + llm_count
+    parts = [f"{regex_count} via regex"]
+    if llm_count:
+        parts.append(f"{llm_count} via LLM")
+    print(f"    Contacts: {total} found ({', '.join(parts)})")
+    return regex_count, llm_count
+
+
 def _run_extraction(limit: int | None = None) -> None:
     """Field extraction pass — profile-independent. Fills extracted_at + structured fields."""
     db = JobStorage(DB_PATH)
@@ -133,6 +267,12 @@ def _run_extraction(limit: int | None = None) -> None:
         })
         extracted_count += 1
 
+        # Contact discovery
+        _discover_contacts(
+            job, job.description or "",
+            job_dict.get("company_id"), db,
+        )
+
         if i < len(jobs_to_extract):
             time.sleep(4)
 
@@ -163,7 +303,9 @@ def _get_jobs_to_score(db_path: str, profile_id: str, rescore: bool) -> list[dic
 
 def _dict_to_posting(d: dict) -> JobPosting:
     """Reconstruct a JobPosting from a DB row dict (for storage write calls).
-    Includes Phase 1e extraction fields if present."""
+    Company-level fields (country, sector, size) come from companies table joins,
+    not from the jobs table — they are absent from raw jobs rows after Phase 5.
+    """
     posted_date = None
     raw_date = d.get("posted_date")
     if raw_date:
@@ -252,6 +394,9 @@ def main():
     db = JobStorage(DB_PATH)
     db.upsert_profile(profile)
     print(f"Profile: {profile.name} ({profile.id})")
+    denylist = getattr(profile, "denylisted_companies", []) or []
+    if denylist:
+        print(f"  📋 Company denylist (active profile): {len(denylist)} entries")
 
     if args.rescore:
         deleted = _delete_scores_for_profile(DB_PATH, profile.id)
@@ -270,8 +415,11 @@ def main():
         rescore=args.rescore,
     )
     skipped = total_in_db - len(jobs_to_score)
+    bl_jobs = db.count_blacklisted_jobs()
     print(f"Pre-filter applied: {total_in_db} jobs → {len(jobs_to_score)} after SQL filter "
           f"({skipped} skipped, including jobs older than 30 days)")
+    if bl_jobs:
+        print(f"  🚫 {bl_jobs} jobs excluded by company blacklist")
 
     if args.limit and len(jobs_to_score) > args.limit:
         print(f"--limit {args.limit}: capping run at {args.limit}/{len(jobs_to_score)} jobs "
@@ -306,6 +454,18 @@ def main():
                 "extracted_by":      result.extracted_by,
             })
             extracted_count += 1
+
+            # Contact discovery
+            company_id = job_dict.get("company_id")
+            if company_id is None:
+                row = db.get_job_for_prepare(job_obj.id)
+                if row:
+                    company_id = row.get("company_id")
+            _discover_contacts(
+                job_obj, job_obj.description or "",
+                company_id, db,
+            )
+
             if i < len(unextracted):
                 time.sleep(4)
         print(f"  Extraction complete: {extracted_count} extracted, {error_count} errors")
@@ -365,7 +525,7 @@ def main():
             print(f"  Tier 1 (LLM):           {tier1_count} evaluated")
 
     # ── Build digest ─────────────────────────────────────────────────────────
-    all_scored = db.get_digest(profile.id, min_score=profile.score_threshold, status=None)
+    all_scored = db.get_digest(profile.id, min_score=profile.score_threshold)
 
     # Post-scoring filters — applied at digest assembly, not at scoring
     excl_geo = excl_work_mode = excl_country = excl_sector = excl_language = 0

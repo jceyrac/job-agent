@@ -2,7 +2,7 @@
 
 Multi-profile job scraping and scoring system for **Senior Product Manager** roles.
 
-Scrapes 12+ job boards, extracts structured fields from descriptions with LLMs, scores each posting per search profile (deterministic Tier 0 + LLM Tier 1), and delivers a digest via email and Joplin. A Streamlit tracker UI lets you browse, filter, and track application status.
+Scrapes 12+ job boards, extracts structured fields from descriptions with LLMs, scores each posting per search profile (deterministic Tier 0 + LLM Tier 1), and delivers a digest via email and Joplin. A multi-page Streamlit tracker UI lets you browse, filter, track applications, manage companies and contacts, and log interactions — a lightweight CRM for your job search.
 
 ---
 
@@ -12,9 +12,10 @@ The pipeline has two distinct phases after scraping: **extraction** (profile-ind
 
 ```
 scrape.py → SQLite DB ─┬─ score.py --extract (field extraction)
-                        └─ score.py --profile <id> (per-profile scoring)
-                                   └→ tracker.py (Streamlit UI)
-                                   └→ email digest + Joplin note
+                        ├─ score.py --profile <id> (per-profile scoring)
+                        │          └→ email digest + Joplin note
+                        ├─ prepare.py --ready (application packages: queued → ready)
+                        └─ tracker.py (multi-page Streamlit UI + CRM)
 ```
 
 1. **`scrape.py`** fetches raw job postings from all enabled scrapers and stores only new ones in the DB (deduplication by URL).
@@ -22,7 +23,7 @@ scrape.py → SQLite DB ─┬─ score.py --extract (field extraction)
 3. **`score.py --profile <id>`** evaluates jobs for a specific profile. It auto-extracts any unextracted survivors first, then applies a two-tier scoring system:
    - **Tier 0** — deterministic filters using the extracted fields (language, sector, country, work mode mismatches are rejected with score 0).
    - **Tier 1** — LLM evaluation for jobs that pass Tier 0.
-4. **`tracker.py`** is a Streamlit app for reviewing scored jobs, filtering by date/location/geo/status, and tracking applications.
+4. **`tracker.py`** is a multi-page Streamlit app (Dashboard, Jobs, Companies, Contacts, Settings) with inline company/contact links, interaction logging, and application status tracking. Doubles as a lightweight CRM.
 
 ### Model chains (Groq, with automatic fallback)
 
@@ -174,28 +175,52 @@ Profiles live in `profiles.py` (built-in) and can be created interactively via `
 
 ## Database schema
 
-Three core tables:
-
 | Table | Key | Purpose |
 |-------|-----|---------|
-| `jobs` | `id` (SHA-256 of URL) | Raw job postings + extracted fields (`company_country`, `industry_sector`, `language_required`, `work_mode`, `geo_zone`, `company_size`, `contract_type`, `summary`). `extracted_by` records which model filled the fields; `extracted_at` is the timestamp. |
+| `jobs` | `id` (SHA-256 of URL) | Raw job postings + extracted fields. Linked to `companies` via `company_id` FK. `extracted_by` records which model filled the fields; `extracted_at` is the timestamp. |
 | `job_scores` | `(job_id, profile_id)` | Per-profile scores and evaluation metadata. `scored_by` is `tier_0` for deterministic rejections or the model name for Tier 1 LLM evaluations. |
-| `job_tracking` | `job_id` | Pipeline status (`new→queued→ready→applied→rejected→archived`) and notes — profile-independent |
+| `job_tracking` | `job_id` | Pipeline status (`new→queued→ready→applied→rejected→archived`) and notes — profile-independent. Status changes auto-log interactions for key transitions. |
 | `job_applications` | `job_id` | Application analysis and cover letter — profile-independent |
+| `companies` | `id` (autoincrement) | Normalized company records: name, website, country, industry sector, size, status, enrichment metadata. Status changes are logged to `company_status_history`. |
+| `contacts` | `id` (autoincrement) | People at companies: name, role, email, LinkedIn, social handles, phone, verification status. Deduplicated by LinkedIn URL and email-within-company during upsert. |
+| `interactions` | `id` (autoincrement) | Timeline of communications: type (outreach_sent, reply_received, interview, decision_received, note, etc.), direction, outcome, subject, body excerpt. Linked to company, contact, and optionally job. |
+| `company_status_history` | `(company_id, changed_at)` | Audit log of company status transitions |
+| `status_history` | `(job_id, changed_at)` | Audit log of job tracking status transitions |
+| `search_profiles` | `id` | Profile definitions and criteria (JSON) |
 
 The status of a job is **profile-independent**: marking a job "applied" in one profile view marks it applied everywhere. Scores remain per-profile since the same job can be evaluated differently under different search criteria. Extraction is profile-independent — fields are filled once and reused by all profiles.
+
+Contacts have a **derived relationship status** computed from their interaction history (offer → interviewing → applied → replied → contacted → none), not stored as a column.
 
 ---
 
 ## Tracker UI
 
-The Streamlit tracker (`streamlit run tracker.py`) provides:
+The multi-page Streamlit tracker (`streamlit run tracker.py`) has 5 pages:
 
-- **Profile selector** — view jobs scored under a specific profile, or all profiles at once (best score per job)
-- **Status pipeline** — New → Queued → Ready → Applied, with Rejected and Archived for dismissals
-- **Filters** — min score, posted within, location, work mode, geo zone, company size, source
-- **Per-job** — notes, application content (analysis + cover letter when status = Ready), direct link to job posting
-- **Stats bar** — counts per status across the current view
+### Dashboard
+5 at-a-glance widgets: follow-ups due today, recent inbound (7 days), unverified contacts count, stale active outreach (14 days), hot jobs feed (top 10 by score). Pipeline stats bar (new / queued / ready / applied / rejected / archived).
+
+### Jobs
+Browse all jobs with 12 filters in the sidebar (profile, min score, status, date, location, work mode, geo zone, company size, sector, language, source, stale). Each job card shows score badge, title, company (clickable link to company detail), location, metadata, summary, and action buttons (Open, Details, Queue, Applied, Rejected, Not relevant). The detail page (accessible via `?id=`) has action buttons, status change dropdown, full description, contacts discovered from the posting, and application content preview.
+
+### Companies
+Company list with status/search filters. Each card shows job count, contact count, last interaction date, country/sector/size metadata, and current status. Detail page has 4 tabs: Jobs, Contacts, Interactions, Notes. Add contact and log interaction buttons. Status changes are logged to history.
+
+### Contacts
+Contact list with company, role family, unverified-only, and search filters. Each card shows relationship status (derived from interaction history: offer → interviewing → applied → replied → contacted). Detail page shows all channels (email, LinkedIn, X, Telegram, GitHub, phone), interactions timeline, verify/unverify toggle, and notes.
+
+### Settings
+Profile management (edit search profile criteria via form), database stats (job/company/contact/interaction counts, contacts by role), and actions (clear cache, re-extract job fields).
+
+### Cross-page navigation
+Job cards link to company detail (`/companies?id=X`). Company detail links to individual jobs and contacts. Dashboard widgets link to relevant detail pages. All cross-page navigation uses URL query parameters for deep linking.
+
+### Dialogs
+Three `@st.dialog` modal forms: Add Company, Add Contact, Log Interaction. All clear the cache and rerun on submit.
+
+### Legacy tracker
+The original single-page tracker is preserved as `tracker_legacy.py` (`streamlit run tracker_legacy.py`).
 
 ---
 
@@ -271,10 +296,10 @@ streamlit run tracker.py
 ## Running tests
 
 ```bash
-python tests/test_storage.py
+python -m pytest tests/ -q
 ```
 
-Unit tests using an in-memory SQLite DB — safe to run at any time, no network calls, no DB writes. Covers schema contracts, profile-independent status/application design, scoring, digest queries, and edge cases.
+147 unit tests using an in-memory SQLite DB — safe to run at any time, no network calls, no DB writes. Covers schema contracts, profile-independent status/application design, scoring, digest queries, per-profile filters, company/contact CRUD, interaction logging, derived relationship status, auto-interaction hooks, dashboard data queries, badge formatting, and parameterized job filters.
 
 ```bash
 python tests/run_all.py
@@ -291,7 +316,16 @@ job_agent/
 ├── scrape.py                              # Scrape all enabled sources → SQLite
 ├── score.py                               # Extract fields (--extract) and evaluate per profile (--profile)
 ├── prepare.py                             # Generate application packages from jobs in 'ready' status
-├── tracker.py                             # Streamlit review UI
+├── tracker.py                             # Multi-page Streamlit UI entry point
+├── tracker_legacy.py                      # Original single-page tracker (preserved)
+├── tracker_views/                         # Tracker page modules
+│   ├── shared.py                          # Constants, cached loaders, badges, filters, nav helpers
+│   ├── dashboard.py                       # Landing page with 5 widgets
+│   ├── jobs.py                            # Job list + detail view
+│   ├── companies.py                       # Company list + detail view
+│   ├── contacts.py                        # Contact list + detail view
+│   ├── settings.py                        # Profile management + stats
+│   └── forms.py                           # @st.dialog modals (add company, add contact, log interaction)
 ├── create_profile.py                      # CLI: create / list / delete profiles
 ├── main.py                                # Orchestrator: scrape → score
 ├── profiles.py                            # Built-in profile definitions

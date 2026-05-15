@@ -224,11 +224,13 @@ EXTRACTION_TESTS = [
 
 
 class _EvalProfile:
-    excluded_languages = ["german"]
-    excluded_sectors   = ["pharma", "retail"]
-    allowed_countries  = ["Switzerland"]
-    allowed_work_modes = ["remote", "hybrid", "unknown"]
-    scoring_context    = "Test profile with strict filters."
+    excluded_languages  = ["german"]
+    excluded_sectors    = ["pharma", "retail"]
+    allowed_countries   = ["Switzerland"]
+    banned_countries    = ["United States", "Canada"]
+    hybrid_ok_countries = ["Switzerland"]
+    allowed_work_modes  = ["remote", "hybrid", "unknown"]
+    scoring_context     = "Test profile with strict filters."
 
 
 class _EvalProfileNoFilters:
@@ -338,6 +340,144 @@ def test_eval_tier0_allowed_countries_none_means_no_restriction():
     assert r["score"] == 7
 
 
+def test_eval_tier0_banned_country():
+    """global_remote job with company_country='United States' is blocked by denylist."""
+    job = _eval_job(company_country="United States", geo_zone="global_remote")
+    r = evaluate_for_profile(job, _EvalProfileBannedOnly())
+    assert r["score"] == 1
+    assert r["scored_by"] == "tier_0"
+    assert "banned country" in r["reason"]
+
+
+def test_eval_tier0_hybrid_outside_ch():
+    """Hybrid role in Ireland → score 2 with reason mentioning hybrid outside allowed countries."""
+    job = _eval_job(work_mode="hybrid", company_country="Ireland")
+    r = evaluate_for_profile(job, _EvalProfileHybridGate())
+    assert r["score"] == 2
+    assert r["scored_by"] == "tier_0"
+    assert "hybrid outside allowed countries" in r["reason"]
+
+
+def test_eval_tier0_hybrid_in_ch_passes():
+    """Hybrid role in Switzerland still reaches LLM tier."""
+    job = _eval_job(work_mode="hybrid", company_country="Switzerland")
+    with patch("scorer._call_groq_fallback_chain") as mock:
+        mock.return_value = ('{"score": 8, "reason": "Good hybrid CH fit"}', "test-model")
+        r = evaluate_for_profile(job, _EvalProfile())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 8
+
+
+def test_eval_tier0_remote_spain_passes():
+    """Remote job from Spain (allowed country) still reaches LLM tier."""
+    job = _eval_job(work_mode="remote", company_country="Spain")
+    with patch("scorer._call_groq_fallback_chain") as mock:
+        mock.return_value = ('{"score": 7, "reason": "Remote EU fit"}', "test-model")
+        r = evaluate_for_profile(job, _EvalProfileEU())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 7
+
+
+def test_eval_tier0_unknown_country_passes_both():
+    """company_country='unknown' is NOT blocked by either new rule."""
+    job = _eval_job(company_country="unknown", geo_zone="global_remote", work_mode="hybrid")
+    with patch("scorer._call_groq_fallback_chain") as mock:
+        mock.return_value = ('{"score": 5, "reason": "Uncertain but plausible"}', "test-model")
+        r = evaluate_for_profile(job, _EvalProfile())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 5
+
+
+class _EvalProfileNoRestrictions:
+    excluded_languages  = []
+    excluded_sectors    = []
+    allowed_countries   = None
+    banned_countries    = []
+    hybrid_ok_countries = []
+    allowed_work_modes  = ["remote", "hybrid", "unknown", "on-site"]
+    scoring_context     = ""
+
+
+class _EvalProfileBannedOnly:
+    excluded_languages  = []
+    excluded_sectors    = []
+    allowed_countries   = None
+    banned_countries    = ["United States", "Canada"]
+    hybrid_ok_countries = []
+    allowed_work_modes  = ["remote", "hybrid", "unknown"]
+    scoring_context     = ""
+
+
+class _EvalProfileHybridGate:
+    excluded_languages  = []
+    excluded_sectors    = []
+    allowed_countries   = None
+    banned_countries    = []
+    hybrid_ok_countries = ["Switzerland"]
+    allowed_work_modes  = ["remote", "hybrid", "unknown"]
+    scoring_context     = ""
+
+
+class _EvalProfileEU:
+    excluded_languages  = []
+    excluded_sectors    = []
+    allowed_countries   = ["Switzerland", "France", "Spain", "Germany", "Ireland"]
+    banned_countries    = []
+    hybrid_ok_countries = []
+    allowed_work_modes  = ["remote", "hybrid", "unknown"]
+    scoring_context     = ""
+
+
+def test_eval_tier0_empty_lists_noop():
+    """Profile with empty banned/hybrid_ok lists → rules don't fire (web3_remote compat)."""
+    job = _eval_job(work_mode="hybrid", company_country="Ireland", geo_zone="global_remote")
+    with patch("scorer._call_groq_fallback_chain") as mock:
+        mock.return_value = ('{"score": 6, "reason": "Ireland hybrid passes"}', "test-model")
+        r = evaluate_for_profile(job, _EvalProfileNoRestrictions())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 6
+
+
+class _EvalProfileWithDenylist:
+    excluded_languages    = []
+    excluded_sectors      = []
+    allowed_countries     = None
+    banned_countries      = []
+    hybrid_ok_countries   = []
+    denylisted_companies  = ["EWOR", "EWOR GmbH", "Mercor"]
+    allowed_work_modes    = ["remote", "hybrid", "unknown"]
+    scoring_context       = ""
+
+
+def test_eval_tier0_denylist_company_blocked():
+    """Job from 'EWOR GmbH' short-circuits to score 1 when profile opts in."""
+    job = _eval_job(company="EWOR GmbH")
+    r = evaluate_for_profile(job, _EvalProfileWithDenylist())
+    assert r["score"] == 1
+    assert r["scored_by"] == "tier_0"
+    assert "denylisted company" in r["reason"]
+
+
+def test_eval_tier0_denylist_stripe_passes():
+    """Job from 'Stripe' passes through — not on the denylist."""
+    job = _eval_job(company="Stripe")
+    with patch("scorer._call_groq_fallback_chain") as mock:
+        mock.return_value = ('{"score": 7, "reason": "Good fintech role"}', "test-model")
+        r = evaluate_for_profile(job, _EvalProfileWithDenylist())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 7
+
+
+def test_eval_tier0_denylist_noop_on_empty():
+    """Job from 'EWOR GmbH' passes through on a profile that did not opt in."""
+    job = _eval_job(company="EWOR GmbH")
+    with patch("scorer._call_groq_fallback_chain") as mock:
+        mock.return_value = ('{"score": 5, "reason": "No denylist here"}', "test-model")
+        r = evaluate_for_profile(job, _EvalProfileNoRestrictions())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 5
+
+
 EVALUATION_TESTS = [
     test_eval_tier0_language_exclusion,
     test_eval_tier0_sector_exclusion,
@@ -348,6 +488,15 @@ EVALUATION_TESTS = [
     test_eval_tier0_no_exclusion_passes,
     test_eval_tier0_passthrough_fields_preserved,
     test_eval_tier0_allowed_countries_none_means_no_restriction,
+    test_eval_tier0_banned_country,
+    test_eval_tier0_hybrid_outside_ch,
+    test_eval_tier0_hybrid_in_ch_passes,
+    test_eval_tier0_remote_spain_passes,
+    test_eval_tier0_unknown_country_passes_both,
+    test_eval_tier0_empty_lists_noop,
+    test_eval_tier0_denylist_company_blocked,
+    test_eval_tier0_denylist_stripe_passes,
+    test_eval_tier0_denylist_noop_on_empty,
 ]
 
 

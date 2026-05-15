@@ -47,7 +47,18 @@ def deduplicate(jobs: list[JobPosting]) -> list[JobPosting]:
 def _normalize_key(title: str, company: str) -> str:
     if not title or not company:
         return ""
-    combined = f"{title.lower()} {company.lower()}"
+    # Strip parenthetical qualifiers: " (m/w/d)", " (Remote)", " (f/m/x)", etc.
+    title = re.sub(r"\s*\([^)]*\)", "", title)
+    company = re.sub(r"\s*\([^)]*\)", "", company)
+    title = title.lower().strip()
+    company = company.lower().strip()
+    # Normalize common abbreviations so "Senior PM" ≈ "Senior Product Manager"
+    title = re.sub(r"\bproduct manager\b", "pm", title)
+    title = re.sub(r"\bproduct owner\b", "po", title)
+    title = re.sub(r"\bsenior\b", "sr", title)
+    title = re.sub(r"\bhead of\b", "head", title)
+    title = re.sub(r"\bmanager\b", "mgr", title)
+    combined = f"{title} {company}"
     cleaned = re.sub(r"[^a-z0-9 ]", "", combined)
     return re.sub(r"\s+", " ", cleaned).strip()
 
@@ -75,6 +86,48 @@ def dedupe_cross_source(jobs: list[JobPosting]) -> list[JobPosting]:
             deduped.append(max(group, key=_sort_key))
 
     return deduped
+
+
+def dedupe_against_db(jobs: list[JobPosting], storage: JobStorage) -> list[JobPosting]:
+    """Drop scraped jobs whose (normalize_title, normalize_company) matches
+    an existing row with status in {applied, ready, queued, archived}.
+    Keeps the existing row, updates its last_seen.
+    Does NOT dedup against status='new' — those are still in the queue.
+    """
+    engaged = storage.get_engaged_job_keys()
+    if not engaged:
+        return jobs
+
+    # Build in-memory set of (title, company, id) keys from engaged jobs
+    engaged_keys: dict[str, str] = {}  # normalized_key → job_id
+    for row in engaged:
+        key = _normalize_key(row["title"], row["company"])
+        if key:
+            engaged_keys[key] = row["id"]
+
+    if not engaged_keys:
+        return jobs
+
+    touched_ids: set[str] = set()
+    result: list[JobPosting] = []
+    dropped = 0
+
+    for job in jobs:
+        key = _normalize_key(job.title, job.company)
+        if key and key in engaged_keys:
+            dropped += 1
+            touched_ids.add(engaged_keys[key])
+        else:
+            result.append(job)
+
+    if touched_ids:
+        storage.touch_many(list(touched_ids))
+
+    if dropped:
+        print(f"DB dedup: {dropped} job(s) dropped (already engaged) — "
+              f"{len(touched_ids)} existing row(s) last_seen updated")
+
+    return result
 
 
 def main():
@@ -110,15 +163,24 @@ def main():
     before_cross = len(all_jobs)
     all_jobs = dedupe_cross_source(all_jobs)
     print(f"Cross-source dedup: {before_cross} → {len(all_jobs)} unique")
+
+    db = JobStorage(DB_PATH)
+    before_db_dedup = len(all_jobs)
+    all_jobs = dedupe_against_db(all_jobs, db)
+
     print(f"\nTotal unique jobs after dedup: {len(all_jobs)}")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
-
-    db = JobStorage(DB_PATH)
     total_before = db.get_stats(DEFAULT_PROFILE_ID)["total"]
 
     for job in all_jobs:
-        db.save_unscored(job)
+        company_id = None
+        if job.company and job.company.strip():
+            try:
+                company_id = db.upsert_company(job.company.strip())
+            except ValueError:
+                pass  # name normalizes to empty — skip company link
+        db.save_unscored(job, company_id=company_id)
 
     total_after = db.get_stats(DEFAULT_PROFILE_ID)["total"]
     new_count = total_after - total_before

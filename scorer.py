@@ -86,12 +86,30 @@ Priority rule: if Base location names a specific country or city, use that count
 - "us_only"       : Base location or description mentions US city/state, "United States", "US only", "must be authorized to work in the US", "US-based", EST/PST/CST/MST timezone, UTC-5 to UTC-8, "Americas", "North America only"
 - "apac"          : Base location or description mentions Asia, Singapore, Hong Kong, Japan, South Korea, Australia, "UTC+5 to UTC+12", APAC
 - "latam"         : Base location or description mentions Latin America, Brazil, Mexico, UTC-3 to UTC-5 (excluding US)
-- "global_remote" : ONLY when one of these is true: (1) the company is on the known global-remote list below (Aave, Consensys, Gnosis, MakerDAO, Uniswap Foundation, Ethereum Foundation); OR (2) the description explicitly contains "work from anywhere", "worldwide", "no timezone restriction", "fully async", or equivalent unambiguous language. If base_location is empty AND location is just "Remote" AND neither condition is met → assign "unknown", NOT "global_remote".
+- "global_remote" : ONLY when one of these is true and NO US/APAC location
+    signal appears anywhere in the description:
+    (1) the company is on the known global-remote allowlist below
+        (Aave, Consensys, Gnosis, MakerDAO, Uniswap Foundation,
+         Ethereum Foundation, Tether, Status, Lido, ENS Labs);
+    (2) the description explicitly contains "work from anywhere", "fully async",
+        "no timezone restriction", or "worldwide hiring".
+    If the description mentions a US state, a US city (NYC, SF, LA, Chicago,
+    Boston, Seattle, Austin, Miami, NY, NJ, MA, CA, etc.), "United States",
+    "US-based", "must be authorized to work in the US", "Remote — USA", or
+    a `<span>United States</span>` HTML fragment from a LinkedIn job ad, set
+    `company_country='United States'` and `geo_zone='us_only'` — even if the
+    work_mode is remote.
 - "unknown"       : Safe default when base_location is empty and location is "Remote" or "Worldwide" with no geographic clues. Do NOT assign global_remote based on absence of country information.
 
 IMPORTANT — company geography: if the company is well-known to operate primarily from a specific region, use that region even without explicit location info:
 - Binance, OKX, Bybit, Huobi, HashKey → apac
-- Coinbase, Kraken, Gemini, Ripple, Chainalysis, Anchorage → us_only (unless description says open to all / worldwide)
+- Coinbase, Kraken, Gemini, Ripple, Chainalysis, Anchorage Digital, Stripe,
+  Polymarket, Phantom, Marqeta, Plaid, Halliday, Hyphen Connect, Zerohash,
+  Brex, Figure, Gauntlet, Alchemy, Mercor, Sword Health, Optum, CookUnity,
+  Macy's, eBay, Spotify Toronto, Automox → us_only (unless description says
+  open to all / worldwide or explicitly mentions EU/UK office)
+- Agoda, iyzico, Crypto.com Hong Kong → apac
+- Bitso (LATAM-targeted roles) → latam
 - Aave, Consensys, Gnosis, Ethereum Foundation, MakerDAO, Uniswap Foundation → global_remote
 - Deutsche Bank, UBS, Société Générale, BNP Paribas → europe
 
@@ -218,12 +236,30 @@ Priority rule: if Base location names a specific country or city, use that count
 - "us_only"       : Base location or description mentions US city/state, "United States", "US only", "must be authorized to work in the US", "US-based", EST/PST/CST/MST timezone, UTC-5 to UTC-8, "Americas", "North America only"
 - "apac"          : Base location or description mentions Asia, Singapore, Hong Kong, Japan, South Korea, Australia, "UTC+5 to UTC+12", APAC
 - "latam"         : Base location or description mentions Latin America, Brazil, Mexico, UTC-3 to UTC-5 (excluding US)
-- "global_remote" : ONLY when one of these is true: (1) the company is on the known global-remote list below (Aave, Consensys, Gnosis, MakerDAO, Uniswap Foundation, Ethereum Foundation); OR (2) the description explicitly contains "work from anywhere", "worldwide", "no timezone restriction", "fully async", or equivalent unambiguous language. If base_location is empty AND location is just "Remote" AND neither condition is met → assign "unknown", NOT "global_remote".
+- "global_remote" : ONLY when one of these is true and NO US/APAC location
+    signal appears anywhere in the description:
+    (1) the company is on the known global-remote allowlist below
+        (Aave, Consensys, Gnosis, MakerDAO, Uniswap Foundation,
+         Ethereum Foundation, Tether, Status, Lido, ENS Labs);
+    (2) the description explicitly contains "work from anywhere", "fully async",
+        "no timezone restriction", or "worldwide hiring".
+    If the description mentions a US state, a US city (NYC, SF, LA, Chicago,
+    Boston, Seattle, Austin, Miami, NY, NJ, MA, CA, etc.), "United States",
+    "US-based", "must be authorized to work in the US", "Remote — USA", or
+    a `<span>United States</span>` HTML fragment from a LinkedIn job ad, set
+    `company_country='United States'` and `geo_zone='us_only'` — even if the
+    work_mode is remote.
 - "unknown"       : Safe default when base_location is empty and location is "Remote" or "Worldwide" with no geographic clues. Do NOT assign global_remote based on absence of country information.
 
 IMPORTANT — company geography: if the company is well-known to operate primarily from a specific region, use that region even without explicit location info:
 - Binance, OKX, Bybit, Huobi, HashKey → apac
-- Coinbase, Kraken, Gemini, Ripple, Chainalysis, Anchorage → us_only (unless description says open to all / worldwide)
+- Coinbase, Kraken, Gemini, Ripple, Chainalysis, Anchorage Digital, Stripe,
+  Polymarket, Phantom, Marqeta, Plaid, Halliday, Hyphen Connect, Zerohash,
+  Brex, Figure, Gauntlet, Alchemy, Mercor, Sword Health, Optum, CookUnity,
+  Macy's, eBay, Spotify Toronto, Automox → us_only (unless description says
+  open to all / worldwide or explicitly mentions EU/UK office)
+- Agoda, iyzico, Crypto.com Hong Kong → apac
+- Bitso (LATAM-targeted roles) → latam
 - Aave, Consensys, Gnosis, Ethereum Foundation, MakerDAO, Uniswap Foundation → global_remote
 - Deutsche Bank, UBS, Société Générale, BNP Paribas → europe
 
@@ -273,6 +309,32 @@ Write 2-3 sentences covering: company mission, key responsibilities, tech stack/
 If description is empty → summary = "Description non disponible — consulter l'offre directement."
 
 Return ONLY the JSON object — no preamble, no explanation, no markdown."""
+
+CONTACT_EXTRACTION_PROMPT = """You are a contact discovery system. Extract people mentioned in this
+job description — recruiters, hiring managers, team leads, or any named individual
+with a professional role.
+
+Return ONLY a JSON object:
+
+{
+  "contacts": [
+    {
+      "name": "Full Name",
+      "role_title": "Their stated role/title",
+      "email": null,
+      "linkedin_url": null,
+      "x_handle": null
+    }
+  ]
+}
+
+Rules:
+- Only include real people explicitly named in the description. Do NOT invent contacts.
+- "name" is required for each contact entry.
+- email, linkedin_url, x_handle: include ONLY if explicitly present in the text.
+- If no people are mentioned, return {"contacts": []}.
+- Do NOT flag role/team accounts as contacts (careers@, jobs@, hr@, etc.).
+- Return ONLY JSON — no preamble, no explanation."""
 
 EVALUATION_PROMPT = """You are evaluating fit between a job and a candidate profile.
 
@@ -651,10 +713,13 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     Tiered evaluation: deterministic filters first, then small-model LLM.
 
     Tier 0 (first match wins):
+      0. company in profile.denylisted_companies        → score=1 (no-op when empty)
       1. language_required in profile.excluded_languages → score=1
       2. industry_sector in profile.excluded_sectors    → score=1
       3. country not in profile.allowed_countries       → score=2
       4. work_mode not in profile.allowed_work_modes    → score=1
+      5. country in profile.banned_countries            → score=1 (no-op when empty)
+      6. hybrid work_mode outside profile.hybrid_ok_countries → score=2 (no-op when empty)
 
     Tier 1: small-model LLM (llama-3.1-8b-instant → llama-4-scout).
 
@@ -666,6 +731,13 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     work_mode         = (job.work_mode or "unknown").strip().lower()
 
     # ── Tier 0: deterministic filters —─────────────────────────────────────
+    # 0. Company denylist (no-op when profile.denylisted_companies is empty)
+    denylist = getattr(profile, "denylisted_companies", []) or []
+    if denylist and job.company and job.company.strip() in denylist:
+        return _evaluation_result(1,
+            f"filtered: denylisted company ({job.company})",
+            "tier_0", job, profile)
+
     # 1. Language exclusion
     if language_required in (profile.excluded_languages or []):
         return _evaluation_result(1, f"filtered: language ({language_required})",
@@ -686,6 +758,20 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     allowed_modes = profile.allowed_work_modes or []
     if allowed_modes and work_mode not in allowed_modes:
         return _evaluation_result(1, f"filtered: work_mode ({work_mode})",
+                                  "tier_0", job, profile)
+
+    # 5. Banned-country denylist (no-op when profile.banned_countries is empty)
+    banned = getattr(profile, "banned_countries", []) or []
+    if company_country in banned:
+        return _evaluation_result(1, f"filtered: banned country ({company_country})",
+                                  "tier_0", job, profile)
+
+    # 6. Hybrid only in allowed countries (no-op when profile.hybrid_ok_countries is empty)
+    hybrid_ok = getattr(profile, "hybrid_ok_countries", []) or []
+    if (hybrid_ok and work_mode == "hybrid"
+            and company_country != "unknown"
+            and company_country not in hybrid_ok):
+        return _evaluation_result(2, f"filtered: hybrid outside allowed countries ({company_country})",
                                   "tier_0", job, profile)
 
     # ── Tier 1: LLM evaluation with small model ────────────────────────────

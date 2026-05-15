@@ -16,6 +16,7 @@ KNOWN_COUNTRIES = [
     "Singapore", "India", "Australia", "Japan", "Hong Kong", "China",
     "Brazil", "Mexico", "Argentina",
     "United Arab Emirates", "UAE", "Israel",
+    "Serbia", "Turkey", "Turkiye",
 ]
 
 _COUNTRY_PATTERN = re.compile(
@@ -35,6 +36,9 @@ SEARCH_TERMS_LINKEDIN = [
     "product owner",
     "head of product",
     "product lead",
+    "product director",
+    "senior product",
+    "lead product manager",
 ]
 
 SEARCH_TERMS_INDEED = [
@@ -42,26 +46,43 @@ SEARCH_TERMS_INDEED = [
     "product owner",
     "head of product",
     "product lead",
-]
-
-# Always queried against Switzerland directly — not subject to the worldwide-first skip
-SEARCH_TERMS_INDEED_CH = [
-    "product manager",
-    "product owner",
-    "head of product",
-    "product lead",
+    "product director",
+    "senior product",
+    "lead product manager",
 ]
 
 INDEED_COUNTRIES = [
-    "worldwide",
-    "uk",
+    "switzerland",
     "france",
-    "germany",
+    "uk",
     "netherlands",
     "spain",
     "portugal",
-    "poland",
-    "united arab emirates",
+    "austria",
+    "belgium",
+    "ireland",
+    "italy",
+    "czechia",
+    "germany",
+    "hungary",
+    "türkiye",
+]
+
+LINKEDIN_LOCATIONS = [
+    "Switzerland",
+    "France",
+    "United Kingdom",
+    "Netherlands",
+    "Spain",
+    "Portugal",
+    "Austria",
+    "Belgium",
+    "Ireland",
+    "Italy",
+    "Germany",
+    "Czechia",
+    "Hungary",
+    "Türkiye",
 ]
 
 
@@ -81,87 +102,50 @@ class JobSpyScraper(BaseScraper):
         seen_urls: set[str] = set()
         linkedin_total, indeed_total, dupes = 0, 0, 0
 
-        # LinkedIn
+        # LinkedIn — query each target location directly. Switzerland gets more
+        # results because it's the primary target market.
         for term in SEARCH_TERMS_LINKEDIN:
-            try:
-                df = scrape_jobs(
-                    site_name=["linkedin"],
-                    search_term=term,
-                    location="Europe",
-                    results_wanted=20,  # keep conservative — LinkedIn rate-limits aggressively
-                    hours_old=120,
-                    linkedin_fetch_description=True,
-                    verbose=0,
-                )
-                new, skipped = self._add_unique(df, "LinkedIn", seen_urls, all_jobs)
-                linkedin_total += new
-                dupes += skipped
-                print(f"  [LinkedIn] '{term}': {new} new, {skipped} dupes")
-            except Exception as e:
-                print(f"  ⚠️ LinkedIn '{term}': {e}")
-            time.sleep(3)
+            for location in LINKEDIN_LOCATIONS:
+                results_wanted = 25 if location == "Switzerland" else 15
+                try:
+                    df = scrape_jobs(
+                        site_name=["linkedin"],
+                        search_term=term,
+                        location=location,
+                        results_wanted=results_wanted,
+                        hours_old=240,
+                        linkedin_fetch_description=True,
+                        verbose=0,
+                    )
+                    new, skipped = self._add_unique(df, "LinkedIn", seen_urls, all_jobs)
+                    linkedin_total += new
+                    dupes += skipped
+                    print(f"  [LinkedIn] '{term}' [{location}]: {new} new, {skipped} dupes")
+                except Exception as e:
+                    print(f"  ⚠️ LinkedIn '{term}' [{location}]: {e}")
+                time.sleep(4)
 
-        # Indeed — try "worldwide" first, fall back to per-country if too few results
+        # Indeed — query each target country directly. Switzerland gets more
+        # results because it's the primary target market.
         for term in SEARCH_TERMS_INDEED:
-            term_new = 0
-            try:
-                df = scrape_jobs(
-                    site_name=["indeed"],
-                    search_term=term,
-                    results_wanted=30,
-                    hours_old=120,
-                    country_indeed="worldwide",
-                    verbose=0,
-                )
-                new, skipped = self._add_unique(df, "Indeed", seen_urls, all_jobs)
-                indeed_total += new
-                dupes += skipped
-                term_new += new
-                print(f"  [Indeed]   '{term}' [worldwide]: {new} new, {skipped} dupes")
-            except Exception as e:
-                print(f"  ⚠️ Indeed '{term}' [worldwide]: {e}")
-            time.sleep(2)
-
-            if term_new >= 15:
-                continue  # worldwide gave enough — skip per-country for this term
-
-            for country in INDEED_COUNTRIES[1:]:  # skip "worldwide", already tried
+            for country in INDEED_COUNTRIES:
+                results_wanted = 50 if country == "switzerland" else 25
                 try:
                     df = scrape_jobs(
                         site_name=["indeed"],
                         search_term=term,
-                        results_wanted=30,
-                        hours_old=120,
+                        results_wanted=results_wanted,
+                        hours_old=240,
                         country_indeed=country,
                         verbose=0,
                     )
                     new, skipped = self._add_unique(df, "Indeed", seen_urls, all_jobs)
                     indeed_total += new
                     dupes += skipped
-                    term_new += new
                     print(f"  [Indeed]   '{term}' [{country}]: {new} new, {skipped} dupes")
                 except Exception as e:
                     print(f"  ⚠️ Indeed '{term}' [{country}]: {e}")
                 time.sleep(2)
-
-        # Switzerland — always queried directly, bypasses worldwide-first logic
-        for term in SEARCH_TERMS_INDEED_CH:
-            try:
-                df = scrape_jobs(
-                    site_name=["indeed"],
-                    search_term=term,
-                    results_wanted=50,
-                    hours_old=120,
-                    country_indeed="switzerland",
-                    verbose=0,
-                )
-                new, skipped = self._add_unique(df, "Indeed", seen_urls, all_jobs)
-                indeed_total += new
-                dupes += skipped
-                print(f"  [Indeed]   '{term}' [switzerland]: {new} new, {skipped} dupes")
-            except Exception as e:
-                print(f"  ⚠️ Indeed '{term}' [switzerland]: {e}")
-            time.sleep(2)
 
         elapsed = time.time() - start
         print(
