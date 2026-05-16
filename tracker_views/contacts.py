@@ -98,7 +98,12 @@ def _render_list():
                 st.markdown(f"**{name or ct.get('email') or 'Unknown'}**")
                 role = ct.get("role_title") or ""
                 company_name = ct.get("company_name") or ""
-                st.caption(f"{role} @ {company_name}" if role else company_name)
+                company_id = ct.get("company_id")
+                if company_id and company_name:
+                    link = f"[{company_name}](/companies?id={company_id})"
+                    st.markdown(f"{role} @ {link}" if role else link)
+                else:
+                    st.caption(f"{role} @ {company_name}" if role else company_name)
             with c2:
                 db = get_db()
                 rel_status = db.get_contact_relationship_status(ct["id"])
@@ -136,9 +141,15 @@ def _render_detail(contact_id: int):
     company_name = company["name"] if company else "Unknown"
 
     if ct.get("role_title"):
-        st.markdown(f"### {ct['role_title']} @ {company_name}")
+        if company_id:
+            st.markdown(f"### {ct['role_title']} @ [{company_name}](/companies?id={company_id})")
+        else:
+            st.markdown(f"### {ct['role_title']} @ {company_name}")
     else:
-        st.markdown(f"### @ {company_name}")
+        if company_id:
+            st.markdown(f"### @ [{company_name}](/companies?id={company_id})")
+        else:
+            st.markdown(f"### @ {company_name}")
 
     # Relationship status
     rel_status = db.get_contact_relationship_status(contact_id)

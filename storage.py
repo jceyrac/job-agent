@@ -1232,30 +1232,49 @@ class JobStorage:
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
 
-    def get_stats(self, profile_id: str) -> dict:
-        """Statistiques rapides pour logging/affichage."""
+    def get_stats(self, profile_id: str | None = None) -> dict:
+        """Quick stats for logging/display. Pass None to aggregate across all profiles."""
         with self._conn() as conn:
             total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-            scored = conn.execute(
-                "SELECT COUNT(*) FROM job_scores WHERE profile_id = ?", (profile_id,)
-            ).fetchone()[0]
-            hot = conn.execute(
-                "SELECT COUNT(*) FROM job_scores WHERE profile_id = ? AND score >= 9",
-                (profile_id,),
-            ).fetchone()[0]
-            solid = conn.execute(
-                "SELECT COUNT(*) FROM job_scores WHERE profile_id = ? AND score BETWEEN 7 AND 8",
-                (profile_id,),
-            ).fetchone()[0]
-            by_status = dict(
-                conn.execute(
-                    """SELECT COALESCE(t.status, 'new'), COUNT(*)
-                       FROM job_scores s
-                       LEFT JOIN job_tracking t ON s.job_id = t.job_id
-                       WHERE s.profile_id = ? GROUP BY COALESCE(t.status, 'new')""",
+            if profile_id is None:
+                scored = conn.execute(
+                    "SELECT COUNT(DISTINCT job_id) FROM job_scores"
+                ).fetchone()[0]
+                hot = conn.execute(
+                    "SELECT COUNT(DISTINCT job_id) FROM job_scores WHERE score >= 9"
+                ).fetchone()[0]
+                solid = conn.execute(
+                    "SELECT COUNT(DISTINCT job_id) FROM job_scores WHERE score BETWEEN 7 AND 8"
+                ).fetchone()[0]
+                by_status = dict(
+                    conn.execute(
+                        """SELECT COALESCE(t.status, 'new'), COUNT(*)
+                           FROM jobs j
+                           LEFT JOIN job_tracking t ON j.id = t.job_id
+                           GROUP BY COALESCE(t.status, 'new')"""
+                    ).fetchall()
+                )
+            else:
+                scored = conn.execute(
+                    "SELECT COUNT(*) FROM job_scores WHERE profile_id = ?", (profile_id,)
+                ).fetchone()[0]
+                hot = conn.execute(
+                    "SELECT COUNT(*) FROM job_scores WHERE profile_id = ? AND score >= 9",
                     (profile_id,),
-                ).fetchall()
-            )
+                ).fetchone()[0]
+                solid = conn.execute(
+                    "SELECT COUNT(*) FROM job_scores WHERE profile_id = ? AND score BETWEEN 7 AND 8",
+                    (profile_id,),
+                ).fetchone()[0]
+                by_status = dict(
+                    conn.execute(
+                        """SELECT COALESCE(t.status, 'new'), COUNT(*)
+                           FROM job_scores s
+                           LEFT JOIN job_tracking t ON s.job_id = t.job_id
+                           WHERE s.profile_id = ? GROUP BY COALESCE(t.status, 'new')""",
+                        (profile_id,),
+                    ).fetchall()
+                )
         return {
             "total":     total_jobs,
             "scored":    scored,

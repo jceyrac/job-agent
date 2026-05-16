@@ -1766,6 +1766,75 @@ def test_get_dashboard_data_stale_outreach():
     assert "StaleCo" in stale_names
 
 
+def test_get_stats_none_returns_all_job_counts():
+    """get_stats(None) counts all jobs across all profiles, not zero."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    j1 = _job(url="https://ex.com/1")
+    j2 = _job(url="https://ex.com/2")
+    j3 = _job(url="https://ex.com/3")
+
+    db.save_scored(j1, _score(score=9), PROFILE_ID)
+    db.save_scored(j2, _score(score=7), PROFILE_ID)
+    # Save third job unscored — just insert the row, no score
+    with db._conn() as conn:
+        conn.execute(
+            "INSERT INTO jobs(id, title, company, source, first_seen, last_seen) "
+            "VALUES(?,?,?,?,date('now'),date('now'))",
+            (j3.id, j3.title, j3.company, j3.source),
+        )
+
+    # Set statuses (upserts into job_tracking)
+    db.set_status(j1.id, "applied")
+    db.set_status(j2.id, "queued")
+    # j3 stays unset → counted as "new"
+
+    stats = db.get_stats(None)
+    assert stats["total"] == 3
+    assert stats["scored"] == 2
+    assert stats["hot"] == 1
+    assert stats["solid"] == 1
+    assert stats["by_status"] == {"applied": 1, "queued": 1, "new": 1}
+
+
+def test_get_stats_profile_id_filters_by_profile():
+    """get_stats(profile_id) only counts jobs scored for that profile."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    db.upsert_profile(_FakeProfile2())
+
+    db.save_scored(_job(url="https://ex.com/1"), _score(score=9), PROFILE_ID)
+    db.save_scored(_job(url="https://ex.com/2"), _score(score=5), PROFILE_ID2)
+
+    # Profile A only sees job 1
+    stats_a = db.get_stats(PROFILE_ID)
+    assert stats_a["scored"] == 1
+    assert stats_a["hot"] == 1
+    assert stats_a["by_status"] == {"new": 1}
+
+    # Profile B only sees job 2
+    stats_b = db.get_stats(PROFILE_ID2)
+    assert stats_b["scored"] == 1
+    assert stats_b["hot"] == 0
+    assert stats_b["by_status"] == {"new": 1}
+
+
+def test_get_stats_empty_db():
+    """get_stats with empty DB returns zeros, not errors."""
+    db = JobStorage(":memory:")
+    stats = db.get_stats(None)
+    assert stats["total"] == 0
+    assert stats["scored"] == 0
+    assert stats["hot"] == 0
+    assert stats["solid"] == 0
+    assert stats["by_status"] == {}
+
+    stats_p = db.get_stats("no_such_profile")
+    assert stats_p["total"] == 0
+    assert stats_p["scored"] == 0
+
+
 # ── Filter tests ─────────────────────────────────────────────────────────────
 
 def _job_dict(**overrides) -> dict:
@@ -1984,6 +2053,9 @@ TESTS = [
     test_get_dashboard_data_follow_ups,
     test_get_dashboard_data_unverified_count,
     test_get_dashboard_data_stale_outreach,
+    test_get_stats_none_returns_all_job_counts,
+    test_get_stats_profile_id_filters_by_profile,
+    test_get_stats_empty_db,
     # Filter tests
     test_apply_filters_min_score,
     test_apply_filters_show_stale,
