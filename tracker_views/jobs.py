@@ -21,7 +21,16 @@ def _render_list():
 
         profiles = load_profiles()
         profile_options = ["-- All profiles --"] + [p["id"] for p in profiles]
-        profile_id = st.selectbox("Profile", profile_options, key="jobs_profile")
+
+        # Pre-select active profile (stored in DB config)
+        active_id = get_db().get_config("active_profile_id") or ""
+        index = 0
+        for i, opt in enumerate(profile_options):
+            if opt == active_id:
+                index = i
+                break
+
+        profile_id = st.selectbox("Profile", profile_options, index=index, key="jobs_profile")
         if profile_id == "-- All profiles --":
             profile_id = None
 

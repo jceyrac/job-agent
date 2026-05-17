@@ -16,7 +16,7 @@ COUNTRY_OPTIONS = [
     "Switzerland", "Germany", "France", "United Kingdom", "Ireland",
     "Netherlands", "Belgium", "Luxembourg", "Spain", "Portugal",
     "Italy", "Austria", "Sweden", "Norway", "Denmark", "Finland",
-    "Poland", "Czechia", "Romania", "Estonia", "Lithuania",
+    "Poland", "Czechia", "Romania", "Estonia", "Lithuania", "Greece",
     "United States", "Canada", "Singapore", "Israel",
     "United Arab Emirates", "Australia", "Japan",
 ]

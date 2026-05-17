@@ -42,21 +42,40 @@ def _render_profile_management(db):
             return
 
         active_id = db.get_config("active_profile_id") or ""
+        radio_options = ["-- All profiles --"] + profile_ids
         idx = 0
-        for i, pid in enumerate(profile_ids):
+        for i, pid in enumerate(radio_options):
             if pid == active_id:
                 idx = i
                 break
 
         selected = st.radio(
             "Select profile",
-            profile_ids,
+            radio_options,
             index=idx,
             key="settings_profile_select",
         )
-        if st.button("Set as active"):
-            db.set_config("active_profile_id", selected)
-            st.success(f"'{selected}' is now active.")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Set as active", use_container_width=True):
+                if selected == "-- All profiles --":
+                    db.set_config("active_profile_id", "")
+                else:
+                    db.set_config("active_profile_id", selected)
+                st.success(
+                    "All profiles shown." if selected == "-- All profiles --"
+                    else f"'{selected}' is now active."
+                )
+        with c2:
+            if active_id and st.button("Clear active", use_container_width=True):
+                db.set_config("active_profile_id", "")
+                st.success("Cleared. All profiles shown.")
+                st.rerun()
+
+        if selected == "-- All profiles --":
+            st.info("Select a profile to edit its settings.")
+            return
 
     with col_right:
         if selected not in ALL_PROFILES:
@@ -98,10 +117,14 @@ def _render_profile_management(db):
                 "Score threshold", 1, 10, profile.score_threshold,
             )
 
+            allowed_countries_default = [
+                c for c in (profile.allowed_countries or [])
+                if c in COUNTRY_OPTIONS
+            ]
             allowed_countries = st.multiselect(
                 "Allowed countries",
                 COUNTRY_OPTIONS,
-                default=profile.allowed_countries or [],
+                default=allowed_countries_default,
             )
 
             # Sectors: label → code
@@ -116,10 +139,15 @@ def _render_profile_management(db):
             )
             excluded_sector_codes = [SECTOR_LABELS[l] for l in excluded_sectors]
 
+            language_options = ["english", "french", "german", "italian", "spanish", "multiple"]
+            excluded_languages_default = [
+                l for l in (profile.excluded_languages or [])
+                if l in language_options
+            ]
             excluded_languages = st.multiselect(
                 "Excluded languages",
-                ["english", "french", "german", "italian", "spanish", "multiple"],
-                default=profile.excluded_languages,
+                language_options,
+                default=excluded_languages_default,
             )
 
             if st.form_submit_button("Save Profile", type="primary"):
