@@ -192,7 +192,9 @@ CREATE TABLE IF NOT EXISTS job_applications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen  ON jobs (last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_company_id ON jobs (company_id);
 CREATE INDEX IF NOT EXISTS idx_scores_profile  ON job_scores (profile_id, score DESC);
+CREATE INDEX IF NOT EXISTS idx_scores_job      ON job_scores (job_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_tracking_status ON job_tracking (status);
 
 -- Key-value config store (active_profile_id, etc.)
@@ -1379,6 +1381,18 @@ class JobStorage:
             ).fetchone()
             return dict(row) if row else None
 
+    def get_scores_for_job(self, job_id: str) -> list[dict]:
+        """Return all profile scores for a job, newest first."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT profile_id, score, reason, scored_by, scored_at
+                   FROM job_scores
+                   WHERE job_id = ?
+                   ORDER BY scored_at DESC""",
+                (job_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def get_queued_jobs_unprepared(self) -> list[dict]:
         """Jobs with status='queued' that have no prepared application yet."""
         with self._conn() as conn:
@@ -1805,6 +1819,84 @@ class JobStorage:
             rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def get_company_by_id(self, company_id: int) -> dict | None:
+        """Fetch a single company by PK, with counts and last interaction."""
+        query = """
+            SELECT
+                c.id, c.name, c.website, c.status, c.notes,
+                c.company_country, c.industry_sector, c.company_size,
+                c.first_seen_at, c.last_seen_at,
+                COALESCE(jcnt.cnt, 0)    AS job_count,
+                COALESCE(ctcnt.cnt, 0)   AS contact_count,
+                COALESCE(ixcnt.cnt, 0)   AS interaction_count,
+                last_ix.occurred_at      AS last_interaction_at
+            FROM companies c
+            LEFT JOIN (
+                SELECT company_id, COUNT(*) AS cnt
+                FROM jobs GROUP BY company_id
+            ) jcnt ON jcnt.company_id = c.id
+            LEFT JOIN (
+                SELECT company_id, COUNT(*) AS cnt
+                FROM contacts GROUP BY company_id
+            ) ctcnt ON ctcnt.company_id = c.id
+            LEFT JOIN (
+                SELECT company_id, COUNT(*) AS cnt
+                FROM interactions GROUP BY company_id
+            ) ixcnt ON ixcnt.company_id = c.id
+            LEFT JOIN (
+                SELECT company_id, MAX(occurred_at) AS occurred_at
+                FROM interactions GROUP BY company_id
+            ) last_ix ON last_ix.company_id = c.id
+            WHERE c.id = ?
+        """
+        with self._conn() as conn:
+            row = conn.execute(query, (company_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_jobs_for_company(self, company_id: int) -> list[dict]:
+        """All jobs at a company, with best score across profiles."""
+        query = """
+            SELECT j.id, j.company_id, j.title, j.company, j.url, j.source, j.location,
+                   j.base_location, j.posted_date, j.description,
+                   j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
+                   COALESCE(j.summary, '') AS summary,
+                   COALESCE(j.work_mode, 'unknown') AS work_mode,
+                   COALESCE(j.geo_zone, 'unknown') AS geo_zone,
+                   COALESCE(c.company_size, 'unknown') AS company_size,
+                   COALESCE(j.contract_type, 'unknown') AS contract_type,
+                   COALESCE(c.company_country, 'unknown') AS company_country,
+                   COALESCE(c.industry_sector, 'other') AS industry_sector,
+                   COALESCE(j.language_required, 'unknown') AS language_required,
+                   s.score, s.reason, s.scored_by,
+                   t.status AS tracked_status,
+                   COALESCE(t.status, 'new') AS status, t.notes,
+                   s.profile_id as best_profile_id,
+                   t.changed_at AS status_changed_at,
+                   (SELECT COUNT(*) FROM job_scores WHERE job_id = j.id) AS score_count
+            FROM jobs j
+            LEFT JOIN companies c ON j.company_id = c.id
+            LEFT JOIN job_scores s ON j.id = s.job_id
+              AND s.score IS NOT NULL
+              AND s.rowid = (
+                SELECT s2.rowid FROM job_scores s2
+                WHERE s2.job_id = j.id AND s2.score IS NOT NULL
+                ORDER BY s2.score DESC, s2.profile_id ASC
+                LIMIT 1
+              )
+            LEFT JOIN job_tracking t ON j.id = t.job_id
+            WHERE j.company_id = ?
+            ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(query, (company_id,)).fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("score") is None and d.get("tracked_status") is None:
+                    d["status"] = "unscored"
+                result.append(d)
+            return result
+
     def get_all_contacts(
         self,
         *,
@@ -1949,7 +2041,8 @@ class JobStorage:
                    t.status AS tracked_status,
                    COALESCE(t.status, 'new') AS status, t.notes,
                    s.profile_id as best_profile_id,
-                   t.changed_at AS status_changed_at
+                   t.changed_at AS status_changed_at,
+                   (SELECT COUNT(*) FROM job_scores WHERE job_id = j.id) AS score_count
             FROM jobs j
             LEFT JOIN companies c ON j.company_id = c.id
             LEFT JOIN job_scores s ON j.id = s.job_id
@@ -1985,7 +2078,7 @@ class JobStorage:
         Status and notes come from job_tracking (profile-independent).
         Company-level fields joined from companies table (Phase 4).
         """
-        query = """SELECT j.id, j.title, j.company, j.url, j.source, j.location,
+        query = """SELECT j.id, j.company_id, j.title, j.company, j.url, j.source, j.location,
                           j.base_location, j.posted_date, j.description,
                           j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
                           COALESCE(j.summary, '') AS summary,
@@ -1999,7 +2092,8 @@ class JobStorage:
                           s.score, s.reason, s.scored_by,
                           t.status AS tracked_status,
                           COALESCE(t.status, 'new') AS status, t.notes,
-                          t.changed_at AS status_changed_at
+                          t.changed_at AS status_changed_at,
+                          (SELECT COUNT(*) FROM job_scores WHERE job_id = j.id) AS score_count
                    FROM jobs j
                    LEFT JOIN companies c ON j.company_id = c.id
                    LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?

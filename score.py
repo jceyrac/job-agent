@@ -4,15 +4,15 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import date, datetime
+from datetime import date
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from models import JobPosting
 from notifier import send_email_digest, export_joplin
 from profiles import ALL_PROFILES
-from scorer import evaluate_for_profile, extract_job_fields, score_job
+from job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
+from scorer import score_job
 from storage import JobStorage
 
 DB_PATH = "data/jobs.db"
@@ -82,138 +82,6 @@ def _run_mock(profile) -> None:
         print()
 
 
-def _discover_contacts(job, description: str, company_id: int | None, db) -> tuple[int, int]:
-    """Extract contacts from a job description via regex + optional gated LLM.
-
-    Returns (regex_count, llm_count).
-    """
-    from scrapers.contact_extract import extract_contact_references
-
-    if company_id is None:
-        return 0, 0
-
-    regex_count = 0
-    llm_count = 0
-    desc = description or ""
-
-    # ── Regex extraction (always runs) ──────────────────────────────────────
-    try:
-        refs = extract_contact_references(desc)
-    except Exception as e:
-        print(f"    ⚠️  Contact regex extraction error: {e}")
-        refs = []
-
-    regex_emails: set[str] = set()
-    regex_linkedins: set[str] = set()
-    for ref in refs:
-        try:
-            cid = db.upsert_contact(
-                company_id=company_id,
-                email=ref.get("email"),
-                linkedin_url=ref.get("linkedin_url"),
-                email_status="role_account" if ref.get("role_account") else "unknown",
-                is_unverified=True,
-            )
-            db.log_interaction(
-                company_id=company_id,
-                contact_id=cid,
-                job_id=job.id,
-                type="discovered_on_posting",
-                direction="none",
-                body_excerpt=desc[:200],
-            )
-            regex_count += 1
-            if ref.get("email"):
-                regex_emails.add(ref["email"])
-            if ref.get("linkedin_url"):
-                regex_linkedins.add(ref["linkedin_url"])
-        except Exception as e:
-            print(f"    ⚠️  Contact upsert error: {e}")
-
-    # ── Gated LLM extraction (JOB_AGENT_LLM_CONTACTS=1) ────────────────────
-    if os.environ.get("JOB_AGENT_LLM_CONTACTS") != "1":
-        if regex_count:
-            print(f"    Contacts: {regex_count} found via regex "
-                  f"({len(regex_emails)} email, {len(regex_linkedins)} linkedin)")
-        print(f"    LLM contact extraction: skipped (env disabled)")
-        return regex_count, 0
-
-    # Pre-gate: skip LLM if description has no contact signals
-    pre_gate = re.search(
-        r"@|linkedin\.com|recruiter|hiring\s*manager|talent|please\s*contact|"
-        r"apply\s*directly|for\s*questions",
-        desc, re.IGNORECASE,
-    )
-    if not pre_gate:
-        if regex_count:
-            print(f"    Contacts: {regex_count} found via regex "
-                  f"({len(regex_emails)} email, {len(regex_linkedins)} linkedin)")
-        print(f"    LLM contact extraction: skipped (pre-gate: no contact signals)")
-        return regex_count, 0
-
-    print(f"    LLM contact extraction: enabled, running...")
-    try:
-        from scorer import CONTACT_EXTRACTION_PROMPT, _call_groq_fallback_chain
-
-        prompt = (
-            f"Title: {job.title}\n"
-            f"Company: {job.company}\n"
-            f"Description: {desc[:3000]}"
-        )
-        messages = [
-            {"role": "system", "content": CONTACT_EXTRACTION_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
-        raw, model = _call_groq_fallback_chain(messages, max_tokens=500)
-        result = json.loads(raw)
-        llm_contacts = result.get("contacts", []) if isinstance(result, dict) else []
-    except Exception as e:
-        print(f"    ⚠️  LLM contact extraction failed: {e}")
-        llm_contacts = []
-
-    for contact in llm_contacts:
-        email = (contact.get("email") or "").lower().strip() or None
-        linkedin = contact.get("linkedin_url") or None
-        if linkedin:
-            # Normalize LinkedIn URL
-            li_match = re.search(r"linkedin\.com/in/([\w\-%]+)", linkedin, re.IGNORECASE)
-            if li_match:
-                linkedin = f"https://www.linkedin.com/in/{li_match.group(1)}"
-
-        # Dedupe: skip if regex already found this
-        if email and email in regex_emails:
-            continue
-        if linkedin and linkedin in regex_linkedins:
-            continue
-
-        try:
-            cid = db.upsert_contact(
-                company_id=company_id,
-                email=email,
-                linkedin_url=linkedin,
-                full_name=contact.get("name"),
-                role_title=contact.get("role_title"),
-                x_handle=contact.get("x_handle"),
-                is_unverified=True,
-            )
-            db.log_interaction(
-                company_id=company_id,
-                contact_id=cid,
-                job_id=job.id,
-                type="discovered_on_posting",
-                direction="none",
-                body_excerpt=desc[:200],
-            )
-            llm_count += 1
-        except Exception as e:
-            print(f"    ⚠️  LLM contact upsert error: {e}")
-
-    total = regex_count + llm_count
-    parts = [f"{regex_count} via regex"]
-    if llm_count:
-        parts.append(f"{llm_count} via LLM")
-    print(f"    Contacts: {total} found ({', '.join(parts)})")
-    return regex_count, llm_count
 
 
 def _run_extraction(limit: int | None = None) -> None:
@@ -238,40 +106,11 @@ def _run_extraction(limit: int | None = None) -> None:
         company = job_dict.get("company", "")
         print(f"  Extracting {i}/{len(jobs_to_extract)}: {title[:50]} @ {company[:30]}")
 
-        job = JobPosting(
-            source=job_dict.get("source") or "",
-            title=title,
-            company=company,
-            location=job_dict.get("location") or "",
-            url=job_dict.get("url") or "",
-            posted_date=None,
-            description=job_dict.get("description") or "",
-            base_location=job_dict.get("base_location") or "",
-        )
-
-        result = extract_job_fields(job)
-        if result is None:
+        result = extract_one(job_dict["id"])
+        if result is None or result.get("status") == "error":
             error_count += 1
             continue
-
-        db.update_job_extraction(job.id, {
-            "company_country":   result.company_country or "unknown",
-            "industry_sector":   result.industry_sector or "other",
-            "language_required": result.language_required or "unknown",
-            "work_mode":         result.work_mode or "unknown",
-            "geo_zone":          result.geo_zone or "unknown",
-            "company_size":      result.company_size or "unknown",
-            "contract_type":     result.contract_type or "unknown",
-            "summary":           result.summary or "",
-            "extracted_by":      result.extracted_by,
-        })
         extracted_count += 1
-
-        # Contact discovery
-        _discover_contacts(
-            job, job.description or "",
-            job_dict.get("company_id"), db,
-        )
 
         if i < len(jobs_to_extract):
             time.sleep(4)
@@ -301,46 +140,6 @@ def _get_jobs_to_score(db_path: str, profile_id: str, rescore: bool) -> list[dic
     return [dict(r) for r in rows]
 
 
-def _dict_to_posting(d: dict) -> JobPosting:
-    """Reconstruct a JobPosting from a DB row dict (for storage write calls).
-    Company-level fields (country, sector, size) come from companies table joins,
-    not from the jobs table — they are absent from raw jobs rows after Phase 5.
-    """
-    posted_date = None
-    raw_date = d.get("posted_date")
-    if raw_date:
-        try:
-            posted_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            pass
-    extracted_at = d.get("extracted_at")
-    if extracted_at:
-        try:
-            extracted_at = datetime.strptime(str(extracted_at)[:19], "%Y-%m-%dT%H:%M:%S")
-        except (ValueError, TypeError):
-            extracted_at = None
-    return JobPosting(
-        source=d.get("source") or "",
-        title=d.get("title") or "",
-        company=d.get("company") or "",
-        location=d.get("location") or "",
-        url=d.get("url") or "",
-        posted_date=posted_date,
-        description=d.get("description"),
-        tags=[],
-        salary=None,
-        work_mode=d.get("work_mode"),
-        base_location=d.get("base_location"),
-        summary=d.get("summary"),
-        company_size=d.get("company_size"),
-        contract_type=d.get("contract_type"),
-        geo_zone=d.get("geo_zone"),
-        company_country=d.get("company_country"),
-        industry_sector=d.get("industry_sector"),
-        language_required=d.get("language_required"),
-        extracted_at=extracted_at,
-        extracted_by=d.get("extracted_by"),
-    )
 
 
 def main():
@@ -436,35 +235,11 @@ def main():
             title   = job_dict.get("title", "")
             company = job_dict.get("company", "")
             print(f"  Extracting {i}/{len(unextracted)}: {title[:50]} @ {company[:30]}")
-            job_obj = _dict_to_posting(job_dict)
-            result = extract_job_fields(job_obj)
-            if result is None:
-                db.save_unscored(job_obj)
+            result = extract_one(job_dict["id"])
+            if result is None or result.get("status") == "error":
                 error_count += 1
                 continue
-            db.update_job_extraction(result.id, {
-                "company_country":   result.company_country or "unknown",
-                "industry_sector":   result.industry_sector or "other",
-                "language_required": result.language_required or "unknown",
-                "work_mode":         result.work_mode or "unknown",
-                "geo_zone":          result.geo_zone or "unknown",
-                "company_size":      result.company_size or "unknown",
-                "contract_type":     result.contract_type or "unknown",
-                "summary":           result.summary or "",
-                "extracted_by":      result.extracted_by,
-            })
             extracted_count += 1
-
-            # Contact discovery
-            company_id = job_dict.get("company_id")
-            if company_id is None:
-                row = db.get_job_for_prepare(job_obj.id)
-                if row:
-                    company_id = row.get("company_id")
-            _discover_contacts(
-                job_obj, job_obj.description or "",
-                company_id, db,
-            )
 
             if i < len(unextracted):
                 time.sleep(4)
@@ -493,18 +268,15 @@ def main():
             company = job_dict.get("company", "")
             print(f"  Evaluating {i}/{len(jobs_to_score)}: {title[:50]} @ {company[:30]}")
 
-            job_obj = _dict_to_posting(job_dict)
-            result = evaluate_for_profile(job_obj, profile)
+            result = score_one(job_dict["id"], profile.id)
 
-            if result is None:
-                db.save_unscored(job_obj)
+            if result is None or result.get("status") == "error":
                 error_count += 1
                 continue
 
-            db.save_scored(job_obj, result, profile.id)
             scored_count += 1
 
-            if result["scored_by"] == "tier_0":
+            if result.get("scored_by") == "tier_0":
                 tier0_count += 1
                 # Track filter type for detail
                 reason = result.get("reason", "")

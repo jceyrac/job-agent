@@ -229,4 +229,6 @@ def _render_stats_actions(db):
                 st.text_area("Output", result.stdout + "\n" + result.stderr, height=200)
                 st.cache_data.clear()
 
-render()
+from tracker_views.shared import is_active_page
+if is_active_page(__file__):
+    render()

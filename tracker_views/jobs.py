@@ -1,16 +1,22 @@
-"""tracker_views/jobs.py — Jobs list + detail view."""
+"""tracker_views/jobs.py — Jobs list view."""
 import streamlit as st
 
+from profiles import ALL_PROFILES
 from tracker_views.shared import (
     ensure_db, get_db,
-    load_jobs, load_contacts, load_profiles,
-    score_badge, company_status_badge, relationship_badge, sector_label,
-    COUNTRY_FLAG, COUNTRY_OPTIONS, SECTOR_LABELS,
-    apply_filters, nav_to_entity, clear_detail, get_detail_id,
-    email_link, linkedin_link,
+    load_jobs, load_profiles,
+    score_badge, sector_label, md_link,
+    COUNTRY_FLAG, SECTOR_LABELS,
+    apply_filters,
 )
-from tracker_views.forms import log_interaction_dialog
+from tracker_views.job_helpers import (
+    _source_label, _run_score, _render_action_bar,
+)
 
+
+# ---------------------------------------------------------------------------
+# List view
+# ---------------------------------------------------------------------------
 
 def _render_list():
     st.title("💼 Jobs")
@@ -115,12 +121,13 @@ def _render_list():
 
 
 def _render_card(job: dict, profile_id: str | None):
-    """Render a compact job card with actions."""
+    """Render a compact job card with unified action bar."""
     db = get_db()
     job_id = job["id"]
     status = job.get("status", "new")
     score = job.get("score") or 0
     url = job.get("url") or ""
+    src = job.get("source") or ""
 
     with st.container(border=True):
         col_badge, col_main, col_meta = st.columns([1, 6, 2])
@@ -132,10 +139,11 @@ def _render_card(job: dict, profile_id: str | None):
             company = job.get("company", "")
             company_id = job.get("company_id")
             if company_id:
-                company_text = f"[{company}](/companies?id={company_id})"
+                company_text = md_link(company, f"/company_detail?id={company_id}")
             else:
                 company_text = company
-            st.markdown(f"**{job.get('title', '')}** @ {company_text}")
+            title_md = md_link(f"**{job.get('title', '')}**", f"/job_detail?id={job_id}")
+            st.markdown(f"{title_md}  @ {company_text}")
             parts = [f"📍 {job.get('location', '')}" if job.get("location") else "",
                      job.get("work_mode", ""), job.get("company_size", "")]
             st.caption("  ".join(p for p in parts if p))
@@ -158,56 +166,32 @@ def _render_card(job: dict, profile_id: str | None):
                 st.text(summary[:250] + "…" if len(summary) > 250 else summary)
 
         with col_meta:
-            st.caption(job.get("source") or "")
+            # Source as link
+            if src and url:
+                st.markdown(f"[{_source_label(src)}]({url})")
+            else:
+                st.caption(_source_label(src) or src)
             posted = (job.get("posted_date") or "")[:10]
             if posted:
                 st.caption(f"📅 {posted}")
             st.caption(f"Status: **{status}**")
             st.caption(f"ID: `{job_id}`")
 
-        # Action buttons
-        btn_defs = []
-        if url:
-            btn_defs.append(("🔗 Open", "link", url))
-        if st.button("📋 Details", key=f"detail_{job_id}"):
-            nav_to_entity(job_id)
-            st.rerun()
-        if status == "new":
-            btn_defs.append(("🚀 Queue", "action", "queued"))
-        for label, new_status in [
-            ("✅ Applied", "applied"),
-            ("❌ Rejected", "rejected"),
-            ("🚫 Not relevant", "archived"),
-        ]:
-            if status != new_status:
-                btn_defs.append((label, "action", new_status))
+        # ── Unified action bar ──────────────────────────────────────────────
+        app = db.get_application(job_id)
+        _render_action_bar(job, "card", scores=None, app=app)
 
-        if btn_defs:
-            btn_cols = st.columns(len(btn_defs))
-            for i, (label, kind, value) in enumerate(btn_defs):
-                if kind == "link":
-                    btn_cols[i].link_button(label, value)
-                else:
-                    if btn_cols[i].button(label, key=f"btn_{value}_{job_id}"):
-                        unsaved = (st.session_state.get(f"notes_text_{job_id}") or "").strip()
-                        db_notes = (job.get("notes") or "").strip()
-                        if value == "archived":
-                            if unsaved or db_notes:
-                                try:
-                                    db.set_status(job_id, "archived", notes=unsaved or db_notes)
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(str(e))
-                            else:
-                                st.session_state[f"pending_archive_{job_id}"] = True
-                        else:
-                            try:
-                                db.set_status(job_id, value, notes=unsaved or None)
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(str(e))
+        # ── Score against a different profile (always available) ────────────
+        with st.expander("Score against a different profile", expanded=False):
+            chosen = st.selectbox(
+                "Profile",
+                list(ALL_PROFILES.keys()),
+                key=f"score_pick_card_{job_id}",
+            )
+            if st.button("Run score", key=f"score_pick_run_card_{job_id}"):
+                if _run_score(job_id, chosen):
+                    st.cache_data.clear()
+                    st.rerun()
 
         # Archive confirmation
         if st.session_state.get(f"pending_archive_{job_id}"):
@@ -234,184 +218,23 @@ def _render_card(job: dict, profile_id: str | None):
         # Application preview
         if status == "ready":
             with st.expander("Application", expanded=False):
-                app = db.get_application(job_id)
-                if app:
-                    if app.get("analysis"):
+                app_data = db.get_application(job_id)
+                if app_data:
+                    if app_data.get("analysis"):
                         st.markdown("**Analysis**")
-                        st.text(app["analysis"][:500])
-                    if app.get("cover_letter"):
+                        st.text(app_data["analysis"][:500])
+                    if app_data.get("cover_letter"):
                         st.markdown("**Cover Letter**")
-                        st.text(app["cover_letter"][:500])
+                        st.text(app_data["cover_letter"][:500])
                 else:
                     st.caption("No application content saved yet.")
 
 
-def _render_detail(job_id: str):
-    db = get_db()
-
-    if st.button("← Back to Jobs"):
-        clear_detail()
-        st.rerun()
-
-    job = db.get_job_for_prepare(job_id)
-    if not job:
-        st.error(f"Job {job_id} not found.")
-        return
-
-    st.title(job.get("title", ""))
-    company = job.get("company", "")
-    company_id = job.get("company_id")
-    if company_id:
-        st.markdown(f"### @ [{company}](/companies?id={company_id})")
-    else:
-        st.markdown(f"### @ {company}")
-
-    # Score badge
-    score = job.get("score")
-    st.markdown(f"**{score_badge(score)}** — {job.get('reason', '')}")
-
-    # Info chips
-    chips = []
-    for key, label in [
-        ("work_mode", "Work mode"), ("contract_type", "Contract"),
-        ("geo_zone", "Geo zone"), ("language_required", "Language"),
-    ]:
-        val = job.get(key)
-        if val and val != "unknown":
-            chips.append(f"**{label}:** {val}")
-    posted = (job.get("posted_date") or "")[:10]
-    if posted:
-        chips.append(f"**Posted:** {posted}")
-    chips.append(f"**Source:** {job.get('source', '?')}")
-    st.caption(" | ".join(chips))
-
-    # Country and sector
-    country = job.get("company_country") or ""
-    sector = job.get("industry_sector") or ""
-    meta = []
-    if country and country != "unknown":
-        meta.append(f"{COUNTRY_FLAG.get(country, '🌐')} {country}")
-    if sector and sector != "other":
-        meta.append(sector_label(sector))
-    st.caption(" · ".join(meta) if meta else "")
-
-    # Description
-    with st.expander("Description", expanded=True):
-        st.markdown(job.get("description") or "No description available.")
-
-    # Status change
-    status = job.get("status", "new")
-    new_status = st.selectbox(
-        "Tracking status",
-        ["new", "queued", "ready", "applied", "rejected", "archived"],
-        index=["new", "queued", "ready", "applied", "rejected", "archived"].index(status)
-        if status in ["new", "queued", "ready", "applied", "rejected", "archived"] else 0,
-    )
-    if new_status != status:
-        if st.button("Update Status"):
-            db.set_status(job_id, new_status)
-            st.cache_data.clear()
-            st.rerun()
-
-    # URL
-    url = job.get("url") or ""
-
-    # Quick action buttons
-    st.subheader("Actions")
-    btn_cols = st.columns(6)
-    col_idx = 0
-    if url:
-        btn_cols[col_idx].link_button("🔗 Open", url)
-        col_idx += 1
-    if status == "new":
-        if btn_cols[col_idx].button("🚀 Queue", key=f"detail_queue_{job_id}"):
-            db.set_status(job_id, "queued")
-            st.cache_data.clear()
-            st.rerun()
-        col_idx += 1
-    for label, new_status in [
-        ("✅ Applied", "applied"),
-        ("❌ Rejected", "rejected"),
-        ("🚫 Not relevant", "archived"),
-    ]:
-        if status != new_status:
-            if btn_cols[col_idx].button(label, key=f"detail_{new_status}_{job_id}"):
-                if new_status == "archived":
-                    st.session_state[f"detail_pending_archive_{job_id}"] = True
-                else:
-                    db.set_status(job_id, new_status)
-                    st.cache_data.clear()
-                    st.rerun()
-            col_idx += 1
-
-    # Archive confirmation
-    if st.session_state.get(f"detail_pending_archive_{job_id}"):
-        st.warning("Please add a note before marking this job as not relevant.")
-        archive_note = st.text_area("Note", key=f"detail_archive_note_{job_id}", height=60)
-        c1, c2 = st.columns(2)
-        if c1.button("Confirm archive", key=f"detail_confirm_archive_{job_id}"):
-            if archive_note.strip():
-                db.set_status(job_id, "archived", notes=archive_note.strip())
-                st.session_state.pop(f"detail_pending_archive_{job_id}")
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.error("Note is required.")
-        if c2.button("Cancel", key=f"detail_cancel_archive_{job_id}"):
-            st.session_state.pop(f"detail_pending_archive_{job_id}")
-            st.rerun()
-
-    st.divider()
-
-    # Contacts discovered from this ad
-    st.subheader("Contacts from this posting")
-    company_id = job.get("company_id")
-    if company_id:
-        # Find contacts linked via discovered_on_posting interactions for this job
-        with db._conn() as conn:
-            rows = conn.execute(
-                """SELECT DISTINCT ct.* FROM contacts ct
-                   JOIN interactions i ON i.contact_id = ct.id
-                   WHERE i.job_id = ? AND i.type = 'discovered_on_posting'
-                   ORDER BY ct.last_seen_at DESC""",
-                (job_id,),
-            ).fetchall()
-        contacts = [dict(r) for r in rows]
-        if contacts:
-            for ct in contacts:
-                st.caption(
-                    f"**{ct.get('full_name') or ct.get('email') or 'Unknown'}** — "
-                    f"{ct.get('role_title') or 'No role'} "
-                    f"({'⚠️ unverified' if ct.get('is_unverified') else '✅ verified'})"
-                )
-        else:
-            st.caption("No contacts discovered from this posting.")
-    else:
-        st.caption("No company linked to this job.")
-
-    # Log interaction
-    if company_id:
-        if st.button("📝 Log Interaction", key="log_int_detail"):
-            log_interaction_dialog(company_id=company_id, job_id=job_id)
-
-    # Application
-    app = db.get_application(job_id)
-    if app:
-        st.subheader("Prepared Application")
-        if app.get("analysis"):
-            with st.expander("Analysis"):
-                st.text(app["analysis"])
-        if app.get("cover_letter"):
-            with st.expander("Cover Letter"):
-                st.text(app["cover_letter"])
-
-
 def render():
     ensure_db()
-    job_id = get_detail_id()
-    if job_id:
-        _render_detail(job_id)
-    else:
-        _render_list()
+    _render_list()
 
-render()
+
+from tracker_views.shared import is_active_page
+if is_active_page(__file__):
+    render()

@@ -1643,6 +1643,50 @@ def test_get_companies_search():
     assert "Alpine SA" not in names
 
 
+def test_get_company_by_id_found():
+    """get_company_by_id returns a single company by PK with counts."""
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TargetCo")
+    db.upsert_company("OtherCo")
+
+    company = db.get_company_by_id(cid)
+    assert company is not None
+    assert company["name"] == "TargetCo"
+    assert company["job_count"] == 0
+    assert company["contact_count"] == 0
+
+
+def test_get_company_by_id_not_found():
+    """get_company_by_id returns None for a nonexistent ID."""
+    db = JobStorage(":memory:")
+    assert db.get_company_by_id(99999) is None
+
+
+def test_get_jobs_for_company():
+    """get_jobs_for_company returns only jobs for the given company_id."""
+    db = JobStorage(":memory:")
+    cid1 = db.upsert_company("Alpha Inc")
+    cid2 = db.upsert_company("Beta LLC")
+    db.upsert_profile(_FakeProfile())
+
+    job1 = _job(url="https://a.com/1", company="Alpha Inc")
+    job2 = _job(url="https://b.com/1", company="Beta LLC")
+    db.save_scored(job1, _score(9), PROFILE_ID, company_id=cid1)
+    db.save_scored(job2, _score(7), PROFILE_ID, company_id=cid2)
+
+    alpha_jobs = db.get_jobs_for_company(cid1)
+    assert len(alpha_jobs) == 1
+    assert alpha_jobs[0]["company"] == "Alpha Inc"
+    assert alpha_jobs[0]["score"] == 9
+
+    beta_jobs = db.get_jobs_for_company(cid2)
+    assert len(beta_jobs) == 1
+    assert beta_jobs[0]["company"] == "Beta LLC"
+
+    # Empty for nonexistent company
+    assert db.get_jobs_for_company(99999) == []
+
+
 def test_get_all_contacts_basic():
     """get_all_contacts returns contacts with company info."""
     db = JobStorage(":memory:")
@@ -2045,6 +2089,9 @@ TESTS = [
     test_get_companies_all,
     test_get_companies_blacklist_filter,
     test_get_companies_search,
+    test_get_company_by_id_found,
+    test_get_company_by_id_not_found,
+    test_get_jobs_for_company,
     test_get_all_contacts_basic,
     test_get_all_contacts_filters,
     test_get_all_contacts_search,

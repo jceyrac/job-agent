@@ -2,11 +2,10 @@
 import streamlit as st
 
 from tracker_views.shared import (
-    ensure_db, get_db, get_detail_id,
+    ensure_db, get_db,
     load_dashboard_data, load_jobs, load_companies,
     score_badge, company_status_badge, relationship_badge, unverified_badge,
     COUNTRY_FLAG, sector_label,
-    nav_to_entity,
 )
 
 
@@ -89,7 +88,7 @@ def render():
                     cid = item.get("id")
                     last = (item.get("last_interaction_at") or "never")[:10]
                     if cid:
-                        st.markdown(f"➔ [{cname}](/companies?id={cid}) ({last})")
+                        st.markdown(f"➔ [{cname}](/company_detail?id={cid}) ({last})")
                     else:
                         st.caption(f"➔ {cname} ({last})")
 
@@ -130,6 +129,8 @@ def render():
                         meta.append(sector_label(sector))
                     st.caption(" · ".join(meta) if meta else "")
                 with c2:
-                    st.markdown(f"[View](/jobs?id={job['id']})")
+                    st.markdown(f"[View](/job_detail?id={job['id']})")
 
-render()
+from tracker_views.shared import is_active_page
+if is_active_page(__file__):
+    render()

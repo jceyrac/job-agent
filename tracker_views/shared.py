@@ -131,6 +131,16 @@ def load_profiles() -> list[dict]:
     return get_db().get_all_profiles()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def load_company_by_id(company_id: int) -> dict | None:
+    return get_db().get_company_by_id(company_id)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_jobs_for_company(company_id: int) -> list[dict]:
+    return get_db().get_jobs_for_company(company_id)
+
+
 # ── Badges ──────────────────────────────────────────────────────────────────────
 
 def score_badge(score) -> str:
@@ -261,22 +271,66 @@ def apply_filters(
     return result
 
 
+# ── Page guard ──────────────────────────────────────────────────────────────────
+
+def is_active_page(file_path: str) -> bool:
+    """Check if *file_path* is the currently executing Streamlit page.
+
+    Usage in each tracker_views/*.py at module level::
+
+        from tracker_views.shared import is_active_page
+        if is_active_page(__file__):
+            render()
+    """
+    import os
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+    ctx = get_script_run_ctx()
+    if ctx is None:
+        return False
+    script_path = getattr(ctx, "page_script_path", None)
+    if script_path is None:
+        # Older Streamlit that doesn't expose page_script_path — assume active
+        return True
+    return os.path.basename(script_path) == os.path.basename(file_path)
+
+
 # ── Navigation helpers ──────────────────────────────────────────────────────────
 
 def nav_to_entity(entity_id: int | str):
     """Set query_params so the current page renders detail view."""
     st.query_params["id"] = str(entity_id)
+    st.session_state["detail_id"] = str(entity_id)
 
 
 def clear_detail():
     """Clear query_params to return to list view."""
+    st.session_state["_jobs_detail_ts"] = 0
     if "id" in st.query_params:
         del st.query_params["id"]
+    st.session_state.pop("detail_id", None)
 
 
 def get_detail_id() -> str | None:
-    """Get the current detail ID, or None if in list mode."""
-    return st.query_params.get("id")
+    """Get the current detail ID, or None if in list mode.
+
+    Uses st.session_state as a fallback because st.query_params is not
+    available during every Streamlit execution pass (e.g. initial script
+    compilation or fragment reruns).
+    """
+    qp_id = st.query_params.get("id") if st.query_params else None
+    ss_id = st.session_state.get("detail_id")
+    result = qp_id or ss_id
+    if qp_id:
+        st.session_state["detail_id"] = qp_id
+    print(f"[DETAIL] qp={qp_id!r} ss={ss_id!r} → {result!r}", flush=True)
+    return result
+
+
+def md_link(text: str, url: str) -> str:
+    """Markdown link that escapes parentheses in the link text."""
+    safe = text.replace("(", "&#40;").replace(")", "&#41;")
+    return f"[{safe}]({url})"
 
 
 # ── Channel link renderers ──────────────────────────────────────────────────────

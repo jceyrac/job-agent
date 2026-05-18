@@ -27,7 +27,10 @@ def main():
     print("=== Step 1: Scraping ===")
     subprocess.run([sys.executable, "scrape.py"], check=True)
 
-    print(f"\n=== Step 2: Scoring [{active_profile_id}] ===")
+    print("\n=== Step 2: Extraction ===")
+    subprocess.run([sys.executable, "score.py", "--extract"], check=True)
+
+    print(f"\n=== Step 3: Scoring [{active_profile_id}] ===")
     subprocess.run([sys.executable, "score.py", "--profile", active_profile_id], check=True)
 
 
