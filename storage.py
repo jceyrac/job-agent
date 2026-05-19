@@ -1778,6 +1778,11 @@ class JobStorage:
         status: list[str] | None = None,
         search: str | None = None,
         exclude_blacklisted: bool = True,
+        countries: list[str] | None = None,
+        sectors: list[str] | None = None,
+        sizes: list[str] | None = None,
+        min_job_count: int | None = None,
+        last_interaction_within_days: int | None = None,
     ) -> list[dict]:
         """List companies with job/contact/interaction counts and last interaction date."""
         clauses = []
@@ -1791,9 +1796,33 @@ class JobStorage:
         if search:
             clauses.append("(LOWER(c.name) LIKE ? OR LOWER(c.name_normalized) LIKE ?)")
             params.extend([f"%{search.lower()}%", f"%{search.lower()}%"])
+        if countries:
+            placeholders = ", ".join("?" for _ in countries)
+            clauses.append(f"COALESCE(c.company_country, 'unknown') IN ({placeholders})")
+            params.extend(countries)
+        if sectors:
+            placeholders = ", ".join("?" for _ in sectors)
+            clauses.append(f"COALESCE(c.industry_sector, 'other') IN ({placeholders})")
+            params.extend(sectors)
+        if sizes:
+            placeholders = ", ".join("?" for _ in sizes)
+            clauses.append(f"COALESCE(c.company_size, 'unknown') IN ({placeholders})")
+            params.extend(sizes)
+        if last_interaction_within_days is not None:
+            clauses.append(
+                "last_ix.occurred_at IS NOT NULL AND "
+                "last_ix.occurred_at >= datetime('now', ? || ' days')"
+            )
+            params.append(f"-{last_interaction_within_days}")
 
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        min_jobs_outer = ""
+        if min_job_count is not None and min_job_count > 0:
+            min_jobs_outer = f"WHERE job_count >= ?"
+
         query = f"""
+            SELECT * FROM (
             SELECT
                 c.id, c.name, c.website, c.status,
                 c.company_country, c.industry_sector, c.company_size,
@@ -1820,8 +1849,12 @@ class JobStorage:
                 FROM interactions GROUP BY company_id
             ) last_ix ON last_ix.company_id = c.id
             {where}
-            ORDER BY COALESCE(last_ix.occurred_at, c.last_seen_at) DESC, c.name ASC
+            ) sub
+            {min_jobs_outer}
+            ORDER BY COALESCE(last_interaction_at, last_seen_at) DESC, name ASC
         """
+        if min_jobs_outer:
+            params.append(min_job_count)
         with self._conn() as conn:
             rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]

@@ -100,9 +100,19 @@ def load_companies(
     status: list[str] | None = None,
     search: str | None = None,
     exclude_blacklisted: bool = True,
+    countries: tuple[str, ...] = (),
+    sectors: tuple[str, ...] = (),
+    sizes: tuple[str, ...] = (),
+    min_job_count: int | None = None,
+    last_interaction_within_days: int | None = None,
 ) -> list[dict]:
     return get_db().get_companies(
         status=status, search=search, exclude_blacklisted=exclude_blacklisted,
+        countries=list(countries) or None,
+        sectors=list(sectors) or None,
+        sizes=list(sizes) or None,
+        min_job_count=min_job_count,
+        last_interaction_within_days=last_interaction_within_days,
     )
 
 
