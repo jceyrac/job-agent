@@ -1307,6 +1307,13 @@ class JobStorage:
             ).fetchone()
             return dict(row) if row else None
 
+    def get_all_applications(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM job_applications"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def save_application(self, job_id: str, analysis: str, cover_letter: str) -> None:
         now = _now()
         with self._conn() as conn:

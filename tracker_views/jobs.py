@@ -4,13 +4,13 @@ import streamlit as st
 from profiles import ALL_PROFILES
 from tracker_views.shared import (
     ensure_db, get_db,
-    load_jobs, load_profiles,
+    load_jobs, load_profiles, load_applications_index,
     score_badge, sector_label, md_link,
     COUNTRY_FLAG, SECTOR_LABELS,
     apply_filters,
 )
 from tracker_views.job_helpers import (
-    _source_label, _run_score, _render_action_bar,
+    _source_label, _derive_state, _run_score, _render_action_bar,
 )
 
 
@@ -79,6 +79,12 @@ def _render_list():
         language_filter = st.multiselect("Language", all_languages, key="jobs_lang")
         source_filter = st.multiselect("Source", all_sources, key="jobs_source")
 
+        per_page = st.selectbox(
+            "Per page", [25, 50, 100, 250, "All"],
+            index=1,
+            key="jobs_per_page",
+        )
+
     jobs = apply_filters(
         jobs_raw,
         min_score=min_score,
@@ -96,16 +102,42 @@ def _render_list():
         show_archived_view=show_archived,
     )
 
+    # Reset page when filter set or per_page changes
+    sig = (
+        profile_id, min_score, show_stale, date_filter, scraped_filter,
+        tuple(location_filter or ()), tuple(work_mode_filter or ()),
+        tuple(geo_zone_filter or ()), tuple(company_size_filter or ()),
+        tuple(sector_filter or ()), tuple(language_filter or ()),
+        tuple(source_filter or ()), tuple(status_filter or ()),
+        show_archived, per_page,
+    )
+    if st.session_state.get("jobs_filter_sig") != sig:
+        st.session_state["jobs_page"] = 1
+        st.session_state["jobs_filter_sig"] = sig
+
+    total = len(jobs)
+    if per_page == "All":
+        page_jobs = jobs
+        n_pages = 1
+        current_page = 1
+    else:
+        n_pages = max(1, (total + per_page - 1) // per_page)
+        current_page = st.session_state.get("jobs_page", 1)
+        current_page = max(1, min(current_page, n_pages))
+        start = (current_page - 1) * per_page
+        end = start + per_page
+        page_jobs = jobs[start:end]
+
     # Stats row
-    total = len(jobs_raw)
+    total_raw = len(jobs_raw)
     scored = sum(1 for j in jobs_raw if j.get("score") is not None)
-    st.caption(f"{len(jobs)} of {total} jobs shown ({scored} scored)")
+    st.caption(f"{total} of {total_raw} jobs shown ({scored} scored)")
 
     if not jobs:
         st.info("No jobs match the current filters.")
         return
 
-    # Score distribution
+    # Score distribution (full filtered set, not just visible page)
     if profile_id:
         hot = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
         solid = sum(1 for j in jobs if 7 <= (j.get("score") or 0) <= 8)
@@ -114,13 +146,38 @@ def _render_list():
         mc1.metric("🔥 Hot (9-10)", hot)
         mc2.metric("⭐ Solid (7-8)", solid)
         mc3.metric("👀 Maybe (5-6)", maybe)
-        mc4.metric("Total", len(jobs))
+        mc4.metric("Total", total)
 
-    for job in jobs:
-        _render_card(job, profile_id)
+    # Pagination controls
+    if per_page != "All" and n_pages > 1:
+        pcols = st.columns([1, 2, 1, 1])
+        if pcols[0].button("◀ Prev", disabled=current_page <= 1):
+            st.session_state["jobs_page"] = current_page - 1
+            st.rerun()
+        pcols[1].caption(
+            f"Page {current_page} of {n_pages} · "
+            f"showing {len(page_jobs)} of {total} jobs"
+        )
+        if pcols[2].button("Next ▶", disabled=current_page >= n_pages):
+            st.session_state["jobs_page"] = current_page + 1
+            st.rerun()
+        jump = pcols[3].number_input(
+            "Go to", min_value=1, max_value=n_pages,
+            value=current_page, key="jobs_page_input",
+            label_visibility="collapsed",
+        )
+        if jump != current_page:
+            st.session_state["jobs_page"] = int(jump)
+            st.rerun()
+
+    apps_index = load_applications_index()
+
+    for job in page_jobs:
+        _render_card(job, profile_id, apps_index=apps_index)
 
 
-def _render_card(job: dict, profile_id: str | None):
+@st.fragment
+def _render_card(job: dict, profile_id: str | None, apps_index: dict[str, dict]):
     """Render a compact job card with unified action bar."""
     db = get_db()
     job_id = job["id"]
@@ -174,11 +231,12 @@ def _render_card(job: dict, profile_id: str | None):
             posted = (job.get("posted_date") or "")[:10]
             if posted:
                 st.caption(f"📅 {posted}")
-            st.caption(f"Status: **{status}**")
+            derived = _derive_state(job, scores=None, app=apps_index.get(job_id))
+            st.caption(f"State: **{derived}**")
             st.caption(f"ID: `{job_id}`")
 
         # ── Unified action bar ──────────────────────────────────────────────
-        app = db.get_application(job_id)
+        app = apps_index.get(job_id)
         _render_action_bar(job, "card", scores=None, app=app)
 
         # ── Score against a different profile (always available) ────────────
@@ -218,7 +276,7 @@ def _render_card(job: dict, profile_id: str | None):
         # Application preview
         if status == "ready":
             with st.expander("Application", expanded=False):
-                app_data = db.get_application(job_id)
+                app_data = apps_index.get(job_id)
                 if app_data:
                     if app_data.get("analysis"):
                         st.markdown("**Analysis**")

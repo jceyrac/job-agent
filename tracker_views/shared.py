@@ -127,6 +127,12 @@ def load_dashboard_data() -> dict:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def load_applications_index() -> dict[str, dict]:
+    rows = get_db().get_all_applications()
+    return {r["job_id"]: r for r in rows}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def load_profiles() -> list[dict]:
     return get_db().get_all_profiles()
 
@@ -323,7 +329,6 @@ def get_detail_id() -> str | None:
     result = qp_id or ss_id
     if qp_id:
         st.session_state["detail_id"] = qp_id
-    print(f"[DETAIL] qp={qp_id!r} ss={ss_id!r} → {result!r}", flush=True)
     return result
 
 

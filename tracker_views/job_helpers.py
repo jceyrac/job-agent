@@ -140,12 +140,12 @@ def _request_archive(job: dict, scope: str) -> None:
                 db.set_status(job_id, "archived", notes=archive_note.strip())
                 st.session_state.pop(f"pending_{key_prefix}_{job_id}")
                 st.cache_data.clear()
-                st.rerun()
+                st.rerun(scope="app")
             else:
                 st.error("Note is required.")
         if c2.button("Cancel", key=f"cancel_{key_prefix}_{job_id}"):
             st.session_state.pop(f"pending_{key_prefix}_{job_id}")
-            st.rerun()
+            st.rerun(scope="app")
     else:
         # Show note prompt (keep existing notes if any)
         unsaved = (st.session_state.get(f"notes_text_{job_id}") or "").strip()
@@ -154,12 +154,12 @@ def _request_archive(job: dict, scope: str) -> None:
             try:
                 db.set_status(job_id, "archived", notes=unsaved or db_notes)
                 st.cache_data.clear()
-                st.rerun()
+                st.rerun(scope="app")
             except Exception as e:
                 st.error(str(e))
         else:
             st.session_state[f"pending_{key_prefix}_{job_id}"] = True
-            st.rerun()
+            st.rerun(scope="app")
 
 
 def _handle_action(action: str, job: dict, scope: str) -> None:
@@ -174,6 +174,8 @@ def _handle_action(action: str, job: dict, scope: str) -> None:
                 st.success(f"Extracted: {(res.get('summary') or '')[:80]}")
             else:
                 st.error(f"Extract failed: {(res or {}).get('error', 'unknown')}")
+            st.cache_data.clear()
+            st.rerun()  # fragment scope
         elif action == "score":
             active = _resolve_active_profile()
             if active is None:
@@ -182,7 +184,9 @@ def _handle_action(action: str, job: dict, scope: str) -> None:
                     "individual jobs (or use the advanced picker below)."
                 )
                 return
-            _run_score(job_id, active)
+            if _run_score(job_id, active):
+                st.cache_data.clear()
+                st.rerun()  # fragment scope
         elif action == "prepare":
             with st.spinner("Preparing (4 LLM calls, ~10-30s)…"):
                 res = prepare_one(job_id)
@@ -190,17 +194,23 @@ def _handle_action(action: str, job: dict, scope: str) -> None:
                 st.success(f"Prepared by {res.get('prepared_by', '?')}")
             else:
                 st.error(f"Prepare failed: {(res or {}).get('error', 'unknown')}")
+            st.cache_data.clear()
+            st.rerun(scope="app")  # status changes → full-page rerun
         elif action == "queue":
             db.set_status(job_id, "queued")
+            st.cache_data.clear()
+            st.rerun(scope="app")
         elif action == "applied":
             db.set_status(job_id, "applied")
+            st.cache_data.clear()
+            st.rerun(scope="app")
         elif action == "rejected":
             db.set_status(job_id, "rejected")
+            st.cache_data.clear()
+            st.rerun(scope="app")
         elif action == "not_relevant":
             _request_archive(job, scope)
             return  # _request_archive handles its own rerun
-        st.cache_data.clear()
-        st.rerun()
     except Exception as e:
         st.error(str(e))
 
