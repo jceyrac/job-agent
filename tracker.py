@@ -3,6 +3,16 @@ import streamlit as st
 
 st.set_page_config(page_title="Job Tracker", layout="wide", page_icon="💼")
 
+st.html("""
+<style>
+[data-testid="stSidebarNav"] a[href*="job_detail"],
+[data-testid="stSidebarNav"] a[href*="company_detail"],
+[data-testid="stSidebarNav"] a[href*="contact_detail"] {
+    display: none;
+}
+</style>
+""")
+
 pages = [
     st.Page("tracker_views/dashboard.py",      title="Dashboard",  icon="📊", default=True),
     st.Page("tracker_views/jobs.py",           title="Jobs",       icon="💼"),
