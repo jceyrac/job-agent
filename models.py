@@ -29,6 +29,10 @@ class JobPosting:
     extracted_at: Optional[datetime] = None  # NULL = extraction not yet run
     extracted_by: Optional[str] = None        # model identifier that performed extraction
 
+    # Company-level metadata extracted alongside job fields (pushed to companies table)
+    company_summary: str | None = None
+    company_website: str | None = None
+
     def __post_init__(self):
         if self.description and len(self.description) > 3000:
             self.description = self.description[:3000]
@@ -62,6 +66,8 @@ class JobPosting:
             "language_required": self.language_required,
             "extracted_at": self.extracted_at.isoformat() if self.extracted_at else None,
             "extracted_by": self.extracted_by,
+            "company_summary": self.company_summary,
+            "company_website": self.company_website,
         }
 
 

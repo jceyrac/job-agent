@@ -650,15 +650,18 @@ def main():
         description="Generate a preference alignment report from apply/archive data."
     )
     parser.add_argument("--profile", default=None,
-                        help="Analyse a single profile (e.g. unified_jc).")
+                        help="Analyse a single profile (optional; defaults to the active profile).")
     parser.add_argument("--output", default=None,
                         help="Override output path.")
     parser.add_argument("--print", dest="print_out", action="store_true",
                         help="Also print the report to stdout.")
     args = parser.parse_args()
 
+    from profiles import get_active_profile
+    profile_id = args.profile or get_active_profile().id
+
     path = generate_report(
-        profile_id=args.profile,
+        profile_id=profile_id,
         output_dir=os.path.dirname(args.output) if args.output else None,
     )
 

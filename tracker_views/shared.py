@@ -5,7 +5,6 @@ from datetime import date, timedelta
 
 import streamlit as st
 
-from profiles import ALL_PROFILES, DEFAULT_PROFILE_ID
 from storage import JobStorage
 
 # ── Constants ───────────────────────────────────────────────────────────────────
@@ -88,11 +87,12 @@ def ensure_db():
 # ── Cached data loaders ─────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_jobs(profile_id: str | None, exclude_archived: bool = False) -> list[dict]:
-    db = get_db()
+def load_jobs(profile_id: str | None = None,
+              exclude_archived: bool = False) -> list[dict]:
+    from profiles import get_active_profile
     if profile_id is None:
-        return db.get_all_jobs_best_score(exclude_archived=exclude_archived)
-    return db.get_all_for_tracker(profile_id, exclude_archived=exclude_archived)
+        profile_id = get_active_profile().id
+    return get_db().get_all_for_tracker(profile_id, exclude_archived=exclude_archived)
 
 
 @st.cache_data(ttl=60, show_spinner=False)

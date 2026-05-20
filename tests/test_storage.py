@@ -120,7 +120,7 @@ def test_schema_matches_model():
     scorer_owned = {"work_mode", "company_size", "contract_type", "geo_zone", "summary"}
     excluded = {"tags", "salary"}
     # Phase 4: company-level fields moved to companies table
-    company_owned = {"company_country", "industry_sector"}
+    company_owned = {"company_country", "industry_sector", "company_summary", "company_website"}
 
     required_in_jobs = model_fields - scorer_owned - excluded - company_owned
     missing = required_in_jobs - db_cols
@@ -2120,6 +2120,51 @@ def run_storage_tests() -> list[tuple[str, bool, str]]:
     for fn in TESTS:
         _run(fn)
     return _results
+
+
+# ---------------------------------------------------------------------------
+# Single-profile mode tests (Prompt 3)
+# ---------------------------------------------------------------------------
+
+
+def test_get_active_profile_returns_unified_jc():
+    from profiles import get_active_profile
+    profile = get_active_profile()
+    assert profile.id == "unified_jc"
+    assert profile.name == "Unified JC"
+
+
+def test_all_profiles_has_only_unified_jc():
+    from profiles import ALL_PROFILES
+    assert set(ALL_PROFILES.keys()) == {"unified_jc"}
+
+
+def test_dormant_profiles_still_importable():
+    from profiles import WEB3_REMOTE, CH_HYBRID
+    assert WEB3_REMOTE.id == "web3_remote"
+    assert CH_HYBRID.id == "ch_hybrid"
+
+
+def test_default_profile_id_is_unified_jc():
+    from profiles import DEFAULT_PROFILE_ID
+    assert DEFAULT_PROFILE_ID == "unified_jc"
+
+
+def test_score_one_defaults_to_active_profile():
+    """score_one with profile_id=None resolves to the active profile."""
+    from profiles import get_active_profile
+    from job_actions import score_one
+    import inspect
+
+    # Verify function signature: profile_id is optional (defaults to None,
+    # which triggers the active-profile fallback in the function body)
+    sig = inspect.signature(score_one)
+    params = list(sig.parameters.values())
+    assert "profile_id" in {p.name for p in params}
+    assert params[1].default is None, "profile_id defaults to None (fallback to get_active_profile in body)"
+
+    # Verify the fallback target
+    assert get_active_profile().id == "unified_jc"
 
 
 if __name__ == "__main__":

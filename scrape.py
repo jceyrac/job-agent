@@ -8,7 +8,7 @@ load_dotenv()
 
 from filters import JobFilterEngine
 from models import JobFilter, JobPosting
-from profiles import DEFAULT_PROFILE_ID
+from profiles import get_active_profile
 from storage import JobStorage
 
 DB_PATH = "data/jobs.db"
@@ -171,7 +171,7 @@ def main():
     print(f"\nTotal unique jobs after dedup: {len(all_jobs)}")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
-    total_before = db.get_stats(DEFAULT_PROFILE_ID)["total"]
+    total_before = db.get_stats(get_active_profile().id)["total"]
 
     for job in all_jobs:
         company_id = None
@@ -182,7 +182,7 @@ def main():
                 pass  # name normalizes to empty — skip company link
         db.save_unscored(job, company_id=company_id)
 
-    total_after = db.get_stats(DEFAULT_PROFILE_ID)["total"]
+    total_after = db.get_stats(get_active_profile().id)["total"]
     new_count = total_after - total_before
     already_count = len(all_jobs) - new_count
 

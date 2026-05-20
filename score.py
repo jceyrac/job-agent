@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from notifier import send_email_digest, export_joplin
-from profiles import ALL_PROFILES
+from profiles import ALL_PROFILES, get_active_profile
 from job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
 from scorer import score_job
 from storage import JobStorage
@@ -144,7 +144,8 @@ def _get_jobs_to_score(db_path: str, profile_id: str, rescore: bool) -> list[dic
 
 def main():
     parser = argparse.ArgumentParser(description="score.py — score jobs for a profile / extract job fields")
-    parser.add_argument("--profile", default=None, help="Profile ID to score for")
+    parser.add_argument("--profile", default=None,
+                        help="Profile ID to score for (optional; defaults to the active profile)")
     parser.add_argument("--extract", action="store_true",
                         help="Run profile-independent field extraction (no evaluation)")
     parser.add_argument("--rescore", action="store_true",
@@ -156,8 +157,7 @@ def main():
     args = parser.parse_args()
 
     if not args.extract and not args.profile:
-        print("Specify --profile or --extract.")
-        sys.exit(1)
+        args.profile = get_active_profile().id
 
     if args.extract and args.profile:
         print("--extract and --profile are mutually exclusive. Run them separately.")

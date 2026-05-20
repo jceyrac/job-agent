@@ -1,4 +1,7 @@
-"""create_profile.py — Interactive CLI to create, list, or delete search profiles."""
+"""create_profile.py — Interactive CLI to create, list, or delete search profiles.
+
+Dormant in single-profile mode — the app manages only profiles.ACTIVE_PROFILE.
+Kept as part of the multi-profile revert path."""
 
 import argparse
 import json

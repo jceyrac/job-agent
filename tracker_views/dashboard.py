@@ -106,7 +106,7 @@ def render():
 
     # ── Row 3: Hot Jobs Feed ────────────────────────────────────────────────
     st.subheader("🔥 Hot Jobs Feed")
-    hot_jobs = load_jobs(profile_id=None, exclude_archived=True)
+    hot_jobs = load_jobs(exclude_archived=True)
     hot_jobs = [j for j in hot_jobs if (j.get("score") or 0) >= 6][:10]
 
     if not hot_jobs:

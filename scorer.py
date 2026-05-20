@@ -200,7 +200,9 @@ Given the job below, return ONLY a JSON object with these fields:
   "geo_zone": "<europe|us_only|global_remote|apac|latam|unknown>",
   "company_size": "<startup|scaleup|sme|large|unknown>",
   "contract_type": "<permanent|freelance|contract|unknown>",
-  "summary": "<2-3 sentences>"
+  "summary": "<2-3 sentences>",
+  "company_summary": "<1-2 sentences about the company, or null>",
+  "company_website": "<URL or null>"
 }
 
 ## Work mode
@@ -307,6 +309,19 @@ Detection signals:
 ## Summary
 Write 2-3 sentences covering: company mission, key responsibilities, tech stack/context.
 If description is empty → summary = "Description non disponible — consulter l'offre directement."
+
+## Company summary
+Write 1-2 sentences describing the COMPANY (not the role). Cover: what they build / sell,
+their market, and approximate stage if inferrable. Ground every claim in the description
+text — do NOT invent facts from training knowledge. If the description doesn't describe
+the company itself, return null.
+
+## Company website
+Look for an explicit URL in the description that points to the company's main site
+(not the job-board listing). Patterns: "Learn more at acme.com", "Visit https://acme.com",
+"Our website: www.acme.com", an https:// link inside the company-about section. Normalize
+to "https://<host>". If multiple URLs appear, pick the shortest/most generic one
+(acme.com over acme.com/careers/eng). Return null if no clear company URL is mentioned.
 
 Return ONLY the JSON object — no preamble, no explanation, no markdown."""
 
@@ -551,7 +566,21 @@ def _parse_extraction_result(raw: str) -> dict:
         "company_size":     result.get("company_size", "unknown"),
         "contract_type":    result.get("contract_type", "unknown"),
         "summary":          result.get("summary") or "Description non disponible — consulter l'offre directement.",
+        "company_summary":  result.get("company_summary") or None,
+        "company_website":  _sanitize_url(result.get("company_website")),
     }
+
+
+def _sanitize_url(raw: str | None) -> str | None:
+    """Basic sanity check: must start with http(s):// and contain no spaces."""
+    if not raw:
+        return None
+    url = str(raw).strip()
+    if not url.startswith(("https://", "http://")):
+        return None
+    if " " in url:
+        return None
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +696,8 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         job.company_size      = result["company_size"]
         job.contract_type     = result["contract_type"]
         job.summary           = result["summary"]
+        job.company_summary   = result.get("company_summary")
+        job.company_website   = result.get("company_website")
         job.extracted_at      = datetime.now()
         job.extracted_by      = model
 

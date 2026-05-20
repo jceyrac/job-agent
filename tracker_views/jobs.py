@@ -1,10 +1,10 @@
 """tracker_views/jobs.py — Jobs list view."""
 import streamlit as st
 
-from profiles import ALL_PROFILES
+from profiles import ACTIVE_PROFILE_ID
 from tracker_views.shared import (
     ensure_db, get_db,
-    load_jobs, load_profiles, load_applications_index,
+    load_jobs, load_applications_index,
     score_badge, sector_label, md_link,
     COUNTRY_FLAG, SECTOR_LABELS,
     apply_filters,
@@ -25,21 +25,6 @@ def _render_list():
     with st.sidebar:
         st.markdown("### 🔍 Filters")
 
-        profiles = load_profiles()
-        profile_options = ["-- All profiles --"] + [p["id"] for p in profiles]
-
-        # Pre-select active profile (stored in DB config)
-        active_id = get_db().get_config("active_profile_id") or ""
-        index = 0
-        for i, opt in enumerate(profile_options):
-            if opt == active_id:
-                index = i
-                break
-
-        profile_id = st.selectbox("Profile", profile_options, index=index, key="jobs_profile")
-        if profile_id == "-- All profiles --":
-            profile_id = None
-
         view = st.radio("View", ["Active jobs", "Non relevant jobs"], key="jobs_view")
 
         min_score = st.slider("Min score", 0, 10, 0, key="jobs_min_score")
@@ -58,7 +43,7 @@ def _render_list():
         show_archived = view == "Non relevant jobs"
 
     # Load and filter
-    jobs_raw = load_jobs(profile_id, exclude_archived=False)
+    jobs_raw = load_jobs(exclude_archived=False)
 
     # Build filter option lists from raw data
     all_locations = sorted({j.get("location", "") for j in jobs_raw if j.get("location")})
@@ -104,7 +89,7 @@ def _render_list():
 
     # Reset page when filter set or per_page changes
     sig = (
-        profile_id, min_score, show_stale, date_filter, scraped_filter,
+        min_score, show_stale, date_filter, scraped_filter,
         tuple(location_filter or ()), tuple(work_mode_filter or ()),
         tuple(geo_zone_filter or ()), tuple(company_size_filter or ()),
         tuple(sector_filter or ()), tuple(language_filter or ()),
@@ -138,15 +123,14 @@ def _render_list():
         return
 
     # Score distribution (full filtered set, not just visible page)
-    if profile_id:
-        hot = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
-        solid = sum(1 for j in jobs if 7 <= (j.get("score") or 0) <= 8)
-        maybe = sum(1 for j in jobs if 5 <= (j.get("score") or 0) <= 6)
-        mc1, mc2, mc3, mc4 = st.columns(4)
-        mc1.metric("🔥 Hot (9-10)", hot)
-        mc2.metric("⭐ Solid (7-8)", solid)
-        mc3.metric("👀 Maybe (5-6)", maybe)
-        mc4.metric("Total", total)
+    hot = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
+    solid = sum(1 for j in jobs if 7 <= (j.get("score") or 0) <= 8)
+    maybe = sum(1 for j in jobs if 5 <= (j.get("score") or 0) <= 6)
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("🔥 Hot (9-10)", hot)
+    mc2.metric("⭐ Solid (7-8)", solid)
+    mc3.metric("👀 Maybe (5-6)", maybe)
+    mc4.metric("Total", total)
 
     # Pagination controls
     if per_page != "All" and n_pages > 1:
@@ -173,11 +157,11 @@ def _render_list():
     apps_index = load_applications_index()
 
     for job in page_jobs:
-        _render_card(job, profile_id, apps_index=apps_index)
+        _render_card(job, apps_index=apps_index)
 
 
 @st.fragment
-def _render_card(job: dict, profile_id: str | None, apps_index: dict[str, dict]):
+def _render_card(job: dict, apps_index: dict[str, dict]):
     """Render a compact job card with unified action bar."""
     db = get_db()
     job_id = job["id"]
@@ -238,18 +222,6 @@ def _render_card(job: dict, profile_id: str | None, apps_index: dict[str, dict])
         # ── Unified action bar ──────────────────────────────────────────────
         app = apps_index.get(job_id)
         _render_action_bar(job, "card", scores=None, app=app)
-
-        # ── Score against a different profile (always available) ────────────
-        with st.expander("Score against a different profile", expanded=False):
-            chosen = st.selectbox(
-                "Profile",
-                list(ALL_PROFILES.keys()),
-                key=f"score_pick_card_{job_id}",
-            )
-            if st.button("Run score", key=f"score_pick_run_card_{job_id}"):
-                if _run_score(job_id, chosen):
-                    st.cache_data.clear()
-                    st.rerun()
 
         # Archive confirmation
         if st.session_state.get(f"pending_archive_{job_id}"):

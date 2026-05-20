@@ -1,8 +1,8 @@
 # job_agent
 
-Multi-profile job scraping and scoring system for **Senior Product Manager** roles.
+Single-profile job scraping and scoring system for **Senior Product Manager** roles.
 
-Scrapes 12+ job boards, extracts structured fields from descriptions with LLMs, scores each posting per search profile (deterministic Tier 0 + LLM Tier 1), and delivers a digest via email and Joplin. A multi-page Streamlit tracker UI lets you browse, filter, track applications, manage companies and contacts, and log interactions — a lightweight CRM for your job search.
+Scrapes 12+ job boards, extracts structured fields from descriptions with LLMs, scores each posting (deterministic Tier 0 + LLM Tier 1) against the active profile, and delivers a digest via email and Joplin. A multi-page Streamlit tracker UI lets you browse, filter, track applications, manage companies and contacts, and log interactions — a lightweight CRM for your job search.
 
 ---
 
@@ -12,15 +12,15 @@ The pipeline has two distinct phases after scraping: **extraction** (profile-ind
 
 ```
 scrape.py → SQLite DB ─┬─ score.py --extract (field extraction)
-                        ├─ score.py --profile <id> (per-profile scoring)
-                        │          └→ email digest + Joplin note
+                        ├─ score.py (scoring against the active profile)
+                        │      └→ email digest + Joplin note
                         ├─ prepare.py --ready (application packages: queued → ready)
                         └─ tracker.py (multi-page Streamlit UI + CRM)
 ```
 
 1. **`scrape.py`** fetches raw job postings from all enabled scrapers and stores only new ones in the DB (deduplication by URL).
 2. **`score.py --extract`** reads jobs that haven't been extracted yet and fills structured fields (`company_country`, `industry_sector`, `language_required`, `work_mode`, `geo_zone`, `company_size`, `contract_type`, `summary`). This is profile-independent — run it once, not per profile.
-3. **`score.py --profile <id>`** evaluates jobs for a specific profile. It auto-extracts any unextracted survivors first, then applies a two-tier scoring system:
+3. **`score.py`** evaluates jobs against the active profile (defaults to `unified_jc`; `--profile` accepts an optional override). It auto-extracts any unextracted survivors first, then applies a two-tier scoring system:
    - **Tier 0** — deterministic filters using the extracted fields (language, sector, country, work mode mismatches are rejected with score 0).
    - **Tier 1** — LLM evaluation for jobs that pass Tier 0.
 4. **`tracker.py`** is a multi-page Streamlit app (Dashboard, Jobs, Companies, Contacts, Settings) with inline company/contact links, interaction logging, and application status tracking. Doubles as a lightweight CRM.
@@ -58,22 +58,10 @@ python scrape.py
 
 ### List existing profiles
 
-```bash
-python create_profile.py --list
-```
-
-### Create a new profile
-
-Interactive wizard. Prompts for ID, name, work modes, geo zones, company sizes, score threshold, scoring context (multi-line, end with `END`), and location keywords for pre-filtering.
+Creating and listing profiles is dormant in single-profile mode — the app manages only the active profile. `create_profile.py` is kept as part of the multi-profile revert path.
 
 ```bash
-python create_profile.py
-```
-
-After saving, run the scorer:
-
-```bash
-python score.py --profile <profile_id>
+python create_profile.py --list   # dormant — lists profiles but the UI only uses the active one
 ```
 
 ### Extract structured fields from job descriptions
@@ -84,12 +72,13 @@ Profile-independent — run once after scraping, not per profile. Fills `company
 python score.py --extract
 ```
 
-### Score unscored jobs for an existing profile
+### Score unscored jobs
 
-Only jobs not yet scored for this profile are processed. Auto-extracts any unextracted survivors first (the `--profile` path includes extraction + evaluation). Safe to re-run after scraping new jobs.
+Only jobs not yet scored for the active profile are processed. Auto-extracts any unextracted survivors first. Safe to re-run after scraping new jobs. `--profile` is optional — defaults to the active profile.
 
 ```bash
-python score.py --profile <profile_id>
+python score.py
+python score.py --profile <profile_id>   # optional override
 ```
 
 ### Cap the number of jobs processed
@@ -98,28 +87,29 @@ Limits the run to at most N jobs. The remainder are deferred to the next run —
 
 ```bash
 python score.py --extract --limit 20
-python score.py --profile <profile_id> --limit 15
+python score.py --limit 15
 ```
 
-### Rescore all jobs for a profile (wipes existing scores)
+### Rescore all jobs (wipes existing scores)
 
-Deletes all existing scores for the profile and re-evaluates every job that passes the SQL pre-filter.
+Deletes all existing scores for the active profile and re-evaluates every job that passes the SQL pre-filter. `--profile` overrides the active profile if needed.
 
 ```bash
-python score.py --profile <profile_id> --rescore
+python score.py --rescore
+python score.py --profile <profile_id> --rescore   # optional override
 ```
 
-### Test a profile's scoring context (no DB writes)
+### Test the active profile's scoring context (no DB writes)
 
-Scores 3 hardcoded sample jobs to verify the profile's LLM instructions produce sensible results.
+Scores 3 hardcoded sample jobs to verify the active profile's LLM instructions produce sensible results.
 
 ```bash
-python score.py --profile <profile_id> --mock
+python score.py --mock
 ```
 
 ### Delete a profile
 
-Removes the profile and all its scores from the DB. Prompts for confirmation.
+Removes the profile and all its scores from the DB. Dormant in single-profile mode. Prompts for confirmation.
 
 ```bash
 python create_profile.py --delete <profile_id>
@@ -130,8 +120,8 @@ python create_profile.py --delete <profile_id>
 Generates a full application package: tailored cover letter, CV bullet selection/re-ordering, company research notes, and screening Q&A drafts. Picks up jobs with status `queued` (set via the tracker UI's "Queue" button) and promotes them to `ready` on success.
 
 ```bash
-python prepare.py --job <job_id>                    # auto-pick profile from job's scores
-python prepare.py --job <job_id> --profile <id>     # explicit profile
+python prepare.py --job <job_id>                    # uses active profile
+python prepare.py --job <job_id> --profile <id>     # optional override
 python prepare.py --ready                           # prepare all queued jobs (queued → ready)
 python prepare.py --ready --limit 5
 python prepare.py --job <id> --redo                 # overwrite existing application
@@ -152,7 +142,7 @@ streamlit run tracker.py
 
 ## Search profiles
 
-Profiles live in `profiles.py` (built-in) and can be created interactively via `create_profile.py`. Each profile controls:
+The app runs in **single-profile mode** on `unified_jc` (Unified JC). Profiles live in `profiles.py`. Each profile controls:
 
 | Setting | Purpose |
 |---------|---------|
@@ -164,12 +154,15 @@ Profiles live in `profiles.py` (built-in) and can be created interactively via `
 | `scoring_context` | LLM system-prompt suffix with profile-specific scoring instructions |
 | `company_sizes` | Post-scoring company size filter |
 
-### Built-in profiles
+### Active profile
 
 | ID | Name | Focus |
 |----|------|-------|
-| `web3_remote` | Web3 Remote | Senior PM, Web3/DeFi/AI, fully remote globally |
-| `ch_hybrid` | Switzerland Hybrid | Senior PM, Switzerland hybrid/remote, all tech verticals |
+| `unified_jc` | Unified JC | Senior PM, Web3/fintech/AI, remote/hybrid, Switzerland + global |
+
+### Dormant profiles
+
+`web3_remote` and `ch_hybrid` remain defined in `profiles.py` but are not surfaced in the UI or CLI. To return to multi-profile mode: add them back into `ALL_PROFILES` in `profiles.py` and restore the profile selectors in the tracker UI.
 
 ---
 
@@ -202,7 +195,7 @@ The multi-page Streamlit tracker (`streamlit run tracker.py`) has 5 pages:
 5 at-a-glance widgets: follow-ups due today, recent inbound (7 days), unverified contacts count, stale active outreach (14 days), hot jobs feed (top 10 by score). Pipeline stats bar (new / queued / ready / applied / rejected / archived).
 
 ### Jobs
-Browse all jobs with 12 filters in the sidebar (profile, min score, status, date, location, work mode, geo zone, company size, sector, language, source, stale). Each job card shows score badge, title, company (clickable link to company detail), location, metadata, summary, and action buttons (Open, Details, Queue, Applied, Rejected, Not relevant). The detail page (accessible via `?id=`) has action buttons, status change dropdown, full description, contacts discovered from the posting, and application content preview.
+Browse all jobs with filters in the sidebar (min score, status, date, location, work mode, geo zone, company size, sector, language, source, stale). Each job card shows score badge, title, company (clickable link to company detail), location, metadata, summary, and action buttons (Open, Details, Queue, Applied, Rejected, Not relevant). The detail page (accessible via `?id=`) has action buttons, status change dropdown, full description, contacts discovered from the posting, and application content preview.
 
 ### Companies
 Company list with status/search filters. Each card shows job count, contact count, last interaction date, country/sector/size metadata, and current status. Detail page has 4 tabs: Jobs, Contacts, Interactions, Notes. Add contact and log interaction buttons. Status changes are logged to history.
@@ -211,7 +204,7 @@ Company list with status/search filters. Each card shows job count, contact coun
 Contact list with company, role family, unverified-only, and search filters. Each card shows relationship status (derived from interaction history: offer → interviewing → applied → replied → contacted). Detail page shows all channels (email, LinkedIn, X, Telegram, GitHub, phone), interactions timeline, verify/unverify toggle, and notes.
 
 ### Settings
-Profile management (edit search profile criteria via form), database stats (job/company/contact/interaction counts, contacts by role), and actions (clear cache, re-extract job fields).
+Database stats (job/company/contact/interaction counts, contacts by role) and actions (clear cache, re-extract job fields).
 
 ### Cross-page navigation
 Job cards link to company detail (`/companies?id=X`). Company detail links to individual jobs and contacts. Dashboard widgets link to relevant detail pages. All cross-page navigation uses URL query parameters for deep linking.
@@ -280,12 +273,11 @@ cp .env.example .env
 # 1. Fetch new jobs from all scrapers
 python scrape.py
 
-# 2. Extract structured fields from new job descriptions (once, not per profile)
+# 2. Extract structured fields from new job descriptions (once, profile-independent)
 python score.py --extract
 
-# 3. Evaluate jobs for each profile (includes auto-extraction of any missed jobs)
-python score.py --profile web3_remote
-python score.py --profile ch_hybrid
+# 3. Evaluate jobs (defaults to the active profile)
+python score.py
 
 # 4. Review in the tracker UI
 streamlit run tracker.py
@@ -299,7 +291,7 @@ streamlit run tracker.py
 python -m pytest tests/ -q
 ```
 
-147 unit tests using an in-memory SQLite DB — safe to run at any time, no network calls, no DB writes. Covers schema contracts, profile-independent status/application design, scoring, digest queries, per-profile filters, company/contact CRUD, interaction logging, derived relationship status, auto-interaction hooks, dashboard data queries, badge formatting, and parameterized job filters.
+158 unit tests using an in-memory SQLite DB — safe to run at any time, no network calls, no DB writes. Covers schema contracts, profile-independent status/application design, scoring, digest queries, per-profile filters, company/contact CRUD, interaction logging, derived relationship status, auto-interaction hooks, dashboard data queries, badge formatting, and parameterized job filters.
 
 ```bash
 python tests/run_all.py
@@ -324,7 +316,7 @@ job_agent/
 │   ├── jobs.py                            # Job list + detail view
 │   ├── companies.py                       # Company list + detail view
 │   ├── contacts.py                        # Contact list + detail view
-│   ├── settings.py                        # Profile management + stats
+│   ├── settings.py                        # Settings + stats
 │   └── forms.py                           # @st.dialog modals (add company, add contact, log interaction)
 ├── create_profile.py                      # CLI: create / list / delete profiles
 ├── main.py                                # Orchestrator: scrape → score

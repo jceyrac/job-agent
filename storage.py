@@ -600,6 +600,15 @@ class JobStorage:
                         f"from existing job data"
                     )
 
+            # Phase 4.1 — company summary (extracted from job descriptions)
+            cur_cols = {row[1] for row in conn.execute("PRAGMA table_info(companies)").fetchall()}
+            if "summary" not in cur_cols:
+                try:
+                    conn.execute("ALTER TABLE companies ADD COLUMN summary TEXT")
+                    logger.info("[Storage] Phase 4.1 migration: added summary column to companies")
+                except sqlite3.OperationalError:
+                    pass  # already added
+
             # Phase 5 — drop company-level columns from jobs (SQLite 3.35+)
             jobs_cols_current = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
             for col in ("company_country", "industry_sector", "company_size"):
@@ -840,6 +849,36 @@ class JobStorage:
                 return conn.execute(
                     "SELECT id FROM companies WHERE name_normalized = ?",
                     (name_norm,)).fetchone()["id"]
+
+    def update_company_metadata(self, company_id: int, *,
+                                summary: str | None = None,
+                                website: str | None = None) -> None:
+        """Fill summary/website on a company row IF the existing values are NULL.
+
+        Preserves manual edits. No-op if both fields are already set or the new
+        values are empty.
+        """
+        if not summary and not website:
+            return
+        with self._conn() as conn:
+            existing = conn.execute(
+                "SELECT summary, website FROM companies WHERE id = ?",
+                (company_id,)).fetchone()
+            if not existing:
+                return
+            updates = []
+            params = []
+            if summary and not existing["summary"]:
+                updates.append("summary = ?")
+                params.append(summary.strip())
+            if website and not existing["website"]:
+                updates.append("website = ?")
+                params.append(website.strip())
+            if updates:
+                params.append(company_id)
+                conn.execute(
+                    f"UPDATE companies SET {', '.join(updates)} WHERE id = ?",
+                    params)
 
     def set_company_status(self, company_id: int, status: str,
                            note: str | None = None) -> None:
@@ -1826,7 +1865,7 @@ class JobStorage:
             SELECT
                 c.id, c.name, c.website, c.status,
                 c.company_country, c.industry_sector, c.company_size,
-                c.first_seen_at, c.last_seen_at,
+                c.first_seen_at, c.last_seen_at, c.summary,
                 COALESCE(jcnt.cnt, 0)    AS job_count,
                 COALESCE(ctcnt.cnt, 0)   AS contact_count,
                 COALESCE(ixcnt.cnt, 0)   AS interaction_count,
@@ -1865,7 +1904,7 @@ class JobStorage:
             SELECT
                 c.id, c.name, c.website, c.status, c.notes,
                 c.company_country, c.industry_sector, c.company_size,
-                c.first_seen_at, c.last_seen_at,
+                c.first_seen_at, c.last_seen_at, c.summary,
                 COALESCE(jcnt.cnt, 0)    AS job_count,
                 COALESCE(ctcnt.cnt, 0)   AS contact_count,
                 COALESCE(ixcnt.cnt, 0)   AS interaction_count,

@@ -57,6 +57,8 @@ def _dict_to_posting(d: dict) -> JobPosting:
         language_required=d.get("language_required"),
         extracted_at=extracted_at,
         extracted_by=d.get("extracted_by"),
+        company_summary=d.get("company_summary"),
+        company_website=d.get("company_website"),
     )
 
 
@@ -229,6 +231,14 @@ def extract_one(job_id: str) -> dict | None:
         "extracted_by":      result.extracted_by,
     })
 
+    company_id = row.get("company_id")
+    if company_id is not None:
+        db.update_company_metadata(
+            company_id,
+            summary=getattr(result, "company_summary", None),
+            website=getattr(result, "company_website", None),
+        )
+
     _discover_contacts(
         result, result.description or "",
         row.get("company_id"), db,
@@ -248,11 +258,14 @@ def extract_one(job_id: str) -> dict | None:
     }
 
 
-def score_one(job_id: str, profile_id: str) -> dict | None:
+def score_one(job_id: str, profile_id: str | None = None) -> dict | None:
     """Run extract-if-needed + evaluate_for_profile for one job.
 
     Returns None only on unrecoverable load failure (job not found).
     """
+    from profiles import get_active_profile
+    profile_id = profile_id or get_active_profile().id
+
     if profile_id not in ALL_PROFILES:
         return {"status": "error", "error": f"unknown profile {profile_id}"}
 

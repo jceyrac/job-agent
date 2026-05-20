@@ -1,28 +1,16 @@
-import argparse
+"""job_agent — automated PM job search (single-profile mode)."""
+
 import subprocess
 import sys
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from profiles import ALL_PROFILES, DEFAULT_PROFILE_ID
-from storage import JobStorage
-
-DB_PATH = "data/jobs.db"
+from profiles import get_active_profile
 
 
 def main():
-    parser = argparse.ArgumentParser(description="job_agent — automated PM job search")
-    parser.add_argument(
-        "--profile",
-        default=None,
-        choices=list(ALL_PROFILES.keys()),
-        help=f"Profile to score (default: active profile from DB or {DEFAULT_PROFILE_ID})",
-    )
-    args = parser.parse_args()
-
-    db = JobStorage(DB_PATH)
-    active_profile_id = args.profile or db.get_config("active_profile_id", default=DEFAULT_PROFILE_ID)
+    active_profile_id = get_active_profile().id
 
     print("=== Step 1: Scraping ===")
     subprocess.run([sys.executable, "scrape.py"], check=True)

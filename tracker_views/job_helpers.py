@@ -3,7 +3,6 @@ shared by the Jobs list page and Job detail page."""
 import streamlit as st
 
 from job_actions import extract_one, score_one, prepare_one
-from profiles import ALL_PROFILES
 from tracker_views.shared import get_db
 
 
@@ -49,12 +48,10 @@ def _source_link(src: str, url: str) -> str:
 # Helpers — profile resolution + scoring
 # ---------------------------------------------------------------------------
 
-def _resolve_active_profile() -> str | None:
-    """Return the active profile id, or None if unset/'all'."""
-    pid = (get_db().get_config("active_profile_id") or "").strip()
-    if pid and pid in ALL_PROFILES:
-        return pid
-    return None
+def _resolve_active_profile() -> str:
+    """Return the active profile id."""
+    from profiles import get_active_profile
+    return get_active_profile().id
 
 
 def _run_score(job_id: str, profile_id: str) -> bool:
@@ -177,14 +174,7 @@ def _handle_action(action: str, job: dict, scope: str) -> None:
             st.cache_data.clear()
             st.rerun()  # fragment scope
         elif action == "score":
-            active = _resolve_active_profile()
-            if active is None:
-                st.error(
-                    "Set a default profile in Settings before scoring "
-                    "individual jobs (or use the advanced picker below)."
-                )
-                return
-            if _run_score(job_id, active):
+            if _run_score(job_id, _resolve_active_profile()):
                 st.cache_data.clear()
                 st.rerun()  # fragment scope
         elif action == "prepare":

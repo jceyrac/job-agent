@@ -8,7 +8,7 @@ them to 'ready' (ready to apply).
 
 Usage:
     python prepare.py --job <job_id>
-    python prepare.py --job <job_id> --profile <id>
+    python prepare.py --job <job_id> --profile <id>  # optional override
     python prepare.py --ready
     python prepare.py --ready --limit 5
     python prepare.py --job <id> --redo
@@ -364,12 +364,10 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
         print(f"Job '{job_id}' not found in database.")
         return None
 
-    # Auto-pick profile from highest score if not specified
+    # Default to the active profile if not specified
     if profile_id is None:
-        profile_id = _auto_pick_profile(db, job_id)
-        if profile_id is None:
-            print(f"No scored profile found for job '{job_id}'. Specify --profile.")
-            return None
+        from profiles import get_active_profile
+        profile_id = get_active_profile().id
 
     if profile_id not in ALL_PROFILES:
         print(f"Unknown profile '{profile_id}'. Valid: {list(ALL_PROFILES.keys())}")
@@ -774,7 +772,8 @@ def main():
         description="prepare.py — generate application packages for jobs"
     )
     parser.add_argument("--job", default=None, help="Job ID to prepare")
-    parser.add_argument("--profile", default=None, help="Profile ID to use")
+    parser.add_argument("--profile", default=None,
+                        help="Profile ID to use (optional; defaults to the active profile)")
     parser.add_argument("--ready", action="store_true",
                         help="Prepare all queued jobs that haven't been prepared yet")
     parser.add_argument("--limit", type=int, default=None, metavar="N",

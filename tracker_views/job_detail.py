@@ -1,7 +1,7 @@
 """tracker_views/job_detail.py — Job detail view (standalone page)."""
 import streamlit as st
 
-from profiles import ALL_PROFILES
+from profiles import ACTIVE_PROFILE_ID
 from tracker_views.shared import (
     ensure_db, get_db, get_detail_id, md_link,
     score_badge, sector_label,
@@ -9,7 +9,6 @@ from tracker_views.shared import (
 )
 from tracker_views.job_helpers import (
     _source_label, _source_link,
-    _resolve_active_profile, _run_score,
     _render_action_bar,
 )
 from tracker_views.forms import log_interaction_dialog
@@ -37,17 +36,14 @@ def _render_detail(job_id: str):
     else:
         st.markdown(f"### @ {company}")
 
-    # Scores table
-    if scores:
-        st.subheader("Scores")
-        lines = ["| Profile | Score | Reason | Model |",
-                  "|---|---|---|---|"]
-        for s in scores:
-            lines.append(
-                f"| {s['profile_id']} | {score_badge(s['score'])} "
-                f"| {(s['reason'] or '')[:120]} | {s['scored_by'] or ''} |"
-            )
-        st.markdown("\n".join(lines))
+    # Active profile score
+    active_score = next(
+        (s for s in scores if s["profile_id"] == ACTIVE_PROFILE_ID), None)
+    if active_score:
+        st.markdown(
+            f"**{score_badge(active_score['score'])}** — "
+            f"{active_score.get('reason', '')}"
+        )
     else:
         st.info("Not yet scored.")
 
@@ -103,18 +99,6 @@ def _render_detail(job_id: str):
     # ── Unified action bar ──────────────────────────────────────────────────
     st.subheader("Actions")
     _render_action_bar(job, "detail", scores=scores, app=app)
-
-    # ── Score against a different profile (always available) ────────────────
-    with st.expander("Score against a different profile", expanded=False):
-        chosen = st.selectbox(
-            "Profile",
-            list(ALL_PROFILES.keys()),
-            key=f"score_pick_detail_{job_id}",
-        )
-        if st.button("Run score", key=f"score_pick_run_detail_{job_id}"):
-            if _run_score(job_id, chosen):
-                st.cache_data.clear()
-                st.rerun()
 
     # Archive confirmation
     if st.session_state.get(f"pending_detail_archive_{job_id}"):

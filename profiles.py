@@ -57,6 +57,13 @@ class SearchProfile:
 # Profil par défaut — ex-comportement main.py
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------
+# DORMANT PROFILES — defined but not surfaced anywhere.
+# The app runs in single-profile mode (see ACTIVE_PROFILE below).
+# To return to multi-profile: add these back into ALL_PROFILES and
+# restore the profile selectors in the tracker UI.
+# ---------------------------------------------------------------------
+
 WEB3_REMOTE = SearchProfile(
     id="web3_remote",
     name="Web3 Remote",
@@ -283,13 +290,21 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
 )
 
 # ---------------------------------------------------------------------------
-# Registre
+# Active profile — single-profile mode
 # ---------------------------------------------------------------------------
 
+ACTIVE_PROFILE: SearchProfile = UNIFIED_JC
+ACTIVE_PROFILE_ID: str = UNIFIED_JC.id
+
+# Only the active profile is surfaced. Dormant profiles stay defined
+# above but are intentionally excluded from this registry.
 ALL_PROFILES: dict[str, SearchProfile] = {
-    WEB3_REMOTE.id: WEB3_REMOTE,
-    CH_HYBRID.id:   CH_HYBRID,
-    UNIFIED_JC.id:  UNIFIED_JC,
+    UNIFIED_JC.id: UNIFIED_JC,
 }
 
-DEFAULT_PROFILE_ID = WEB3_REMOTE.id
+DEFAULT_PROFILE_ID = UNIFIED_JC.id
+
+
+def get_active_profile() -> SearchProfile:
+    """The single profile the app manages. One source of truth."""
+    return ACTIVE_PROFILE

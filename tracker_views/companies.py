@@ -151,6 +151,9 @@ def _render_list():
                 if size and size != "unknown":
                     meta.append(size)
                 st.caption(" · ".join(meta) if meta else "")
+                summary = (c.get("summary") or "").strip()
+                if summary:
+                    st.caption(summary[:160] + "…" if len(summary) > 160 else summary)
                 last = (c.get("last_interaction_at") or "")[:10]
                 if last:
                     st.caption(f"Last interaction: {last}")

@@ -22,15 +22,11 @@ def render():
 
     with st.sidebar:
         st.markdown("### Generate")
-        profile_choice = st.selectbox(
-            "Profile",
-            ["All", "web3_remote", "ch_hybrid", "unified_jc"],
-            key="pref_profile",
-        )
         if st.button("Regenerate report"):
             with st.spinner("Analyzing apply/archive behavior…"):
-                pid = None if profile_choice == "All" else profile_choice
-                path = generate_report(profile_id=pid, output_dir=REPORT_DIR)
+                from profiles import get_active_profile
+                path = generate_report(
+                    profile_id=get_active_profile().id, output_dir=REPORT_DIR)
             st.success(f"Wrote {os.path.basename(path)}")
             st.cache_data.clear()
             st.rerun()

@@ -26,6 +26,9 @@ def _render_detail(company_id: int):
     st.title(company["name"])
     st.markdown(f"### {company_status_badge(company['status'])}")
 
+    if company.get("summary"):
+        st.markdown(f"_{company['summary']}_")
+
     # Meta chips
     meta = []
     country = company.get("company_country") or ""

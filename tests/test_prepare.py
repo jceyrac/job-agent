@@ -21,7 +21,7 @@ from models import JobPosting
 from storage import JobStorage
 from profiles import ALL_PROFILES
 
-PROFILE_ID = "web3_remote"
+PROFILE_ID = "unified_jc"
 
 # ── Test runner ───────────────────────────────────────────────────────────────
 
