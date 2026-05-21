@@ -2150,6 +2150,31 @@ def test_default_profile_id_is_unified_jc():
     assert DEFAULT_PROFILE_ID == "unified_jc"
 
 
+def test_get_job_for_prepare_includes_status():
+    """get_job_for_prepare must include the tracking status via job_tracking join."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    j = _job()
+    db.save_scored(j, _score(5), PROFILE_ID)
+    db.set_status(j.id, "applied")
+
+    job = db.get_job_for_prepare(j.id)
+    assert job is not None
+    assert job["status"] == "applied"
+
+
+def test_get_job_for_prepare_defaults_new():
+    """get_job_for_prepare defaults status to 'new' when not tracked."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    j = _job()
+    db.save_scored(j, _score(5), PROFILE_ID)
+
+    job = db.get_job_for_prepare(j.id)
+    assert job is not None
+    assert job["status"] == "new"
+
+
 def test_score_one_defaults_to_active_profile():
     """score_one with profile_id=None resolves to the active profile."""
     from profiles import get_active_profile

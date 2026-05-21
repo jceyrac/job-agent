@@ -1419,9 +1419,11 @@ class JobStorage:
                           COALESCE(j.contract_type, 'unknown') AS contract_type,
                           COALESCE(c.company_country, 'unknown') AS company_country,
                           COALESCE(c.industry_sector, 'other') AS industry_sector,
-                          COALESCE(j.language_required, 'unknown') AS language_required
+                          COALESCE(j.language_required, 'unknown') AS language_required,
+                          COALESCE(t.status, 'new') AS status
                    FROM jobs j
                    LEFT JOIN companies c ON j.company_id = c.id
+                   LEFT JOIN job_tracking t ON j.id = t.job_id
                    WHERE j.id = ?""",
                 (job_id,),
             ).fetchone()

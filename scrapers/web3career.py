@@ -23,12 +23,14 @@ def _clean_text(text: str) -> str | None:
     return text or None
 
 
-def _fetch_description(url: str) -> str | None:
+def _fetch_detail(url: str) -> tuple[str | None, str | None]:
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
         if r.status_code != 200:
-            return None
+            return None, None
         soup = BeautifulSoup(r.text, "html.parser")
+        description = None
+        detail_location = None
         for sc in soup.find_all("script", type="application/ld+json"):
             try:
                 d = json.loads(sc.string or "")
@@ -36,15 +38,31 @@ def _fetch_description(url: str) -> str | None:
                     if isinstance(node, dict) and node.get("@type") == "JobPosting":
                         desc = node.get("description", "")
                         if desc:
-                            return _clean_text(desc)
+                            description = _clean_text(desc)
+                        jl = node.get("jobLocation")
+                        if isinstance(jl, dict):
+                            addr = jl.get("address", {})
+                            if isinstance(addr, dict):
+                                locality = (addr.get("addressLocality") or "").strip()
+                                country = (addr.get("addressCountry") or "").strip()
+                                parts = [p for p in [locality, country] if p]
+                                if parts:
+                                    detail_location = ", ".join(parts)
             except Exception:
                 pass
-        el = soup.select_one(".main-border-sides-job")
-        if el:
-            return _clean_text(el.get_text(separator=" ", strip=True))
-        return None
+        if not detail_location:
+            for p in soup.select(".mysticky p"):
+                text = p.get_text(strip=True)
+                if text.startswith("Location:"):
+                    detail_location = text[len("Location:"):].strip()
+                    break
+        if not description:
+            el = soup.select_one(".main-border-sides-job")
+            if el:
+                description = _clean_text(el.get_text(separator=" ", strip=True))
+        return description, detail_location
     except Exception:
-        return None
+        return None, None
 
 
 class Web3CareerScraper(BaseScraper):
@@ -93,7 +111,8 @@ class Web3CareerScraper(BaseScraper):
                 company = company_tag.get_text(strip=True) if company_tag else ""
 
                 loc_tag = row.find("span", style=lambda s: s and "d5d3d3" in s)
-                location = loc_tag.get_text(strip=True) if loc_tag else "Remote"
+                raw_listing = loc_tag.get_text(strip=True) if loc_tag else ""
+                listing_location = raw_listing if raw_listing and raw_listing != "," else None
 
                 time_tag = row.find("time")
                 posted_date = None
@@ -106,11 +125,11 @@ class Web3CareerScraper(BaseScraper):
                     except ValueError:
                         pass
 
-                base_location = location if location and location != "," else None
-                display_location = location if location and location != "," else "Remote"
-
-                description = _fetch_description(url) if url else None
+                description, detail_location = _fetch_detail(url) if url else (None, None)
                 time.sleep(0.3)
+
+                resolved = detail_location or listing_location or None
+                display_location = resolved or "Remote"
 
                 jobs.append(JobPosting(
                     source=self.SOURCE_NAME,
@@ -123,7 +142,7 @@ class Web3CareerScraper(BaseScraper):
                     tags=[],
                     salary=None,
                     work_mode="remote",
-                    base_location=base_location,
+                    base_location=resolved,
                 ))
             except Exception as e:
                 print(f"[{self.SOURCE_NAME}] Parse error on row: {e}")
