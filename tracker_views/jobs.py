@@ -49,6 +49,7 @@ def _render_list():
     all_locations = sorted({j.get("location", "") for j in jobs_raw if j.get("location")})
     all_work_modes = sorted({j.get("work_mode", "unknown") for j in jobs_raw})
     all_geo_zones = sorted({j.get("geo_zone", "unknown") for j in jobs_raw})
+    all_country_codes = sorted({j.get("country_code") for j in jobs_raw if j.get("country_code")})
     all_sizes = sorted({j.get("company_size", "unknown") for j in jobs_raw})
     all_sectors = sorted({j.get("industry_sector", "other") for j in jobs_raw})
     all_languages = sorted({j.get("language_required", "unknown") for j in jobs_raw})
@@ -57,6 +58,7 @@ def _render_list():
     with st.sidebar:
         location_filter = st.multiselect("Location", all_locations, key="jobs_location")
         work_mode_filter = st.multiselect("Work mode", all_work_modes, key="jobs_wm")
+        country_code_filter = st.multiselect("Country", all_country_codes, key="jobs_cc")
         geo_zone_filter = st.multiselect("Geo zone", all_geo_zones, key="jobs_gz")
         company_size_filter = st.multiselect("Company size", all_sizes, key="jobs_cs")
         sector_filter = st.multiselect("Sector", all_sectors, key="jobs_sector",
@@ -79,6 +81,7 @@ def _render_list():
         location_filter=location_filter,
         work_mode_filter=work_mode_filter,
         geo_zone_filter=geo_zone_filter,
+        country_code_filter=country_code_filter,
         company_size_filter=company_size_filter,
         sector_filter=sector_filter,
         language_filter=language_filter,
@@ -91,7 +94,8 @@ def _render_list():
     sig = (
         min_score, show_stale, date_filter, scraped_filter,
         tuple(location_filter or ()), tuple(work_mode_filter or ()),
-        tuple(geo_zone_filter or ()), tuple(company_size_filter or ()),
+        tuple(geo_zone_filter or ()), tuple(country_code_filter or ()),
+        tuple(company_size_filter or ()),
         tuple(sector_filter or ()), tuple(language_filter or ()),
         tuple(source_filter or ()), tuple(status_filter or ()),
         show_archived, per_page,

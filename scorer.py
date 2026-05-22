@@ -120,6 +120,11 @@ IMPORTANT — company geography: if the company is well-known to operate primari
 - global_remote → no adjustment
 - unknown       → no adjustment (do not penalise uncertainty)
 
+## Country code
+Return the ISO 3166-1 alpha-2 country code for the primary country of the role.
+If the job is fully remote with no country anchor, return null.
+If multiple countries are listed, return the primary one.
+
 ## Summary
 Write 2-3 sentences covering: company mission, key responsibilities, tech stack/context.
 If description is empty → summary = "Description non disponible — consulter l'offre directement."
@@ -182,6 +187,7 @@ Respond with JSON only:
   "company_size": "<startup|scaleup|sme|large|unknown>",
   "contract_type": "<permanent|freelance|contract|internship|unknown>",
   "geo_zone": "<europe|us_only|global_remote|apac|latam|unknown>",
+  "country_code": "<ISO 3166-1 alpha-2 country code, e.g. CH, DE, FR, US — or null if fully remote/unknown>",
   "company_country": "<country name or unknown>",
   "industry_sector": "<one of the 15 codes above>",
   "language_required": "<english|french|german|italian|spanish|multiple|unknown>"
@@ -198,6 +204,7 @@ Given the job below, return ONLY a JSON object with these fields:
   "language_required": "<code from list below>",
   "work_mode": "<remote|hybrid|on-site|unknown>",
   "geo_zone": "<europe|us_only|global_remote|apac|latam|unknown>",
+  "country_code": "<ISO 3166-1 alpha-2 country code, e.g. CH, DE, FR, US — or null if fully remote/unknown>",
   "company_size": "<startup|scaleup|sme|large|unknown>",
   "contract_type": "<permanent|freelance|contract|unknown>",
   "summary": "<2-3 sentences>",
@@ -264,6 +271,10 @@ IMPORTANT — company geography: if the company is well-known to operate primari
 - Bitso (LATAM-targeted roles) → latam
 - Aave, Consensys, Gnosis, Ethereum Foundation, MakerDAO, Uniswap Foundation → global_remote
 - Deutsche Bank, UBS, Société Générale, BNP Paribas → europe
+
+## Country code
+Return the ISO 3166-1 alpha-2 country code for the primary country of the role.
+If the job is fully remote with no country anchor, return null.
 
 ## company_country
 The country where the company has its primary office relevant to this role.
@@ -537,6 +548,7 @@ def _parse_result(raw: str) -> dict:
         "company_size":     result.get("company_size", "unknown"),
         "contract_type":    result.get("contract_type", "unknown"),
         "geo_zone":         result.get("geo_zone", "unknown"),
+        "country_code":     _normalize_country_code(result.get("country_code")),
         "company_country":  (result.get("company_country") or "unknown").strip(),
         "industry_sector":  sector,
         "language_required": language,
@@ -563,12 +575,21 @@ def _parse_extraction_result(raw: str) -> dict:
         "language_required": language,
         "work_mode":        result.get("work_mode", "unknown"),
         "geo_zone":         result.get("geo_zone", "unknown"),
+        "country_code":     _normalize_country_code(result.get("country_code")),
         "company_size":     result.get("company_size", "unknown"),
         "contract_type":    result.get("contract_type", "unknown"),
         "summary":          result.get("summary") or "Description non disponible — consulter l'offre directement.",
         "company_summary":  result.get("company_summary") or None,
         "company_website":  _sanitize_url(result.get("company_website")),
     }
+
+
+def _normalize_country_code(raw) -> str | None:
+    """Normalize to ISO 3166-1 alpha-2 uppercase, or None if invalid/missing."""
+    if not raw:
+        return None
+    code = str(raw).strip().upper()
+    return code if len(code) == 2 and code.isalpha() else None
 
 
 def _sanitize_url(raw: str | None) -> str | None:
@@ -693,6 +714,7 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         job.language_required = result["language_required"]
         job.work_mode         = result["work_mode"]
         job.geo_zone          = result["geo_zone"]
+        job.country_code      = result.get("country_code")
         job.company_size      = result["company_size"]
         job.contract_type     = result["contract_type"]
         job.summary           = result["summary"]
@@ -715,6 +737,7 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
 _EVAL_PASSTHROUGH_KEYS = [
     "summary", "work_mode", "company_size", "contract_type",
     "geo_zone", "company_country", "industry_sector", "language_required",
+    "country_code",
 ]
 
 
@@ -734,6 +757,8 @@ def _evaluation_result(score: int, reason: str, scored_by: str, job: JobPosting,
             d[k] = (val or "unknown").strip().lower()
         elif k in ("company_country",):
             d[k] = (val or "unknown").strip()
+        elif k == "country_code":
+            d[k] = val or None
         else:
             d[k] = val or "unknown"
     return d

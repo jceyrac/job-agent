@@ -378,6 +378,25 @@ class JobStorage:
                     conn.execute(f"ALTER TABLE job_scores DROP COLUMN {col}")
                     logger.info(f"[Storage] Phase 1e.4 cleanup: dropped {col} from job_scores")
 
+            # Phase 6 — country_code on job_scores (per-profile country anchor)
+            score_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
+            if "country_code" not in score_cols:
+                conn.execute("ALTER TABLE job_scores ADD COLUMN country_code TEXT")
+                logger.info("[Storage] Phase 6: added country_code to job_scores")
+
+            # Phase 6 — country_code on jobs table (profile-independent extraction)
+            job_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "country_code" not in job_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN country_code TEXT")
+                logger.info("[Storage] Phase 6: added country_code to jobs")
+            # One-shot: re-extract recent jobs (last 7 days) that were extracted before country_code existed
+            if "country_code" not in job_cols:
+                reset = conn.execute(
+                    "UPDATE jobs SET extracted_at = NULL WHERE country_code IS NULL AND last_seen >= date('now', '-7 days')"
+                ).rowcount
+                if reset:
+                    logger.info(f"[Storage] Phase 6: cleared extracted_at on {reset} recent jobs for country_code re-extraction")
+
             # Phase 2 — prepare.py: add application prep columns to job_applications
             app_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_applications)").fetchall()}
             _p2_cols = [
@@ -759,7 +778,8 @@ class JobStorage:
                           COALESCE(j.contract_type, 'unknown') AS contract_type,
                           COALESCE(c.company_country, 'unknown') AS company_country,
                           COALESCE(c.industry_sector, 'other') AS industry_sector,
-                          COALESCE(j.language_required, 'unknown') AS language_required
+                          COALESCE(j.language_required, 'unknown') AS language_required,
+                          s.country_code AS country_code
                    FROM job_scores s
                    JOIN jobs j ON j.id = s.job_id
                    LEFT JOIN companies c ON j.company_id = c.id
@@ -1079,6 +1099,7 @@ class JobStorage:
                        language_required = ?,
                        work_mode = ?,
                        geo_zone = ?,
+                       country_code = ?,
                        contract_type = ?,
                        summary = ?,
                        extracted_at = ?,
@@ -1088,6 +1109,7 @@ class JobStorage:
                     fields.get("language_required", "unknown"),
                     fields.get("work_mode", "unknown"),
                     fields.get("geo_zone", "unknown"),
+                    fields.get("country_code"),
                     fields.get("contract_type", "unknown"),
                     fields.get("summary", ""),
                     ts,
@@ -1111,13 +1133,14 @@ class JobStorage:
         conn.execute(
             """UPDATE jobs SET
                    summary = ?, work_mode = ?, geo_zone = ?,
-                   contract_type = ?, language_required = ?,
+                   country_code = ?, contract_type = ?, language_required = ?,
                    extracted_at = ?, extracted_by = ?
              WHERE id = ?""",
             (
                 score_result.get("summary"),
                 score_result.get("work_mode", "unknown"),
                 score_result.get("geo_zone", "unknown"),
+                score_result.get("country_code"),
                 score_result.get("contract_type", "unknown"),
                 score_result.get("language_required", "unknown"),
                 now,
@@ -1149,18 +1172,19 @@ class JobStorage:
             conn.execute(
                 """INSERT INTO job_scores (
                        job_id, profile_id,
-                       score, reason, scored_by, scored_at
+                       score, reason, scored_by, scored_at, country_code
                    ) VALUES (
-                       ?, ?, ?, ?, ?, ?
+                       ?, ?, ?, ?, ?, ?, ?
                    )
                    ON CONFLICT(job_id, profile_id) DO UPDATE SET
-                       score     = excluded.score,
-                       reason    = excluded.reason,
-                       scored_by = excluded.scored_by,
-                       scored_at = excluded.scored_at""",
+                       score        = excluded.score,
+                       reason       = excluded.reason,
+                       scored_by    = excluded.scored_by,
+                       scored_at    = excluded.scored_at,
+                       country_code = excluded.country_code""",
                 (job.id, profile_id, score_result.get("score"),
                  score_result.get("reason"), score_result.get("scored_by", "unknown"),
-                 now),
+                 now, score_result.get("country_code")),
             )
             # Also write structured fields to jobs table (Phase 1e)
             self._update_job_extraction_fields(job, score_result, conn, now,
@@ -1257,6 +1281,7 @@ class JobStorage:
                        COALESCE(c.industry_sector, 'other') AS industry_sector,
                        COALESCE(j.language_required, 'unknown') AS language_required,
                        s.score, s.reason, s.scored_by, s.scored_at,
+                       s.country_code AS country_code,
                        COALESCE(t.status, 'new') AS status, t.notes,
                        t.changed_at AS status_changed_at
                 FROM jobs j
@@ -1420,6 +1445,7 @@ class JobStorage:
                           COALESCE(c.company_country, 'unknown') AS company_country,
                           COALESCE(c.industry_sector, 'other') AS industry_sector,
                           COALESCE(j.language_required, 'unknown') AS language_required,
+                          j.country_code AS country_code,
                           COALESCE(t.status, 'new') AS status
                    FROM jobs j
                    LEFT JOIN companies c ON j.company_id = c.id
@@ -1949,6 +1975,7 @@ class JobStorage:
                    COALESCE(c.industry_sector, 'other') AS industry_sector,
                    COALESCE(j.language_required, 'unknown') AS language_required,
                    s.score, s.reason, s.scored_by,
+                   s.country_code AS country_code,
                    t.status AS tracked_status,
                    COALESCE(t.status, 'new') AS status, t.notes,
                    s.profile_id as best_profile_id,
@@ -2119,6 +2146,7 @@ class JobStorage:
                    COALESCE(c.industry_sector, 'other') AS industry_sector,
                    COALESCE(j.language_required, 'unknown') AS language_required,
                    s.score, s.reason, s.scored_by,
+                   s.country_code AS country_code,
                    t.status AS tracked_status,
                    COALESCE(t.status, 'new') AS status, t.notes,
                    s.profile_id as best_profile_id,
@@ -2171,6 +2199,7 @@ class JobStorage:
                           COALESCE(c.industry_sector, 'other') AS industry_sector,
                           COALESCE(j.language_required, 'unknown') AS language_required,
                           s.score, s.reason, s.scored_by,
+                          COALESCE(s.country_code, j.country_code) AS country_code,
                           t.status AS tracked_status,
                           COALESCE(t.status, 'new') AS status, t.notes,
                           t.changed_at AS status_changed_at,

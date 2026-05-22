@@ -228,6 +228,7 @@ def apply_filters(
     location_filter: list[str] | None = None,
     work_mode_filter: list[str] | None = None,
     geo_zone_filter: list[str] | None = None,
+    country_code_filter: list[str] | None = None,
     company_size_filter: list[str] | None = None,
     sector_filter: list[str] | None = None,
     language_filter: list[str] | None = None,
@@ -272,6 +273,8 @@ def apply_filters(
         result = [j for j in result if (j.get("work_mode") or "unknown") in work_mode_filter]
     if geo_zone_filter:
         result = [j for j in result if (j.get("geo_zone") or "unknown") in geo_zone_filter]
+    if country_code_filter:
+        result = [j for j in result if (j.get("country_code") or "") in country_code_filter]
     if company_size_filter:
         result = [j for j in result if (j.get("company_size") or "unknown") in company_size_filter]
     if sector_filter:

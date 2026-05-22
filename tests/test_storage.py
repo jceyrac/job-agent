@@ -2192,6 +2192,32 @@ def test_score_one_defaults_to_active_profile():
     assert get_active_profile().id == "unified_jc"
 
 
+def test_country_code_persisted_in_job_scores():
+    """country_code from score result is stored in job_scores and readable via tracker."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    j = _job()
+    score = _score(7)
+    score["country_code"] = "CH"
+    db.save_scored(j, score, PROFILE_ID)
+
+    rows = db.get_all_for_tracker(PROFILE_ID)
+    assert len(rows) == 1
+    assert rows[0]["country_code"] == "CH"
+
+
+def test_country_code_null_when_missing():
+    """country_code is None when not provided in the score result."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    j = _job()
+    db.save_scored(j, _score(6), PROFILE_ID)
+
+    rows = db.get_all_for_tracker(PROFILE_ID)
+    assert len(rows) == 1
+    assert rows[0]["country_code"] is None
+
+
 if __name__ == "__main__":
     print("Storage tests (in-memory DB)\n")
     results = run_storage_tests()
