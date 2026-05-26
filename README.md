@@ -2,7 +2,7 @@
 
 Single-profile job scraping and scoring system for **Senior Product Manager** roles.
 
-Scrapes 12+ job boards, extracts structured fields from descriptions with LLMs, scores each posting (deterministic Tier 0 + LLM Tier 1) against the active profile, and delivers a digest via email and Joplin. A multi-page Streamlit tracker UI lets you browse, filter, track applications, manage companies and contacts, and log interactions — a lightweight CRM for your job search.
+Scrapes 12+ job boards, extracts structured fields from descriptions with LLMs, scores each posting (deterministic Tier 0 + LLM Tier 1) against the active profile, and delivers a digest via email and Joplin. A multi-page Streamlit tracker UI lets you browse, filter, track applications, manage companies and contacts, and log interactions — a lightweight CRM for your job search. Runs in Docker with an optional email monitor that auto-updates application status from recruiter emails.
 
 ---
 
@@ -267,7 +267,7 @@ cp .env.example .env
 | `JOPLIN_TOKEN` | Optional | Joplin Web Clipper token |
 | `X_RAPIDAPI_KEY` | Optional | RapidAPI key for Wellfound |
 
-### 3. Typical daily workflow
+### 3. Typical daily workflow (local)
 
 ```bash
 # 1. Fetch new jobs from all scrapers
@@ -283,6 +283,56 @@ python score.py
 streamlit run tracker.py
 ```
 
+### 4. Docker deployment
+
+The project runs in Docker on an Ubuntu server. Mac is the code editor + git push.
+
+```bash
+# Build and start tracker (always-on)
+docker compose up -d --build tracker
+
+# Run agent pipeline (one-shot, via cron)
+docker compose --profile manual run --rm agent
+
+# Run email monitor (one-shot or daemon, via cron)
+docker compose --profile manual run --rm email-monitor --once
+docker compose --profile manual run --rm email-monitor --interval 300
+
+# Seed Docker volume from local DB (first deploy)
+bash scripts/seed-db.sh
+
+# Deploy to server
+bash scripts/deploy.sh
+```
+
+**Architecture:**
+- `docker-compose.yml` — three services sharing a named `job_data` volume
+- `docker-compose.override.yml` — Mac dev overrides (bind mount source, no auto-restart), gitignored
+- `Dockerfile` — single `python:3.11-slim` image used by all services
+- `email-monitor` uses `extra_hosts: host-gateway` to reach Hydroxide IMAP on the host
+
+### 5. Email monitor
+
+`email_monitor.py` watches Proton Mail via Hydroxide IMAP bridge, classifies unseen recruiter emails with Groq, and auto-updates job tracking status.
+
+```bash
+python email_monitor.py --dry-run          # test with 4 hardcoded emails
+python email_monitor.py --once             # single IMAP pass (for cron)
+python email_monitor.py --interval 300     # long-running daemon
+```
+
+Only acts on **high-confidence** classifications where exactly **1** applied job matches the extracted company name. Actions: `rejected` → status rejected, `interview_scheduled` → interviewing, `offer` → offer, `follow_up` → log-only.
+
+### 6. Job status workflow
+
+```
+new → queued → ready → applied → rejected (by recruiter)
+                               → expired (listing removed)
+                               → archived (set aside by candidate)
+```
+
+Status is managed via the tracker UI action buttons or automatically via the email monitor. `rejected`, `expired`, and `archived` jobs are excluded from scoring.
+
 ---
 
 ## Running tests
@@ -291,7 +341,7 @@ streamlit run tracker.py
 python -m pytest tests/ -q
 ```
 
-158 unit tests using an in-memory SQLite DB — safe to run at any time, no network calls, no DB writes. Covers schema contracts, profile-independent status/application design, scoring, digest queries, per-profile filters, company/contact CRUD, interaction logging, derived relationship status, auto-interaction hooks, dashboard data queries, badge formatting, and parameterized job filters.
+162 unit tests using an in-memory SQLite DB — safe to run at any time, no network calls, no DB writes. Covers schema contracts, profile-independent status/application design, scoring, digest queries, per-profile filters, company/contact CRUD, interaction logging, derived relationship status, auto-interaction hooks, dashboard data queries, badge formatting, and parameterized job filters.
 
 ```bash
 python tests/run_all.py
@@ -305,6 +355,7 @@ Live integration tests — each scraper makes real HTTP calls. Exit code `0` if 
 
 ```
 job_agent/
+├── main.py                                # Orchestrator: scrape → score
 ├── scrape.py                              # Scrape all enabled sources → SQLite
 ├── score.py                               # Extract fields (--extract) and evaluate per profile (--profile)
 ├── prepare.py                             # Generate application packages from jobs in 'ready' status
@@ -314,21 +365,31 @@ job_agent/
 │   ├── shared.py                          # Constants, cached loaders, badges, filters, nav helpers
 │   ├── dashboard.py                       # Landing page with 5 widgets
 │   ├── jobs.py                            # Job list + detail view
+│   ├── job_detail.py                      # Job detail: status, description, application preview
+│   ├── job_helpers.py                     # Action buttons + state machine
 │   ├── companies.py                       # Company list + detail view
 │   ├── contacts.py                        # Contact list + detail view
 │   ├── settings.py                        # Settings + stats
+│   ├── preferences.py                     # Preference report
 │   └── forms.py                           # @st.dialog modals (add company, add contact, log interaction)
 ├── create_profile.py                      # CLI: create / list / delete profiles
-├── main.py                                # Orchestrator: scrape → score
 ├── profiles.py                            # Built-in profile definitions
 ├── scorer.py                              # Field extraction (Groq → DeepSeek) + evaluation (Groq 8b → scout)
 ├── storage.py                             # SQLite persistence layer
 ├── models.py                              # JobPosting dataclass
 ├── filters.py                             # Pre-LLM filter engine
 ├── notifier.py                            # Email digest + Joplin export
-├── backfill_descriptions.py              # One-shot: fetch descriptions for NULL rows
-├── migrate_single_status.py              # Migration: merged application_status → status
+├── email_monitor.py                       # Hydroxide IMAP → Groq classification → auto-status
+├── Dockerfile                             # python:3.11-slim, shared by all services
+├── docker-compose.yml                     # tracker + agent + email-monitor services
+├── docker-compose.override.yml            # Mac dev overrides (gitignored)
+├── .dockerignore                          # Exclude venv, data, tests, etc.
+├── migrate_expired_status.py              # One-shot: reclassify archived → expired
+├── migrate_single_status.py               # Migration: merged application_status → status
 ├── migrate_profile_independent_tracking.py # Migration: status/notes → job_tracking table
+├── scripts/
+│   ├── deploy.sh                          # git pull + docker compose up -d tracker
+│   └── seed-db.sh                         # Seed Docker volume from local jobs.db
 ├── scrapers/                              # One module per job board
 │   ├── base.py
 │   ├── jobspy_scraper.py
