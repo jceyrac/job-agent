@@ -1,0 +1,41 @@
+services:
+
+  tracker:
+    build: .
+    container_name: job-tracker
+    command: streamlit run tracker.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - job_data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  agent:
+    build: .
+    container_name: job-agent
+    command: python main.py
+    volumes:
+      - job_data:/app/data
+    env_file:
+      - .env
+    profiles:
+      - manual   # triggered by cron, not kept alive
+
+  email-monitor:
+    build: .
+    container_name: job-email-monitor
+    command: python email_monitor.py
+    volumes:
+      - job_data:/app/data
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach Hydroxide on Ubuntu host
+    profiles:
+      - manual
+
+volumes:
+  job_data:
+    driver: local

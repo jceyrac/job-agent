@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.DS_Store
+data/
+outputs/
+.claude/
+.pytest_cache/
+tests/
+docker-compose.override.yml

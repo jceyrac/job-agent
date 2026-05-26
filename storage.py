@@ -1960,6 +1960,25 @@ class JobStorage:
             row = conn.execute(query, (company_id,)).fetchone()
         return dict(row) if row else None
 
+    def find_jobs_by_company(self, company: str) -> list[dict]:
+        """Find applied jobs matching company name (case-insensitive, partial match).
+
+        Used by email_monitor.py to look up the job associated with a
+        recruiter email. Only returns jobs with tracking status 'applied'.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT j.id, j.title, j.company, t.status
+                FROM jobs j
+                LEFT JOIN job_tracking t ON j.id = t.job_id
+                WHERE lower(j.company) LIKE lower(?)
+                  AND t.status = 'applied'
+                """,
+                (f"%{company}%",),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def get_jobs_for_company(self, company_id: int) -> list[dict]:
         """All jobs at a company, with best score across profiles."""
         query = """
