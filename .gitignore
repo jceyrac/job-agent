@@ -1,18 +1,9 @@
-# Secrets & credentials
-.env
-.claude/
-
-# Generated outputs (contain job data / email previews)
-outputs/
-
-# Python
+data/jobs.db
+data/jobs.db-wal
+data/jobs.db-shm
+data/*.bak.*
+data/.fuse_hidden*
 __pycache__/
-*.pyc
-*.pyo
 .venv/
-
-# Test / scratch files (root only)
-/test_*.py
-
-# macOS
-.DS_Store
+.env
+*.pyc
