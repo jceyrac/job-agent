@@ -106,8 +106,11 @@ def render():
 
     # ── Row 3: Hot Jobs Feed ────────────────────────────────────────────────
     st.subheader("🔥 Hot Jobs Feed")
-    hot_jobs = load_jobs(exclude_archived=True)
-    hot_jobs = [j for j in hot_jobs if (j.get("score") or 0) >= 6][:10]
+    hot_jobs = [
+        j for j in load_jobs(exclude_archived=False)
+        if (j.get("score") or 0) >= 6
+        and j.get("status") not in ("rejected", "archived")
+    ][:10]
 
     if not hot_jobs:
         st.caption("No high-score jobs right now.")

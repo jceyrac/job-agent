@@ -967,14 +967,14 @@ class JobStorage:
                     " LEFT JOIN companies c ON j.company_id = c.id"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
                     " LEFT JOIN job_tracking t ON j.id = t.job_id")
-            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived'))")
+            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired'))")
         else:
             base = (f"SELECT j.*, {_company_fields} FROM jobs j"
                     " LEFT JOIN companies c ON j.company_id = c.id"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
                     " LEFT JOIN job_tracking t ON j.id = t.job_id")
             clauses.append("(s.job_id IS NULL OR s.score IS NULL)")
-            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived'))")
+            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired'))")
         clauses.append("(c.id IS NULL OR c.status != 'blacklisted')")
 
         if pre_filter:
@@ -1230,7 +1230,7 @@ class JobStorage:
     # Tracker — mise à jour de statut
     # ------------------------------------------------------------------
 
-    VALID_STATUSES = {"new", "queued", "ready", "applied", "rejected", "archived"}
+    VALID_STATUSES = {"new", "queued", "ready", "applied", "rejected", "archived", "expired"}
 
     def set_status(self, job_id: str, status: str, notes: str = None) -> None:
         if status not in self.VALID_STATUSES:

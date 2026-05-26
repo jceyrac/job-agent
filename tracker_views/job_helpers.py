@@ -74,7 +74,7 @@ def _run_score(job_id: str, profile_id: str) -> bool:
 
 ACTIONS = [
     "extract", "score", "queue", "prepare",
-    "applied", "rejected", "not_relevant",
+    "applied", "rejected", "expired", "not_relevant",
 ]
 
 ACTION_LABELS = {
@@ -84,18 +84,20 @@ ACTION_LABELS = {
     "prepare":      "📝 Prepare",
     "applied":      "✅ Applied",
     "rejected":     "❌ Rejected",
+    "expired":      "⏰ Expired",
     "not_relevant": "🚫 Not relevant",
 }
 
 ENABLED = {
-    "scraped":   {"extract", "applied", "not_relevant"},
-    "extracted": {"score", "queue", "prepare", "applied", "not_relevant"},
-    "scored":    {"queue", "prepare", "applied", "not_relevant"},
-    "queued":    {"prepare", "applied", "not_relevant"},
-    "prepared":  {"applied", "not_relevant"},
+    "scraped":   {"extract", "applied", "expired", "not_relevant"},
+    "extracted": {"score", "queue", "prepare", "applied", "expired", "not_relevant"},
+    "scored":    {"queue", "prepare", "applied", "expired", "not_relevant"},
+    "queued":    {"prepare", "applied", "expired", "not_relevant"},
+    "prepared":  {"applied", "expired", "not_relevant"},
     "applied":   {"rejected", "not_relevant"},
     "rejected":  {"not_relevant"},
     "archived":  set(),
+    "expired":   set(),
 }
 
 
@@ -107,6 +109,8 @@ def _derive_state(job: dict, scores: list[dict] | None,
         return "archived"
     if tracking == "rejected":
         return "rejected"
+    if tracking == "expired":
+        return "expired"
     if tracking == "applied":
         return "applied"
     if app and app.get("prepared_at"):
@@ -196,6 +200,10 @@ def _handle_action(action: str, job: dict, scope: str) -> None:
             st.rerun(scope="app")
         elif action == "rejected":
             db.set_status(job_id, "rejected")
+            st.cache_data.clear()
+            st.rerun(scope="app")
+        elif action == "expired":
+            db.set_status(job_id, "expired")
             st.cache_data.clear()
             st.rerun(scope="app")
         elif action == "not_relevant":

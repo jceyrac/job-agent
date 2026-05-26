@@ -86,9 +86,9 @@ def _render_detail(job_id: str):
     status = job.get("status", "new")
     new_status = st.selectbox(
         "Tracking status",
-        ["new", "queued", "ready", "applied", "rejected", "archived"],
-        index=["new", "queued", "ready", "applied", "rejected", "archived"].index(status)
-        if status in ["new", "queued", "ready", "applied", "rejected", "archived"] else 0,
+        ["new", "queued", "ready", "applied", "rejected", "expired", "archived"],
+        index=["new", "queued", "ready", "applied", "rejected", "expired", "archived"].index(status)
+        if status in ["new", "queued", "ready", "applied", "rejected", "expired", "archived"] else 0,
     )
     if new_status != status:
         if st.button("Update Status"):
