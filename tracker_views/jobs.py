@@ -122,6 +122,13 @@ def _render_list():
     last_run = db.get_last_run(ACTIVE_PROFILE_ID)
     if last_run is None:
         st.info("No pipeline run recorded yet.")
+    elif last_run["status"] == "scraped":
+        ran_at = last_run["ran_at"][:16].replace("T", " ")
+        st.warning(
+            f"Last run: **{ran_at}** — "
+            f"{last_run['jobs_scraped']} scraped — "
+            f"scoring pending"
+        )
     elif last_run["status"] == "success":
         ran_at = last_run["ran_at"][:16].replace("T", " ")
         st.success(
