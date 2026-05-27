@@ -146,7 +146,10 @@ def main():
     scraper_classes = discover_scrapers()
     print(f"Scrapers found: {[s.SOURCE_NAME for s in scraper_classes]}")
 
-    all_jobs: list[JobPosting] = []
+    db = JobStorage(DB_PATH)
+    seen_urls: set[str] = set()
+    total_fetched = 0
+    total_new = 0
     total_excluded_date = 0
 
     for ScraperClass in scraper_classes:
@@ -156,37 +159,53 @@ def main():
         print(f"  → {len(raw)} jobs fetched")
         filtered, excl_date, _ = JobFilterEngine.apply(raw, job_filter)
         total_excluded_date += excl_date
+        total_fetched += len(filtered)
         print(f"  → {len(filtered)} after filter")
-        all_jobs.extend(filtered)
 
-    all_jobs = deduplicate(all_jobs)
-    before_cross = len(all_jobs)
-    all_jobs = dedupe_cross_source(all_jobs)
-    print(f"Cross-source dedup: {before_cross} → {len(all_jobs)} unique")
+        # URL-based dedup against previously seen URLs
+        unique_batch = []
+        for job in filtered:
+            if job.url and job.url in seen_urls:
+                continue
+            unique_batch.append(job)
+            if job.url:
+                seen_urls.add(job.url)
 
-    db = JobStorage(DB_PATH)
-    before_db_dedup = len(all_jobs)
-    all_jobs = dedupe_against_db(all_jobs, db)
+        if not unique_batch:
+            print(f"  → 0 new (all URL-duplicates of previous scrapers)")
+            continue
 
-    print(f"\nTotal unique jobs after dedup: {len(all_jobs)}")
+        # Dedup against DB (engaged jobs)
+        unique_batch = dedupe_against_db(unique_batch, db)
+
+        # Write batch to DB immediately
+        before_count = db.get_stats(get_active_profile().id)["total"]
+        for job in unique_batch:
+            company_id = None
+            if job.company and job.company.strip():
+                try:
+                    company_id = db.upsert_company(job.company.strip())
+                except ValueError:
+                    pass  # name normalizes to empty — skip company link
+            db.save_unscored(job, company_id=company_id)
+
+        after_count = db.get_stats(get_active_profile().id)["total"]
+        batch_new = after_count - before_count
+        total_new += batch_new
+        print(f"  → {batch_new} new saved to DB, {len(unique_batch) - batch_new} already in DB")
+
+    already_count = total_fetched - total_new
+    print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
-    total_before = db.get_stats(get_active_profile().id)["total"]
 
-    for job in all_jobs:
-        company_id = None
-        if job.company and job.company.strip():
-            try:
-                company_id = db.upsert_company(job.company.strip())
-            except ValueError:
-                pass  # name normalizes to empty — skip company link
-        db.save_unscored(job, company_id=company_id)
-
-    total_after = db.get_stats(get_active_profile().id)["total"]
-    new_count = total_after - total_before
-    already_count = len(all_jobs) - new_count
-
-    print(f"\nScrape complete: {len(all_jobs)} fetched, {new_count} new, {already_count} already in DB")
+    db.log_run(
+        profile_id=get_active_profile().id,
+        jobs_scraped=total_fetched,
+        jobs_scored=0,
+        jobs_above_threshold=0,
+        status="scraped",
+    )
 
 
 if __name__ == "__main__":

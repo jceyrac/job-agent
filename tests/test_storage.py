@@ -1991,6 +1991,93 @@ def test_apply_filters_combined():
     assert ids == {"a"}
 
 
+# ── Pipeline run log tests ──────────────────────────────────────────────────
+
+def test_log_run_success():
+    """log_run writes a success row and get_last_run returns it."""
+    db = JobStorage(":memory:")
+    db.log_run(
+        profile_id="test_profile",
+        jobs_scraped=50,
+        jobs_scored=30,
+        jobs_above_threshold=12,
+        status="success",
+    )
+    run = db.get_last_run("test_profile")
+    assert run is not None
+    assert run["status"] == "success"
+    assert run["jobs_scraped"] == 50
+    assert run["jobs_scored"] == 30
+    assert run["jobs_above_threshold"] == 12
+    assert run["error_msg"] is None
+    assert run["ran_at"] is not None
+
+
+def test_log_run_error():
+    """log_run writes an error row with error_msg."""
+    db = JobStorage(":memory:")
+    db.log_run(
+        profile_id="test_profile",
+        jobs_scraped=0,
+        jobs_scored=0,
+        jobs_above_threshold=0,
+        status="error",
+        error_msg="Connection refused",
+    )
+    run = db.get_last_run("test_profile")
+    assert run is not None
+    assert run["status"] == "error"
+    assert run["error_msg"] == "Connection refused"
+    assert run["jobs_scraped"] == 0
+
+
+def test_get_last_run_returns_latest():
+    """get_last_run with no profile_id returns the most recent run overall."""
+    db = JobStorage(":memory:")
+    db.log_run("p1", 10, 5, 2, "success")
+    db.log_run("p2", 20, 10, 8, "success")
+    run = db.get_last_run()
+    assert run is not None
+    assert run["profile_id"] == "p2"
+
+
+def test_get_last_run_by_profile():
+    """get_last_run with profile_id returns the latest for that profile only."""
+    db = JobStorage(":memory:")
+    db.log_run("p1", 10, 5, 2, "success")
+    db.log_run("p2", 20, 10, 8, "success")
+    db.log_run("p1", 15, 8, 4, "success")
+    run = db.get_last_run("p1")
+    assert run is not None
+    assert run["profile_id"] == "p1"
+    assert run["jobs_scraped"] == 15
+
+
+def test_get_last_run_empty():
+    """get_last_run returns None when no runs exist."""
+    db = JobStorage(":memory:")
+    assert db.get_last_run() is None
+    assert db.get_last_run("no_such_profile") is None
+
+
+def test_update_last_run():
+    """update_last_run fills in scoring fields on the most recent run."""
+    db = JobStorage(":memory:")
+    db.log_run("p1", 50, 0, 0, "scraped")
+    db.update_last_run(jobs_scored=30, jobs_above_threshold=6, status="success")
+    run = db.get_last_run()
+    assert run["jobs_scraped"] == 50
+    assert run["jobs_scored"] == 30
+    assert run["jobs_above_threshold"] == 6
+    assert run["status"] == "success"
+
+
+def test_update_last_run_empty_db():
+    """update_last_run is a no-op when no run exists."""
+    db = JobStorage(":memory:")
+    db.update_last_run(jobs_scored=10, status="success")  # no-op, no error
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -2111,6 +2198,14 @@ TESTS = [
     test_apply_filters_status_filter,
     test_apply_filters_status_excludes_archived_by_default,
     test_apply_filters_combined,
+    # Pipeline run log tests
+    test_log_run_success,
+    test_log_run_error,
+    test_get_last_run_returns_latest,
+    test_get_last_run_by_profile,
+    test_get_last_run_empty,
+    test_update_last_run,
+    test_update_last_run_empty_db,
 ]
 
 

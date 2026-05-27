@@ -259,6 +259,18 @@ CREATE INDEX IF NOT EXISTS idx_interactions_contact  ON interactions (contact_id
 CREATE INDEX IF NOT EXISTS idx_interactions_job      ON interactions (job_id);
 CREATE INDEX IF NOT EXISTS idx_interactions_followup ON interactions (follow_up_due_at)
     WHERE follow_up_due_at IS NOT NULL;
+
+-- Pipeline run log — one row per main.py invocation
+CREATE TABLE IF NOT EXISTS runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ran_at TEXT NOT NULL,
+    profile_id TEXT,
+    jobs_scraped INTEGER,
+    jobs_scored INTEGER,
+    jobs_above_threshold INTEGER,
+    status TEXT,
+    error_msg TEXT
+);
 """
 
 
@@ -2319,6 +2331,71 @@ class JobStorage:
             "unverified_contacts_count": unverified_count,
             "stale_active_outreach": stale_outreach,
         }
+
+
+    # ------------------------------------------------------------------
+    # Pipeline run log
+    # ------------------------------------------------------------------
+
+    def log_run(
+        self,
+        profile_id: str,
+        jobs_scraped: int,
+        jobs_scored: int,
+        jobs_above_threshold: int,
+        status: str,
+        error_msg: str = None,
+    ) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO runs
+                   (ran_at, profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg)
+                   VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)""",
+                (profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg),
+            )
+
+    def update_last_run(
+        self,
+        jobs_scored: int = None,
+        jobs_above_threshold: int = None,
+        status: str = None,
+    ) -> None:
+        """Update the most recent run entry — called by score.py after scraping."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM runs ORDER BY ran_at DESC, id DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return
+            updates = []
+            params = []
+            if jobs_scored is not None:
+                updates.append("jobs_scored = ?")
+                params.append(jobs_scored)
+            if jobs_above_threshold is not None:
+                updates.append("jobs_above_threshold = ?")
+                params.append(jobs_above_threshold)
+            if status is not None:
+                updates.append("status = ?")
+                params.append(status)
+            if updates:
+                params.append(row["id"])
+                conn.execute(
+                    f"UPDATE runs SET {', '.join(updates)} WHERE id = ?", params
+                )
+
+    def get_last_run(self, profile_id: str = None) -> dict | None:
+        with self._conn() as conn:
+            if profile_id:
+                row = conn.execute(
+                    "SELECT * FROM runs WHERE profile_id = ? ORDER BY ran_at DESC, id DESC LIMIT 1",
+                    (profile_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM runs ORDER BY ran_at DESC, id DESC LIMIT 1"
+                ).fetchone()
+            return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------

@@ -343,6 +343,12 @@ def main():
     print(f"✅ {len(digest_jobs)} jobs in digest  (🔥 {len(hot)} hot  ⭐ {len(mid)} solid)")
     print(f"📊 DB: {stats['total']} jobs total · {stats['hot']} 🔥 hot · {stats['solid']} ⭐ solid")
 
+    db.update_last_run(
+        jobs_scored=scored_count,
+        jobs_above_threshold=len(digest_jobs),
+        status="success" if error_count == 0 else "partial",
+    )
+
     # ── JSON output ───────────────────────────────────────────────────────────
     today = date.today().isoformat()
     output_dir = os.path.join(os.path.dirname(__file__), "outputs")

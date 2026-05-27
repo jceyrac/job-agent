@@ -90,6 +90,15 @@ class JobSpyScraper(BaseScraper):
     SOURCE_NAME = "JobSpy"
     ENABLED = True
 
+    def _scrape_with_timeout(self, timeout_seconds: int, **kwargs):
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(__import__('jobspy').scrape_jobs, **kwargs)
+            try:
+                return future.result(timeout=timeout_seconds)
+            except concurrent.futures.TimeoutError:
+                return None
+
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
         try:
             from jobspy import scrape_jobs
@@ -108,7 +117,8 @@ class JobSpyScraper(BaseScraper):
             for location in LINKEDIN_LOCATIONS:
                 results_wanted = 25 if location == "Switzerland" else 15
                 try:
-                    df = scrape_jobs(
+                    df = self._scrape_with_timeout(
+                        90,
                         site_name=["linkedin"],
                         search_term=term,
                         location=location,
@@ -117,6 +127,10 @@ class JobSpyScraper(BaseScraper):
                         linkedin_fetch_description=True,
                         verbose=0,
                     )
+                    if df is None:
+                        print(f"  ⚠️ [LinkedIn] '{term}' [{location}]: timed out — skipped")
+                        time.sleep(2)
+                        continue
                     new, skipped = self._add_unique(df, "LinkedIn", seen_urls, all_jobs)
                     linkedin_total += new
                     dupes += skipped
@@ -131,7 +145,8 @@ class JobSpyScraper(BaseScraper):
             for country in INDEED_COUNTRIES:
                 results_wanted = 50 if country == "switzerland" else 25
                 try:
-                    df = scrape_jobs(
+                    df = self._scrape_with_timeout(
+                        60,
                         site_name=["indeed"],
                         search_term=term,
                         results_wanted=results_wanted,
@@ -139,6 +154,10 @@ class JobSpyScraper(BaseScraper):
                         country_indeed=country,
                         verbose=0,
                     )
+                    if df is None:
+                        print(f"  ⚠️ [Indeed] '{term}' [{country}]: timed out — skipped")
+                        time.sleep(2)
+                        continue
                     new, skipped = self._add_unique(df, "Indeed", seen_urls, all_jobs)
                     indeed_total += new
                     dupes += skipped
