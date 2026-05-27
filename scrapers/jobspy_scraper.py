@@ -92,12 +92,14 @@ class JobSpyScraper(BaseScraper):
 
     def _scrape_with_timeout(self, timeout_seconds: int, **kwargs):
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
             future = executor.submit(__import__('jobspy').scrape_jobs, **kwargs)
-            try:
-                return future.result(timeout=timeout_seconds)
-            except concurrent.futures.TimeoutError:
-                return None
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            return None
+        finally:
+            executor.shutdown(wait=False)
 
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
         try:
