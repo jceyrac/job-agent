@@ -305,6 +305,27 @@ bash scripts/seed-db.sh
 bash scripts/deploy.sh
 ```
 
+# --- Service management ---
+
+```bash
+# Check running containers
+docker compose ps
+
+# View live logs
+docker compose logs -f tracker
+docker compose logs -f agent
+docker compose logs --tail=50 email-monitor
+
+# Restart a service (e.g. after a config change)
+docker compose restart tracker
+
+# Stop and remove all containers (data volume is preserved)
+docker compose down
+
+# Full rebuild after code changes
+docker compose up -d --build tracker
+```
+
 **Architecture:**
 - `docker-compose.yml` — three services sharing a named `job_data` volume
 - `docker-compose.override.yml` — Mac dev overrides (bind mount source, no auto-restart), gitignored
