@@ -34,6 +34,26 @@ def _extract_country_from_html(html: str) -> str | None:
     return m.group(1) if m else None
 
 
+def patch_requests_for_indeed():
+    """Monkey-patch requests.Session.request with curl_cffi for browser TLS."""
+    import requests
+    import curl_cffi.requests as cr
+
+    _cffi_session = cr.Session(impersonate="chrome124")
+    _original_request = requests.Session.request
+
+    def _patched_request(self, method, url, **kwargs):
+        return _cffi_session.request(method, url, **kwargs)
+
+    requests.Session.request = _patched_request
+    return _original_request
+
+
+def unpatch_requests(original_request):
+    import requests
+    requests.Session.request = original_request
+
+
 def scrape_with_timeout(timeout_seconds: int, **kwargs):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:

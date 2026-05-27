@@ -7,7 +7,7 @@ Re-enable after IP block clears:
 import time
 
 from scrapers.base import BaseScraper
-from scrapers._jobspy_helpers import scrape_with_timeout, add_unique
+from scrapers._jobspy_helpers import scrape_with_timeout, add_unique, patch_requests_for_indeed, unpatch_requests
 from models import JobFilter, JobPosting
 
 SEARCH_TERMS_INDEED = [
@@ -50,40 +50,44 @@ class IndeedScraper(BaseScraper):
         total, dupes = 0, 0
         consecutive_timeouts = 0
 
-        for term in SEARCH_TERMS_INDEED:
-            for country in INDEED_COUNTRIES:
-                results_wanted = 50 if country == "switzerland" else 25
-                try:
-                    df = scrape_with_timeout(
-                        60,
-                        site_name=["indeed"],
-                        search_term=term,
-                        results_wanted=results_wanted,
-                        hours_old=240,
-                        country_indeed=country,
-                        verbose=0,
-                    )
-                    if df is None:
-                        consecutive_timeouts += 1
-                        print(
-                            f"  ⚠️ [Indeed] '{term}' [{country}]: timed out "
-                            f"({consecutive_timeouts}/{MAX_CONSECUTIVE_TIMEOUTS})"
+        original_request = patch_requests_for_indeed()
+        try:
+            for term in SEARCH_TERMS_INDEED:
+                for country in INDEED_COUNTRIES:
+                    results_wanted = 50 if country == "switzerland" else 25
+                    try:
+                        df = scrape_with_timeout(
+                            60,
+                            site_name=["indeed"],
+                            search_term=term,
+                            results_wanted=results_wanted,
+                            hours_old=240,
+                            country_indeed=country,
+                            verbose=0,
                         )
-                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS:
-                            self.disable(
-                                f"{MAX_CONSECUTIVE_TIMEOUTS} consecutive timeouts — likely IP block"
+                        if df is None:
+                            consecutive_timeouts += 1
+                            print(
+                                f"  ⚠️ [Indeed] '{term}' [{country}]: timed out "
+                                f"({consecutive_timeouts}/{MAX_CONSECUTIVE_TIMEOUTS})"
                             )
-                            return all_jobs
-                        time.sleep(2)
-                        continue
-                    consecutive_timeouts = 0
-                    new, skipped = add_unique(df, "Indeed", seen_urls, all_jobs)
-                    total += new
-                    dupes += skipped
-                    print(f"  [Indeed]   '{term}' [{country}]: {new} new, {skipped} dupes")
-                except Exception as e:
-                    print(f"  ⚠️ Indeed '{term}' [{country}]: {e}")
-                time.sleep(2)
+                            if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS:
+                                self.disable(
+                                    f"{MAX_CONSECUTIVE_TIMEOUTS} consecutive timeouts — likely IP block"
+                                )
+                                return all_jobs
+                            time.sleep(2)
+                            continue
+                        consecutive_timeouts = 0
+                        new, skipped = add_unique(df, "Indeed", seen_urls, all_jobs)
+                        total += new
+                        dupes += skipped
+                        print(f"  [Indeed]   '{term}' [{country}]: {new} new, {skipped} dupes")
+                    except Exception as e:
+                        print(f"  ⚠️ Indeed '{term}' [{country}]: {e}")
+                    time.sleep(2)
+        finally:
+            unpatch_requests(original_request)
 
         print(f"  [Indeed] Total: {total} | Dupes: {dupes} | Unique: {len(all_jobs)}")
         return all_jobs
