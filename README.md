@@ -413,7 +413,9 @@ job_agent/
 │   └── seed-db.sh                         # Seed Docker volume from local jobs.db
 ├── scrapers/                              # One module per job board
 │   ├── base.py
-│   ├── jobspy_scraper.py
+│   ├── linkedin.py
+│   ├── indeed.py
+│   ├── _jobspy_helpers.py
 │   ├── greenhouse.py
 │   └── ...
 ├── tests/

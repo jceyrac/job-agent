@@ -31,7 +31,7 @@ def _load_scrapers():
     from scrapers.defi_jobs       import DeFiJobsScraper
     from scrapers.jobup           import JobupScraper
     from scrapers.wellfound       import WellfoundScraper
-    from scrapers.jobspy_scraper  import JobSpyScraper
+    from scrapers.linkedin       import LinkedInScraper
 
     # optional_fields: fields that are best-effort for this source.
     # A None/missing value raises ⚠️  instead of ❌ and does not cause FAIL.
@@ -49,7 +49,7 @@ def _load_scrapers():
         (DeFiJobsScraper,        "",               NO_LOC),  # crypto.jobs has no base location
         (JobupScraper,           "",               set()),
         (WellfoundScraper,       "X_RAPIDAPI_KEY", NO_LOC),
-        (JobSpyScraper,          "",               NO_LOC),  # remote listings carry no city
+        (LinkedInScraper,        "",               NO_LOC),  # remote listings carry no city
     ]
 
 

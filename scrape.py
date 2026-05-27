@@ -153,7 +153,10 @@ def main():
     total_excluded_date = 0
 
     for ScraperClass in scraper_classes:
-        scraper = ScraperClass()
+        scraper = ScraperClass(storage=db)
+        if not scraper.is_enabled():
+            print(f"  ⚠️ [{scraper.SOURCE_NAME}] disabled — skipped")
+            continue
         print(f"Fetching from {scraper.SOURCE_NAME}...")
         raw = scraper.fetch(job_filter)
         print(f"  → {len(raw)} jobs fetched")

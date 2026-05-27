@@ -67,7 +67,7 @@ def _next_month() -> str:
 
 class WellfoundScraper(BaseScraper):
     SOURCE_NAME = "Wellfound"
-    ENABLED = True
+    ENABLED = False
 
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
         api_key = os.getenv("X_RAPIDAPI_KEY")

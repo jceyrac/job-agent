@@ -276,7 +276,9 @@ job_agent/
 ├── migrate_profile_independent_tracking.py  # Status/notes → job_tracking table
 ├── scrapers/
 │   ├── base.py                          # BaseScraper (ABC)
-│   ├── jobspy_scraper.py                # LinkedIn + Indeed
+│   ├── linkedin.py                      # LinkedIn (jobspy)
+│   ├── indeed.py                        # Indeed (jobspy) + auto-disable
+│   ├── _jobspy_helpers.py               # Shared helpers (timeout, DataFrame→JobPosting)
 │   ├── greenhouse.py                    # 30 boards via public API
 │   ├── weworkremotely.py                # RSS
 │   ├── remoteok.py                      # JSON API
