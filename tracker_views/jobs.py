@@ -118,8 +118,23 @@ def _render_list():
         page_jobs = jobs[start:end]
 
     # ── Last Run banner ────────────────────────────────────────────────────
+    def _fmt_duration(seconds: float | None) -> str:
+        if seconds is None:
+            return ""
+        s = int(seconds)
+        if s < 60:
+            return f"in {s}s"
+        elif s < 3600:
+            m, sec = divmod(s, 60)
+            return f"in {m}m {sec}s"
+        else:
+            h, rem = divmod(s, 3600)
+            m, sec = divmod(rem, 60)
+            return f"in {h}h {m}m {sec}s"
+
     db = get_db()
     last_run = db.get_last_run(ACTIVE_PROFILE_ID)
+    dur = _fmt_duration(last_run.get("duration_seconds") if last_run else None)
     if last_run is None:
         st.info("No pipeline run recorded yet.")
     elif last_run["status"] == "scraped":
@@ -132,18 +147,19 @@ def _render_list():
     elif last_run["status"] == "success":
         ran_at = last_run["ran_at"][:16].replace("T", " ")
         st.success(
-            f"Last run: **{ran_at}** — "
+            f"Last run: **{ran_at}** ({dur}) — "
             f"{last_run['jobs_scraped']} scraped, "
             f"{last_run['jobs_scored']} scored, "
             f"{last_run['jobs_above_threshold']} above threshold"
         )
     elif last_run["status"] == "error":
         ran_at = last_run["ran_at"][:16].replace("T", " ")
-        st.error(f"Last run failed at **{ran_at}**: {last_run.get('error_msg', 'Unknown error')}")
+        dur_str = f" ({dur})" if dur else ""
+        st.error(f"Last run failed at **{ran_at}**{dur_str}: {last_run.get('error_msg', 'Unknown error')}")
     elif last_run["status"] == "partial":
         ran_at = last_run["ran_at"][:16].replace("T", " ")
         st.warning(
-            f"Last run: **{ran_at}** (partial) — "
+            f"Last run: **{ran_at}** ({dur}) (partial) — "
             f"{last_run['jobs_scraped']} scraped, "
             f"{last_run['jobs_scored']} scored, "
             f"{last_run['jobs_above_threshold']} above threshold"

@@ -396,6 +396,12 @@ class JobStorage:
                 conn.execute("ALTER TABLE job_scores ADD COLUMN country_code TEXT")
                 logger.info("[Storage] Phase 6: added country_code to job_scores")
 
+            # Phase 7 — duration_seconds on runs table
+            runs_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+            if "duration_seconds" not in runs_cols:
+                conn.execute("ALTER TABLE runs ADD COLUMN duration_seconds REAL")
+                logger.info("[Storage] Phase 7: added duration_seconds to runs")
+
             # Phase 6 — country_code on jobs table (profile-independent extraction)
             job_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
             if "country_code" not in job_cols:
@@ -2345,13 +2351,14 @@ class JobStorage:
         jobs_above_threshold: int,
         status: str,
         error_msg: str = None,
+        duration_seconds: float = None,
     ) -> None:
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO runs
-                   (ran_at, profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg)
-                   VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)""",
-                (profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg),
+                   (ran_at, profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg, duration_seconds)
+                   VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?)""",
+                (profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg, duration_seconds),
             )
 
     def update_last_run(
@@ -2359,6 +2366,7 @@ class JobStorage:
         jobs_scored: int = None,
         jobs_above_threshold: int = None,
         status: str = None,
+        duration_seconds: float = None,
     ) -> None:
         """Update the most recent run entry — called by score.py after scraping."""
         with self._conn() as conn:
@@ -2378,6 +2386,9 @@ class JobStorage:
             if status is not None:
                 updates.append("status = ?")
                 params.append(status)
+            if duration_seconds is not None:
+                updates.append("duration_seconds = ?")
+                params.append(duration_seconds)
             if updates:
                 params.append(row["id"])
                 conn.execute(

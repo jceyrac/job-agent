@@ -2078,6 +2078,53 @@ def test_update_last_run_empty_db():
     db.update_last_run(jobs_scored=10, status="success")  # no-op, no error
 
 
+def test_runs_has_duration_seconds_column():
+    """The runs table must have a duration_seconds REAL column."""
+    db = JobStorage(":memory:")
+    with db._conn() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    assert "duration_seconds" in cols, "duration_seconds column missing from runs table"
+
+
+def test_log_run_with_duration():
+    """log_run stores duration_seconds and get_last_run returns it."""
+    db = JobStorage(":memory:")
+    db.log_run(
+        profile_id="test_profile",
+        jobs_scraped=50,
+        jobs_scored=30,
+        jobs_above_threshold=12,
+        status="success",
+        duration_seconds=245.7,
+    )
+    run = db.get_last_run("test_profile")
+    assert run is not None
+    assert run["duration_seconds"] == 245.7
+
+
+def test_log_run_without_duration():
+    """log_run without duration_seconds stores NULL."""
+    db = JobStorage(":memory:")
+    db.log_run("test_profile", 10, 5, 2, "success")
+    run = db.get_last_run("test_profile")
+    assert run is not None
+    assert run["duration_seconds"] is None
+
+
+def test_update_last_run_with_duration():
+    """update_last_run stores duration_seconds on the most recent run."""
+    db = JobStorage(":memory:")
+    db.log_run("p1", 50, 0, 0, "scraped")
+    db.update_last_run(
+        jobs_scored=30,
+        jobs_above_threshold=6,
+        status="success",
+        duration_seconds=312.1,
+    )
+    run = db.get_last_run()
+    assert run["duration_seconds"] == 312.1
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -2206,6 +2253,10 @@ TESTS = [
     test_get_last_run_empty,
     test_update_last_run,
     test_update_last_run_empty_db,
+    test_runs_has_duration_seconds_column,
+    test_log_run_with_duration,
+    test_log_run_without_duration,
+    test_update_last_run_with_duration,
 ]
 
 
