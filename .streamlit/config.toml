@@ -1,0 +1,16 @@
+[server]
+# Disable file watcher — bind mounts on Docker trigger constant polling
+# and every mounted file gets stat()'d on each interaction
+fileWatcherType = "none"
+
+# Increase header timeout for slow pages (default 30s)
+maxUploadSize = 50
+
+[browser]
+# Prevent websocket disconnect on slow page loads
+serverAddress = "0.0.0.0"
+gatherUsageStats = false
+
+[theme]
+base = "dark"
+primaryColor = "#FF4B4B"
