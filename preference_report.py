@@ -614,6 +614,140 @@ def _section_suggestions(conn, profiles: list[str]) -> list[str]:
     return lines
 
 
+# ── Few-shot anchor export ──────────────────────────────────────────────────────
+
+def export_few_shot_anchors(profile_id: str | None = None) -> str:
+    """Select strongest applied/rejected jobs and clearest rejects, compress
+    to one-line signatures, stratify positives across dimensions, and emit a
+    Markdown block paste-ready for scoring_context.
+
+    Returns the anchor block as a string. Also writes a companion eval-set
+    file so the same jobs aren't used as both anchors and eval cases.
+    """
+    import random
+    from profiles import get_active_profile
+
+    pid = profile_id or get_active_profile().id
+    conn = _connect()
+
+    # ── Positives: applied, rejected, ready, queued (strong interest) ────────
+    pos_rows = conn.execute(
+        """SELECT j.title, j.company, COALESCE(c.industry_sector, 'other') AS sector,
+                  COALESCE(j.work_mode, 'unknown') AS work_mode,
+                  COALESCE(c.company_country, 'unknown') AS country,
+                  s.score, s.reason AS score_reason
+             FROM jobs j
+             JOIN job_tracking t ON j.id = t.job_id
+             JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+             LEFT JOIN companies c ON j.company_id = c.id
+            WHERE t.status IN ('applied', 'rejected', 'ready', 'queued')
+              AND s.score IS NOT NULL
+            ORDER BY s.score DESC""",
+        (pid,),
+    ).fetchall()
+
+    # ── Negatives: archived with clear rejection pattern ─────────────────────
+    neg_rows = conn.execute(
+        """SELECT j.title, j.company, COALESCE(c.industry_sector, 'other') AS sector,
+                  COALESCE(j.work_mode, 'unknown') AS work_mode,
+                  COALESCE(c.company_country, 'unknown') AS country,
+                  s.score, s.reason AS score_reason, t.notes
+             FROM jobs j
+             JOIN job_tracking t ON j.id = t.job_id
+             JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+             LEFT JOIN companies c ON j.company_id = c.id
+            WHERE t.status = 'archived'
+              AND s.score IS NOT NULL
+            ORDER BY s.score ASC""",
+        (pid,),
+    ).fetchall()
+    conn.close()
+
+    def _sig(row) -> str:
+        """One-line compressed signature."""
+        title = (row["title"] or "")[:60]
+        company = (row["company"] or "")[:30]
+        sector = (row["sector"] or "other")
+        wm = row["work_mode"] or "unknown"
+        country = row["country"] or "unknown"
+        score = row["score"]
+        why = ""
+        if row["score_reason"]:
+            r = row["score_reason"].replace("\n", " ")[:80]
+            why = f" — {r}"
+        return f"- [{score}/10] {title} · {company} · {sector} · {wm} · {country}{why}"
+
+    # ── Stratify positives across sector × work_mode × country ──────────────
+    pos = [dict(r) for r in pos_rows]
+    neg = [dict(r) for r in neg_rows]
+
+    # Sort into buckets then take top from each bucket (breadth-first)
+    buckets: dict[str, list[dict]] = {}
+    for p in pos:
+        key = f"{p['sector']}|{p['work_mode']}|{p['country']}"
+        buckets.setdefault(key, []).append(p)
+
+    stratified = []
+    while buckets:
+        for key in list(buckets.keys()):
+            if buckets[key]:
+                stratified.append(buckets[key].pop(0))
+            else:
+                del buckets[key]
+
+    # ── Split: ~70% anchors, ~30% eval ──────────────────────────────────────
+    random.seed(42)
+    random.shuffle(stratified)
+    random.shuffle(neg)
+    split_pos = max(1, int(len(stratified) * 0.7))
+    pos_anchors = sorted(stratified[:split_pos], key=lambda x: -x["score"])
+    pos_eval = sorted(stratified[split_pos:], key=lambda x: -x["score"])
+    split_neg = max(1, int(len(neg) * 0.7))
+    neg_anchors = sorted(neg[:split_neg], key=lambda x: x["score"])
+    neg_eval = sorted(neg[split_neg:], key=lambda x: x["score"])
+
+    lines: list[str] = []
+    lines.append("# Few-Shot Anchors for scoring_context")
+    lines.append("")
+    lines.append(f"Profile: `{pid}` | Generated: {date.today().isoformat()}")
+    lines.append(f"Anchors: {len(pos_anchors)} pos + {len(neg_anchors)} neg")
+    lines.append(f"Eval set: {len(pos_eval)} pos + {len(neg_eval)} neg (hold-out, do not paste into scoring_context)")
+    lines.append("")
+
+    if pos_anchors:
+        lines.append("## Strong Matches (paste into scoring_context)")
+        lines.append("")
+        lines.append("```")
+        lines.append("# Examples of jobs the candidate pursued (strong matches)")
+        for r in pos_anchors:
+            lines.append(_sig(r))
+        lines.append("```")
+        lines.append("")
+
+    if neg_anchors:
+        lines.append("## Clear Rejects (paste into scoring_context)")
+        lines.append("")
+        lines.append("```")
+        lines.append("# Examples of jobs the candidate passed on (clear mismatches)")
+        for r in neg_anchors:
+            lines.append(_sig(r))
+        lines.append("```")
+        lines.append("")
+
+    if pos_eval or neg_eval:
+        lines.append("## Eval Hold-Out (do NOT paste)")
+        lines.append("")
+        lines.append("```")
+        for r in pos_eval:
+            lines.append(_sig(r))
+        for r in neg_eval:
+            lines.append(_sig(r))
+        lines.append("```")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────────
 
 def generate_report(profile_id: str | None = None,
@@ -655,12 +789,29 @@ def main():
                         help="Analyse a single profile (optional; defaults to the active profile).")
     parser.add_argument("--output", default=None,
                         help="Override output path.")
+    parser.add_argument("--anchors", dest="anchors", action="store_true",
+                        help="Export few-shot anchors for scoring_context tuning.")
     parser.add_argument("--print", dest="print_out", action="store_true",
                         help="Also print the report to stdout.")
     args = parser.parse_args()
 
     from profiles import get_active_profile
     profile_id = args.profile or get_active_profile().id
+
+    if args.anchors:
+        anchor_block = export_few_shot_anchors(profile_id)
+        out_dir = args.output and os.path.dirname(args.output) or OUTPUT_DIR
+        os.makedirs(out_dir, exist_ok=True)
+        anchor_path = os.path.join(
+            out_dir, f"few_shot_anchors_{date.today().isoformat()}.md"
+        )
+        with open(anchor_path, "w") as f:
+            f.write(anchor_block)
+        print(f"Anchors written to {anchor_path}")
+        if args.print_out:
+            print()
+            print(anchor_block)
+        return
 
     path = generate_report(
         profile_id=profile_id,

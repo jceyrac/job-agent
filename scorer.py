@@ -209,7 +209,9 @@ Given the job below, return ONLY a JSON object with these fields:
   "contract_type": "<permanent|freelance|contract|unknown>",
   "summary": "<2-3 sentences>",
   "company_summary": "<1-2 sentences about the company, or null>",
-  "company_website": "<URL or null>"
+  "company_website": "<URL or null>",
+  "salary_text": "<free-text salary signal found in description, or null>",
+  "comp_annual_eur": <normalized annual EUR as integer, or null>
 }
 
 ## Work mode
@@ -333,6 +335,17 @@ Look for an explicit URL in the description that points to the company's main si
 "Our website: www.acme.com", an https:// link inside the company-about section. Normalize
 to "https://<host>". If multiple URLs appear, pick the shortest/most generic one
 (acme.com over acme.com/careers/eng). Return null if no clear company URL is mentioned.
+
+## Salary extraction
+Look for explicit salary or compensation signals in the description:
+- "€80k–100k", "CHF 120,000 per year", "$150k base", "salary range", "competitive comp"
+- Store the raw text as salary_text (free text, the signal as it appears).
+- If a numeric annual figure can be parsed, normalize to EUR as comp_annual_eur:
+  - €1 = EUR 1 (no conversion)
+  - CHF 1 ≈ EUR 1 (treat as 1:1 for rough parity)
+  - $1 USD ≈ EUR 0.92 (multiply by 0.92, round to int)
+  - "80k" or "80,000" with € or EUR context → 80000
+- If no salary signal is present, set both to null.
 
 Return ONLY the JSON object — no preamble, no explanation, no markdown."""
 
@@ -581,6 +594,8 @@ def _parse_extraction_result(raw: str) -> dict:
         "summary":          result.get("summary") or "Description non disponible — consulter l'offre directement.",
         "company_summary":  result.get("company_summary") or None,
         "company_website":  _sanitize_url(result.get("company_website")),
+        "salary_text":      result.get("salary_text") or None,
+        "comp_annual_eur":  _parse_int_or_none(result.get("comp_annual_eur")),
     }
 
 
@@ -602,6 +617,16 @@ def _sanitize_url(raw: str | None) -> str | None:
     if " " in url:
         return None
     return url
+
+
+def _parse_int_or_none(raw) -> int | None:
+    """Parse a value that should be an integer, or return None."""
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +745,8 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         job.summary           = result["summary"]
         job.company_summary   = result.get("company_summary")
         job.company_website   = result.get("company_website")
+        job.salary_text       = result.get("salary_text")
+        job.comp_annual_eur   = result.get("comp_annual_eur")
         job.extracted_at      = datetime.now()
         job.extracted_by      = model
 
@@ -742,12 +769,13 @@ _EVAL_PASSTHROUGH_KEYS = [
 
 
 def _evaluation_result(score: int, reason: str, scored_by: str, job: JobPosting,
-                       profile) -> dict:
+                       profile, comp_flag: int = 0) -> dict:
     """Build a result dict from evaluation outcome + job's pre-extracted fields."""
     d = {
         "score": score,
         "reason": reason,
         "scored_by": scored_by,
+        "comp_flag": comp_flag,
     }
     for k in _EVAL_PASSTHROUGH_KEYS:
         val = getattr(job, k, None)
@@ -785,6 +813,14 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     industry_sector   = (job.industry_sector or "other").strip().lower()
     company_country   = (job.company_country or "unknown").strip()
     work_mode         = (job.work_mode or "unknown").strip().lower()
+
+    # ── Compensation flag [D5] — flag non-CH remote roles with unknown pay ──
+    comp_flag = 0
+    if work_mode == "remote" and company_country != "unknown" and company_country != "Switzerland":
+        # Salary unknown → flag, no penalty
+        has_salary_info = bool(job.salary_text or job.comp_annual_eur or job.salary)
+        if not has_salary_info:
+            comp_flag = 1
 
     # ── Tier 0: deterministic filters —─────────────────────────────────────
     # 0. Company denylist (no-op when profile.denylisted_companies is empty)
@@ -861,7 +897,7 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
         result = json.loads(raw)
         score = int(result["score"])
         reason = result.get("reason", "")
-        return _evaluation_result(score, reason, model, job, profile)
+        return _evaluation_result(score, reason, model, job, profile, comp_flag=comp_flag)
     except Exception as e:
         msg = str(e)
         if "All Groq models exhausted" in msg:

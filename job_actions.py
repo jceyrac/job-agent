@@ -53,6 +53,8 @@ def _dict_to_posting(d: dict) -> JobPosting:
         contract_type=d.get("contract_type"),
         geo_zone=d.get("geo_zone"),
         country_code=d.get("country_code"),
+        salary_text=d.get("salary_text"),
+        comp_annual_eur=d.get("comp_annual_eur"),
         company_country=d.get("company_country"),
         industry_sector=d.get("industry_sector"),
         language_required=d.get("language_required"),

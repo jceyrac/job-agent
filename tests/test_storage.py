@@ -118,7 +118,7 @@ def test_schema_matches_model():
 
     model_fields = {f.name for f in dataclasses.fields(JobPosting)}
     scorer_owned = {"work_mode", "company_size", "contract_type", "geo_zone", "summary"}
-    excluded = {"tags", "salary"}
+    excluded = {"tags", "salary", "salary_text", "comp_annual_eur"}
     # Phase 4: company-level fields moved to companies table
     company_owned = {"company_country", "industry_sector", "company_summary", "company_website"}
 
@@ -2125,6 +2125,60 @@ def test_update_last_run_with_duration():
     assert run["duration_seconds"] == 312.1
 
 
+def test_job_scores_has_comp_flag_column():
+    """The job_scores table must have a comp_flag INTEGER column."""
+    db = JobStorage(":memory:")
+    with db._conn() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
+    assert "comp_flag" in cols, "comp_flag column missing from job_scores table"
+
+
+def test_save_scored_with_comp_flag():
+    """save_scored stores comp_flag and it's retrievable via get_digest."""
+    from models import JobPosting
+    db = JobStorage(":memory:")
+    job = JobPosting(source="test", title="PM", company="Acme",
+                      location="Remote", url="http://a.com")
+    result = {
+        "score": 7, "reason": "ok", "scored_by": "test",
+        "comp_flag": 1,
+        "work_mode": "remote", "company_size": "startup",
+        "contract_type": "permanent", "geo_zone": "europe",
+        "company_country": "Germany", "industry_sector": "fintech",
+        "language_required": "english", "country_code": "DE",
+        "summary": "test",
+    }
+    # Ensure companies table has this company to avoid FK issues
+    cid = db.upsert_company("Acme")
+    db.upsert_profile(_FakeProfile())
+    db.save_scored(job, result, _FakeProfile().id, company_id=cid)
+    digest = db.get_digest(_FakeProfile().id, min_score=1)
+    assert len(digest) == 1
+    assert digest[0]["comp_flag"] == 1
+
+
+def test_save_scored_without_comp_flag():
+    """save_scored without comp_flag defaults to 0."""
+    from models import JobPosting
+    db = JobStorage(":memory:")
+    job = JobPosting(source="test", title="PM", company="Acme",
+                      location="Remote", url="http://b.com")
+    result = {
+        "score": 6, "reason": "ok", "scored_by": "test",
+        "work_mode": "hybrid", "company_size": "scaleup",
+        "contract_type": "permanent", "geo_zone": "europe",
+        "company_country": "Switzerland", "industry_sector": "fintech",
+        "language_required": "english", "country_code": "CH",
+        "summary": "test",
+    }
+    cid = db.upsert_company("Acme")
+    db.upsert_profile(_FakeProfile())
+    db.save_scored(job, result, _FakeProfile().id, company_id=cid)
+    digest = db.get_digest(_FakeProfile().id, min_score=1)
+    assert len(digest) == 1
+    assert digest[0]["comp_flag"] == 0
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -2257,6 +2311,9 @@ TESTS = [
     test_log_run_with_duration,
     test_log_run_without_duration,
     test_update_last_run_with_duration,
+    test_job_scores_has_comp_flag_column,
+    test_save_scored_with_comp_flag,
+    test_save_scored_without_comp_flag,
 ]
 
 

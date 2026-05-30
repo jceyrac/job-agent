@@ -402,6 +402,12 @@ class JobStorage:
                 conn.execute("ALTER TABLE runs ADD COLUMN duration_seconds REAL")
                 logger.info("[Storage] Phase 7: added duration_seconds to runs")
 
+            # Phase 8 — comp_flag on job_scores table
+            scores_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
+            if "comp_flag" not in scores_cols:
+                conn.execute("ALTER TABLE job_scores ADD COLUMN comp_flag INTEGER DEFAULT 0")
+                logger.info("[Storage] Phase 8: added comp_flag to job_scores")
+
             # Phase 6 — country_code on jobs table (profile-independent extraction)
             job_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
             if "country_code" not in job_cols:
@@ -1194,19 +1200,21 @@ class JobStorage:
             conn.execute(
                 """INSERT INTO job_scores (
                        job_id, profile_id,
-                       score, reason, scored_by, scored_at, country_code
+                       score, reason, scored_by, scored_at, country_code, comp_flag
                    ) VALUES (
-                       ?, ?, ?, ?, ?, ?, ?
+                       ?, ?, ?, ?, ?, ?, ?, ?
                    )
                    ON CONFLICT(job_id, profile_id) DO UPDATE SET
                        score        = excluded.score,
                        reason       = excluded.reason,
                        scored_by    = excluded.scored_by,
                        scored_at    = excluded.scored_at,
-                       country_code = excluded.country_code""",
+                       country_code = excluded.country_code,
+                       comp_flag    = excluded.comp_flag""",
                 (job.id, profile_id, score_result.get("score"),
                  score_result.get("reason"), score_result.get("scored_by", "unknown"),
-                 now, score_result.get("country_code")),
+                 now, score_result.get("country_code"),
+                 score_result.get("comp_flag", 0)),
             )
             # Also write structured fields to jobs table (Phase 1e)
             self._update_job_extraction_fields(job, score_result, conn, now,
@@ -1312,6 +1320,7 @@ class JobStorage:
                        COALESCE(j.language_required, 'unknown') AS language_required,
                        s.score, s.reason, s.scored_by, s.scored_at,
                        s.country_code AS country_code,
+                       s.comp_flag AS comp_flag,
                        COALESCE(t.status, 'new') AS status, t.notes,
                        t.changed_at AS status_changed_at
                 FROM jobs j

@@ -251,6 +251,8 @@ def _render_card(job: dict, apps_index: dict[str, dict]):
             lang = job.get("language_required") or ""
             if lang and lang not in ("english", "unknown"):
                 meta.append(f"🗣 {lang}")
+            if job.get("comp_flag"):
+                meta.append("⚠ verify pay")
             if meta:
                 st.caption(" · ".join(meta))
 

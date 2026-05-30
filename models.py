@@ -29,6 +29,8 @@ class JobPosting:
     extracted_at: Optional[datetime] = None  # NULL = extraction not yet run
     extracted_by: Optional[str] = None        # model identifier that performed extraction
     country_code: Optional[str] = None        # ISO 3166-1 alpha-2, e.g. CH, DE, FR, US
+    salary_text: Optional[str] = None           # free-text salary signal from extraction
+    comp_annual_eur: Optional[int] = None       # normalized annual EUR, when parseable
 
     # Company-level metadata extracted alongside job fields (pushed to companies table)
     company_summary: str | None = None
@@ -68,6 +70,8 @@ class JobPosting:
             "extracted_at": self.extracted_at.isoformat() if self.extracted_at else None,
             "extracted_by": self.extracted_by,
             "country_code": self.country_code,
+            "salary_text": self.salary_text,
+            "comp_annual_eur": self.comp_annual_eur,
             "company_summary": self.company_summary,
             "company_website": self.company_website,
         }
