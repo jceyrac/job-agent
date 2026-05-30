@@ -3,7 +3,7 @@ services:
   tracker:
     build: .
     container_name: job-tracker
-    command: streamlit run tracker.py --server.port 8501 --server.address 0.0.0.0
+    command: streamlit run tracker.py --server.port 8501 --server.address 0.0.0.0 --server.fileWatcherType none
     ports:
       - "8501:8501"
     volumes:

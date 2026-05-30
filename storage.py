@@ -426,16 +426,19 @@ class JobStorage:
                     logger.info(f"[Storage] Phase 2 migration: added {col} to job_applications")
 
             # Phase 2.1 — backfill status_history from existing job_tracking rows
-            backfill_count = conn.execute("""
-                INSERT OR IGNORE INTO status_history (job_id, status, changed_at)
-                SELECT t.job_id, t.status, COALESCE(a.prepared_at, datetime('now'))
-                FROM job_tracking t
-                LEFT JOIN job_applications a ON t.job_id = a.job_id
-            """).rowcount
-            if backfill_count:
-                logger.info(
-                    f"[Storage] Phase 2.1 backfill: {backfill_count} status_history rows"
-                )
+            # Only runs once when status_history is empty (fresh DB / first migration)
+            hist_count = conn.execute("SELECT COUNT(*) FROM status_history").fetchone()[0]
+            if hist_count == 0:
+                backfill_count = conn.execute("""
+                    INSERT OR IGNORE INTO status_history (job_id, status, changed_at)
+                    SELECT t.job_id, t.status, COALESCE(a.prepared_at, datetime('now'))
+                    FROM job_tracking t
+                    LEFT JOIN job_applications a ON t.job_id = a.job_id
+                """).rowcount
+                if backfill_count:
+                    logger.info(
+                        f"[Storage] Phase 2.1 backfill: {backfill_count} status_history rows"
+                    )
 
             # Phase 2.2 — add changed_at to job_tracking (denormalized for UI perf)
             track_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_tracking)").fetchall()}
@@ -751,6 +754,7 @@ class JobStorage:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
             try:
                 yield conn
                 conn.commit()
@@ -1249,6 +1253,12 @@ class JobStorage:
             raise ValueError(f"Statut invalide : {status!r}. Valides : {self.VALID_STATUSES}")
         now = _now()
         with self._conn() as conn:
+            # Read current status to avoid no-op history entries
+            old = conn.execute(
+                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            old_status = old["status"] if old else None
+
             if notes is not None:
                 conn.execute(
                     """INSERT INTO job_tracking (job_id, status, notes, changed_at)
@@ -1268,11 +1278,13 @@ class JobStorage:
                            changed_at = excluded.changed_at""",
                     (job_id, status, now),
                 )
-            conn.execute(
-                "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
-                (job_id, status, now),
-            )
-            self._auto_log_status_interaction(job_id, status, _conn=conn)
+            # Only log to history if status actually changed (prevents runaway duplicates)
+            if old_status != status:
+                conn.execute(
+                    "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
+                    (job_id, status, now),
+                )
+                self._auto_log_status_interaction(job_id, status, _conn=conn)
 
     # ------------------------------------------------------------------
     # Requêtes pour digest / tracker
