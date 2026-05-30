@@ -277,20 +277,27 @@ def _render_card(job: dict, apps_index: dict[str, dict]):
 
         # Archive confirmation
         if st.session_state.get(f"pending_archive_{job_id}"):
+            # Include a fragment-run counter in keys to prevent
+            # StreamlitDuplicateElementKey when the fragment re-renders.
+            run_key = st.session_state.get(f"_archive_run_{job_id}", 0)
             st.warning("Please add a note before marking this job as not relevant.")
-            archive_note = st.text_area("Note", key=f"archive_note_{job_id}", height=60)
+            archive_note = st.text_area("Note", key=f"archive_note_{job_id}_{run_key}", height=60)
             c1, c2 = st.columns(2)
-            if c1.button("Confirm archive", key=f"confirm_archive_{job_id}"):
+            if c1.button("Confirm archive", key=f"confirm_archive_{job_id}_{run_key}"):
                 if archive_note.strip():
                     db.set_status(job_id, "archived", notes=archive_note.strip())
                     st.session_state.pop(f"pending_archive_{job_id}")
+                    st.session_state.pop(f"_archive_run_{job_id}", None)
                     st.cache_data.clear()
                     st.rerun()
                 else:
                     st.error("Note is required.")
-            if c2.button("Cancel", key=f"cancel_archive_{job_id}"):
+            if c2.button("Cancel", key=f"cancel_archive_{job_id}_{run_key}"):
                 st.session_state.pop(f"pending_archive_{job_id}")
+                st.session_state.pop(f"_archive_run_{job_id}", None)
                 st.rerun()
+            # Bump the counter so next fragment render gets fresh keys
+            st.session_state[f"_archive_run_{job_id}"] = run_key + 1
 
         # Notes
         with st.expander("Notes", expanded=False):
