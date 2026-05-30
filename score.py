@@ -12,7 +12,7 @@ load_dotenv()
 from notifier import send_email_digest, export_joplin
 from profiles import ALL_PROFILES, get_active_profile
 from job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
-from scorer import score_job
+from scorer import extract_job_fields, evaluate_for_profile
 from storage import JobStorage
 
 DB_PATH = "data/jobs.db"
@@ -52,6 +52,42 @@ MOCK_JOBS = [
             "stakeholders across the DACH region."
         ),
     },
+    {
+        "title": "Senior Product Manager — Digital Assets",
+        "company": "SwissNeo",
+        "location": "Geneva, CH (Hybrid)",
+        "base_location": "Geneva, Switzerland",
+        "description": (
+            "SwissNeo is a Swiss neobank launching tokenized custody for digital assets. "
+            "We are seeking a Senior Product Manager to lead our crypto custody and "
+            "tokenization product. Series B, 120 employees, flexible hybrid with 2 days "
+            "in our Geneva office."
+        ),
+    },
+    {
+        "title": "Senior Product Manager — RWA Protocol",
+        "company": "TokenBridge Labs",
+        "location": "Remote (Europe)",
+        "base_location": "Remote, EU",
+        "description": (
+            "TokenBridge Labs is a Web3 protocol for real-world asset tokenization on "
+            "Ethereum. We are seeking a Senior Product Manager to drive the tokenization "
+            "platform roadmap. Fully remote, EU-based team, 45 employees. "
+            "The role is open to candidates across Europe."
+        ),
+    },
+    {
+        "title": "Senior Product Manager — Payments",
+        "company": "Istanbul Fintech",
+        "location": "Remote (Turkey)",
+        "base_location": "Istanbul, Türkiye",
+        "description": (
+            "Istanbul Fintech is a leading Turkish payments platform serving 5M+ users "
+            "across Europe and the Middle East. We are seeking a Senior Product Manager "
+            "to own our cross-border payments roadmap. Fully remote, English-speaking team, "
+            "Series C, 200 employees."
+        ),
+    },
 ]
 
 
@@ -66,20 +102,69 @@ def _delete_scores_for_profile(db_path: str, profile_id: str) -> int:
 
 
 def _run_mock(profile) -> None:
-    """Score 3 hardcoded test jobs with the profile's scoring_context. No DB writes."""
+    """Score test jobs using the real production path: extract → evaluate. No DB writes."""
+    from models import JobPosting
+
+    expectations = [
+        (5, 7, "FELFEL — food-tech hybrid, CH employer → tier 4–5"),
+        (6, 8, "Consensys MetaMask — pure Web3 remote → CV stretch"),
+        (1, 3, "SIX Group — large corporate → hard-exclusion cap"),
+        (8, 9, "SwissNeo — tokenized custody, crypto-fintech bridge, CH hybrid → tier 2"),
+        (6, 8, "TokenBridge Labs — Web3 RWA, EU remote, salary unstated → tier 3 + comp flag"),
+        (4, 5, "Istanbul Fintech — TR fintech remote → tier 6, must NOT be Tier-0 filtered"),
+    ]
+
     print(f"\n=== MOCK TEST: {profile.name} ({profile.id}) ===")
-    print("Scoring 3 sample jobs (no DB writes, no rate-limit delay)...\n")
-    for job in MOCK_JOBS:
-        result = score_job(job, scoring_context=profile.scoring_context)
-        if result:
-            emoji = "🔥" if result["score"] >= 8 else ("⭐" if result["score"] >= 5 else "👀")
-            print(f"  {emoji} [{result['score']}/10] {job['title']} @ {job['company']}")
-            print(f"    Mode: {result['work_mode']} | Geo: {result['geo_zone']} | Size: {result['company_size']}")
-            print(f"    Reason: {result['reason']}")
-            print(f"    Scored by: {result['scored_by']}")
-        else:
-            print(f"  [ERROR] {job['title']} @ {job['company']} — scorer failed")
+    print(f"Testing {len(MOCK_JOBS)} jobs with production path (extract → evaluate)...\n")
+
+    all_pass = True
+    for i, job_dict in enumerate(MOCK_JOBS):
+        job = JobPosting(
+            source="mock",
+            title=job_dict["title"],
+            company=job_dict["company"],
+            location=job_dict["location"],
+            url=f"mock://{i}",
+            description=job_dict.get("description"),
+            base_location=job_dict.get("base_location"),
+        )
+
+        # Phase 1: extraction
+        job = extract_job_fields(job)
+        if job is None:
+            print(f"  ❌ [FAIL] {job_dict['title']} @ {job_dict['company']} — extraction failed")
+            all_pass = False
+            continue
+
+        # Phase 2: evaluation
+        result = evaluate_for_profile(job, profile)
+        if result is None:
+            print(f"  ❌ [FAIL] {job_dict['title']} @ {job_dict['company']} — evaluation failed")
+            all_pass = False
+            continue
+
+        score = result["score"]
+        scored_by = result.get("scored_by", "?")
+        reason = result.get("reason", "")
+
+        lo, hi, desc = expectations[i]
+        passed = lo <= score <= hi
+        if not passed:
+            all_pass = False
+
+        emoji = "✅" if passed else "❌"
+        print(f"  {emoji} [{score}/10] {job_dict['title']} @ {job_dict['company']}")
+        print(f"    Expected: {lo}–{hi} ({desc})")
+        print(f"    Mode: {result.get('work_mode')} | Geo: {result.get('geo_zone')} | "
+              f"Country: {result.get('company_country')} | Sector: {result.get('industry_sector')}")
+        print(f"    Scored by: {scored_by}")
+        print(f"    Reason: {reason}")
         print()
+
+    if all_pass:
+        print("✅ All 6 cases in expected bands.")
+    else:
+        print("❌ Some cases out of band — review scoring_context or Tier-0 rules.")
 
 
 

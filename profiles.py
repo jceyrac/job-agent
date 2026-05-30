@@ -211,21 +211,45 @@ roles that hit multiple criteria simultaneously.
 - Headcount under ~500 is a positive signal; under ~200 is stronger.
 - Recent funding rounds (Seed to Series C) are a positive signal.
 
-# Industry fit (in order of preference, but apply realistic weighting)
+# Ranking keys (in order)
+Rank a job by, in order: (1) domain — Web3-RWA / crypto-fintech bridge
+is the target, traditional fintech is solid, pure Web3/DeFi is
+high-interest but a CV stretch; (2) Swiss-employer certainty — a role
+with a Swiss company outranks an equivalent remote role from a foreign
+company, because pay and the right to keep living in Switzerland are
+guaranteed rather than needing verification; (3) work mode — remote >
+hybrid, with flexible 2–3 day hybrid ranking near remote and rigid 4+
+day hybrid lower.
+
+# Scoring bands
+Assign the band of the highest tier the job satisfies, then nudge ±1
+within the band on soft signals (AI in product, DeFi vs generic, funding
+stage, headcount, flexibility).
+
+| Tier | Criteria                                            | Band |
+|------|-----------------------------------------------------|------|
+| 1    | CH employer, Web3-RWA / crypto-fintech, remote      | 9–10 |
+| 2    | CH employer, Web3-RWA / crypto-fintech, hybrid      | 8–9  |
+| 3    | Any HQ, Web3-RWA / crypto-fintech, remote, CH-viable | 7–8 |
+| 4    | CH employer, fintech ±AI, remote                    | 6–7  |
+| 5    | CH employer, fintech ±AI, hybrid                    | 5–6  |
+| 6    | EU / Türkiye employer, fintech ±AI, remote          | 4–5  |
+| 7    | Leaves CH, off-domain, or clearly underpaid         | <3   |
+
+# Industry fit (domain context)
 1. PERFECT but rare — Web3 RWA (real-world assets), tokenization of
    traditional finance, regulated DeFi, stablecoins with real use cases.
-   Score these high even if the role is a stretch.
 2. REALISTIC SWEET SPOT — fintech companies bridging Web2 and Web3:
    crypto-friendly neobanks, custody, on-ramps/off-ramps, traditional
    fintech adding tokenization or crypto rails, embedded finance with
-   blockchain components. The candidate's profile is a strong fit here.
+   blockchain components.
 3. SOLID — traditional fintech startups/scale-ups: payments, lending,
    wealthtech, regtech, embedded finance, B2B SaaS for financial
-   services. The candidate has direct experience.
+   services.
 4. INTERESTING BUT HARDER — pure Web3 / DeFi / crypto-native companies.
    Score the role on its merits but acknowledge in the reasoning that
-   the candidate lacks direct Web3 PM experience, which may make this
-   aspirational.
+   the candidate lacks direct Web3 PM experience (CV stretch). Cap ~1
+   below the equivalent RWA/bridge role.
 5. NEUTRAL BONUS — companies using AI in their product (good signal of
    innovation). AI-native companies building foundation models or core
    AI products are a stretch given no direct AI PM experience — score
@@ -234,18 +258,31 @@ roles that hit multiple criteria simultaneously.
    media. Score on PM fundamentals only, no industry bonus.
 
 # Geography and work mode
-- IDEAL: Hybrid in Switzerland (Lausanne, Geneva, Zurich, Zug, Basel)
-  with 2-3 office days per week. The candidate needs to travel to
-  France 1-2 times per month and travels regularly for personal
-  reasons, so flexibility matters. Rigid "4+ days in office" hybrid
-  roles are a weaker fit than flexible "2-3 days" hybrid.
-- ALSO STRONG: Fully remote roles based anywhere in Europe (EU timezone).
-  The candidate stays in Switzerland but works for a European company.
-- ACCEPTABLE: Hybrid roles in France, Spain, Portugal, Italy, the
-  Netherlands, Germany (if English-speaking), Ireland, the Nordics —
-  countries the candidate would consider relocating to.
-- WEAKER: Hybrid in other European countries not listed above.
-- EXCLUDE: On-site or hybrid outside Switzerland (Tier-0 enforced), US-only remote, APAC roles.
+- The candidate stays in Switzerland. Foreign roles are acceptable only
+  when fully remote (works from Switzerland for a foreign company).
+  Hybrid or on-site outside Switzerland is out (already enforced before
+  scoring).
+- IDEAL: Fully remote role with a Swiss company. The candidate works
+  from home in Switzerland.
+- ALSO STRONG: Flexible hybrid in Switzerland (Lausanne, Geneva, Zurich,
+  Zug, Basel) with 2–3 office days per week. The candidate needs to
+  travel to France 1–2 times per month, so flexibility matters.
+- WEAKER: Rigid hybrid requiring 4+ days in a Swiss office.
+- EXCLUDE: On-site or hybrid outside Switzerland (Tier-0 enforced),
+  US-only remote, APAC roles.
+
+# Swiss-employer certainty discount
+A remote role whose company is based outside Switzerland (EU/Türkiye)
+scores ~1–2 below the same role at a Swiss company — it still lets the
+candidate stay in Switzerland, but pay and residence eligibility are
+unverified.
+
+# Compensation
+If the posting states a salary and the role is remote for a non-Swiss
+company, judge whether it plausibly sustains Swiss cost of living; if
+clearly low, subtract 1 and say so. If no salary is stated, do NOT
+penalize — set comp_flag true (see schema) so it can be verified
+manually.
 
 # Output
 Return JSON with: score (1-10), reason (2-3 sentences explaining the
@@ -261,6 +298,7 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
         "Germany", "Ireland", "United Kingdom", "Belgium", "Austria",
         "Sweden", "Denmark", "Finland", "Norway", "Estonia", "Czech Republic",
         "Poland", "Romania", "Greece", "Luxembourg",
+        "Türkiye", "Turkey",            # enable EU/Türkiye fintech remote (tier 6)
     ],
     banned_countries=[
         "United States", "Canada", "Mexico", "Brazil", "Argentina", "Colombia",

@@ -40,7 +40,9 @@ STOPWORDS = {
     "trop", "tu", "un", "une", "uniquement", "vers", "vos", "vous", "y",
 }
 
-ALL_PROFILES = ["web3_remote", "ch_hybrid", "unified_jc"]
+def _get_default_profiles() -> list[str]:
+    from profiles import get_active_profile
+    return [get_active_profile().id]
 
 
 # ── DB helpers ──────────────────────────────────────────────────────────────────
@@ -617,7 +619,7 @@ def _section_suggestions(conn, profiles: list[str]) -> list[str]:
 def generate_report(profile_id: str | None = None,
                     output_dir: str | None = None) -> str:
     """Generate the report and return the output file path."""
-    profiles = [profile_id] if profile_id else ALL_PROFILES
+    profiles = [profile_id] if profile_id else _get_default_profiles()
     conn = _connect()
 
     sections = [
