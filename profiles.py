@@ -34,6 +34,16 @@ class SearchProfile:
     excluded_sectors: list[str] = field(default_factory=list)   # sector codes to exclude from digest
     excluded_languages: list[str] = field(default_factory=list) # language codes to exclude from digest
 
+    # ── Search inputs (relocated from scrape.py + scraper modules) ──────────
+    # When a list is empty, the consuming scraper falls back to its module
+    # constant. Populate these to make the active profile the source of truth.
+    scrape_titles: list[str] = field(default_factory=list)      # broad post-fetch title net (scrape.py JobFilter.titles)
+    scrape_exclude: list[str] = field(default_factory=list)     # post-fetch exclusions (scrape.py JobFilter.exclude)
+    scrape_remote_or_hybrid: bool = False                       # scrape.py JobFilter.remote_or_hybrid
+    search_query_titles: list[str] = field(default_factory=list)  # queries sent to jobspy (LinkedIn/Indeed)
+    search_locations: list[str] = field(default_factory=list)     # location display names for jobspy
+    greenhouse_boards: list[str] = field(default_factory=list)    # Greenhouse board tokens
+
     def to_criteria_dict(self) -> dict:
         """Serialisable en JSON pour stockage dans search_profiles.criteria."""
         return {
@@ -50,7 +60,44 @@ class SearchProfile:
             "denylisted_companies":  self.denylisted_companies,
             "excluded_sectors":      self.excluded_sectors,
             "excluded_languages":   self.excluded_languages,
+            # ── Search inputs ─────────────────────────────────────────
+            "scrape_titles":          self.scrape_titles,
+            "scrape_exclude":         self.scrape_exclude,
+            "scrape_remote_or_hybrid": self.scrape_remote_or_hybrid,
+            "search_query_titles":    self.search_query_titles,
+            "search_locations":       self.search_locations,
+            "greenhouse_boards":      self.greenhouse_boards,
         }
+
+    @classmethod
+    def from_criteria(cls, id: str, name: str, criteria: dict) -> "SearchProfile":
+        """Build a profile from a persisted criteria dict. Forward-prep for the
+        Phase-1 Settings UI; not used by get_active_profile() in Phase 0."""
+        return cls(
+            id=id,
+            name=name,
+            allowed_geo_zones=criteria.get("allowed_geo_zones", []),
+            allowed_work_modes=criteria.get("allowed_work_modes", []),
+            location_keywords=criteria.get("location_keywords", []),
+            boost_keywords=criteria.get("boost_keywords", []),
+            company_sizes=criteria.get("company_sizes", []),
+            score_threshold=criteria.get("score_threshold", 5),
+            remote_or_hybrid=criteria.get("remote_or_hybrid", True),
+            scoring_context=criteria.get("scoring_context", ""),
+            pre_filter=criteria.get("pre_filter", {}),
+            allowed_countries=criteria.get("allowed_countries"),
+            banned_countries=criteria.get("banned_countries", []),
+            hybrid_ok_countries=criteria.get("hybrid_ok_countries", []),
+            denylisted_companies=criteria.get("denylisted_companies", []),
+            excluded_sectors=criteria.get("excluded_sectors", []),
+            excluded_languages=criteria.get("excluded_languages", []),
+            scrape_titles=criteria.get("scrape_titles", []),
+            scrape_exclude=criteria.get("scrape_exclude", []),
+            scrape_remote_or_hybrid=criteria.get("scrape_remote_or_hybrid", False),
+            search_query_titles=criteria.get("search_query_titles", []),
+            search_locations=criteria.get("search_locations", []),
+            greenhouse_boards=criteria.get("greenhouse_boards", []),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +372,32 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
                       "energy", "media"],
     excluded_languages=["german", "spanish", "dutch", "italian", "czech", "hungarian",
                         "polish", "mandarin", "turkish"],
+    # ── Search inputs (exact current values from scrape.py + scraper modules) ──
+    scrape_titles=[
+        "product manager", "head of product", "cpo", "vp product",
+        "product owner", "product lead", "product engineer", "project manager",
+    ],
+    scrape_exclude=["junior", "intern", "stage", "apprentice"],
+    scrape_remote_or_hybrid=False,
+    search_query_titles=[
+        "product manager", "product owner", "head of product",
+        "product lead", "product director", "senior product",
+        "lead product manager",
+    ],
+    search_locations=[
+        "Switzerland", "France", "United Kingdom", "Netherlands", "Spain",
+        "Portugal", "Austria", "Belgium", "Ireland", "Italy", "Germany",
+        "Czechia", "Hungary", "Türkiye",
+    ],
+    greenhouse_boards=[
+        # Crypto / Web3 / fintech boards (from CRYPTO_WEB3_BOARDS)
+        "coinbase", "chainalysis", "paxos", "avalabs", "consensys",
+        "fireblocks", "anchorage", "figment", "bitgo", "kraken",
+        "gemini", "ripple", "near", "aptos", "mysten",
+        "alchemy", "infura", "opensea", "dydx", "uniswap",
+        "aave", "blockdaemon", "ledger", "blockchain", "circle",
+        "robinhood", "stripe", "brex", "mercury", "ramp",
+    ],
 )
 
 # ---------------------------------------------------------------------------

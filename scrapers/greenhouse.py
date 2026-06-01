@@ -132,11 +132,14 @@ class GreenhouseScraper(BaseScraper):
             print(f"[{self.SOURCE_NAME}] ⚠️ beautifulsoup4 not installed")
             return []
 
+        from profiles import get_active_profile
+        boards = get_active_profile().greenhouse_boards or CRYPTO_WEB3_BOARDS
+
         jobs: list[JobPosting] = []
         board_summary: list[str] = []
 
         with httpx.Client(headers=HEADERS, timeout=10, follow_redirects=True) as client:
-            for token in CRYPTO_WEB3_BOARDS:
+            for token in boards:
                 try:
                     r = client.get(f"{BASE_URL}/{token}/jobs?content=true")
                     if r.status_code == 404:
@@ -204,5 +207,5 @@ class GreenhouseScraper(BaseScraper):
 
         if board_summary:
             print(f"[{self.SOURCE_NAME}] {' | '.join(board_summary)}")
-        print(f"[{self.SOURCE_NAME}] {len(jobs)} PM jobs fetched across {len(CRYPTO_WEB3_BOARDS)} boards")
+        print(f"[{self.SOURCE_NAME}] {len(jobs)} PM jobs fetched across {len(boards)} boards")
         return jobs

@@ -43,6 +43,11 @@ class LinkedInScraper(BaseScraper):
             print(f"[{self.SOURCE_NAME}] python-jobspy not installed — pip install python-jobspy")
             return []
 
+        from profiles import get_active_profile
+        _p = get_active_profile()
+        terms = _p.search_query_titles or SEARCH_TERMS_LINKEDIN
+        locations = _p.search_locations or LINKEDIN_LOCATIONS
+
         start = time.time()
         all_jobs: list[JobPosting] = []
         seen_urls: set[str] = set()
@@ -50,8 +55,8 @@ class LinkedInScraper(BaseScraper):
 
         # LinkedIn — query each target location directly. Switzerland gets more
         # results because it's the primary target market.
-        for term in SEARCH_TERMS_LINKEDIN:
-            for location in LINKEDIN_LOCATIONS:
+        for term in terms:
+            for location in locations:
                 results_wanted = 25 if location == "Switzerland" else 15
                 try:
                     df = scrape_with_timeout(

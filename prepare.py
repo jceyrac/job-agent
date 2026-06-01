@@ -50,31 +50,12 @@ PREPARE_LIGHT_MODELS = [
 ]
 
 # ---------------------------------------------------------------------------
-# CV bullet library — extracted from Jérôme's CV
+# CV bullet library — loaded from config-driven sources
 # ---------------------------------------------------------------------------
 
-CV_BULLETS = [
-    "Senior Product Manager with 10+ years of experience in designing and delivering SaaS, fintech, DeFi and AI products following lean and design thinking approaches with agile cross-functional teams.",
-    "Created a Cloud Service Center (Cloud Assembly Factory) to provide cloud infrastructure based on Microsoft Azure for digital products at Vaudoise Assurances.",
-    "Managed the API Bank product, the bank data aggregation market leader in France at Powens (ex-Budget Insight), leading PSD2 API integration covering 90%+ of the French banking market.",
-    "Increased end-user conversion rates by 30% through app-to-app authentication redesign at Powens.",
-    "Developed B2B services client segment (accounting, ERP, payroll) by conducting discovery research with clients at Powens.",
-    "Managed the API Single Invoice Cover (SIC), the first real-time B2B credit-decisioning API in French factoring at Allianz Trade (Euler Hermes Digital Agency).",
-    "Collaborated with Crédit Agricole during the launch of their factoring product Cash in Time, using the SIC API to insure invoices.",
-    "Managed GENIAC, a platform taking care of SMEs administrative and compliance tasks (accounting, HR, legal), designed and shipped the MVP securing Series A investment.",
-    "Conducted a strategic pivot of the GENIAC product to open it to a new segment of customers through HR and payroll services.",
-    "Designed and shipped, as a Business Analyst, Crédit du Nord's new online wire transfer application at Accenture.",
-    "Managed a team of 10 developers and a €4.5M budget to deliver a new banking loan platform for two retail banks within Société Générale.",
-    "Designed and delivered an orchestrator to automate subscription of Data Finder services at Adeo, reducing support team workload.",
-    "Designed efficient onboarding workflows allowing non-tech users to easily share their data at Adeo.",
-    "Designed, shipped and launched the BoF career website at Business Of Fashion in London.",
-    "Release manager and Java developer of Crédit du Nord's new banking professional loan branch application.",
-    "Front-end developer of Banque Populaire's new e-banking application.",
-    "Engineering background (Master's Degree in Engineering, EPF 2005) with hands-on coding experience in Python, Java, C#, PHP, SQL, Javascript.",
-    "DeFi certification from Duke University (2025), Machine Learning from Stanford (2024), UX Design from Google (2024).",
-    "Scrum Master certified (2010).",
-    "Languages: English (fluent), French (mother tongue), German (intermediate), Spanish (intermediate).",
-]
+# No more hardcoded CV_BULLETS list.  Real bullets live in gitignored
+# data/cv_bullets.txt; the committed data/cv_bullets.sample.txt is a
+# neutral template for new users.  See _load_cv_bullets() below.
 
 # ---------------------------------------------------------------------------
 # Style anchors — key characteristics from Jérôme's cover letters
@@ -218,39 +199,55 @@ def _language_name(code: str) -> str:
     return mapping.get(code, "English")
 
 
-def _load_cv_bullets() -> str:
-    """Load CV bullet library from DOCX if available, otherwise use hardcoded list."""
-    try:
-        from docx import Document
-        docx_paths = [
-            os.path.expanduser(
-                "~/Nextcloud/Documents/01 Job/00 CV+Motiv/CV/EN/Adresse Suisse/"
-                "OLD/CV_Generalist_Jérôme_Ceyrac _EN Suisse v0.1.docx"
-            ),
-            os.path.expanduser(
-                "~/Nextcloud/Documents/01 Job/00 CV+Motiv/CV/EN/Adresse Suisse/"
-                "OLD/CV_Web3 _Jérôme_Ceyrac _ENCH v0.1.docx"
-            ),
-        ]
-        for path in docx_paths:
-            if os.path.exists(path):
-                doc = Document(path)
-                lines = []
-                for para in doc.paragraphs:
-                    text = para.text.strip()
-                    if text and len(text) > 40:
-                        lines.append(text)
-                for table in doc.tables:
-                    for row in table.rows:
-                        for cell in row.cells:
-                            text = cell.text.strip()
-                            if text and len(text) > 40 and text not in lines:
-                                lines.append(text)
-                if lines:
-                    return "\n".join(f"- {line}" for line in lines[:50])
-    except Exception:
-        pass
-    return "\n".join(f"- {b}" for b in CV_BULLETS)
+def _load_cv_bullets(db) -> str:
+    """Load CV bullet library, resolved in order:
+    1. DOCX from config cv.master_path (if set and file exists)
+    2. data/cv_bullets.txt (local gitignored, one bullet per line)
+    3. data/cv_bullets.sample.txt (committed neutral template)
+    """
+    data_dir = os.path.join(os.path.dirname(__file__), "data")
+
+    # 1. DOCX path from config
+    docx_path = db.get_config("cv.master_path")
+    if docx_path and os.path.exists(docx_path):
+        try:
+            from docx import Document
+            doc = Document(docx_path)
+            lines = []
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text and len(text) > 40:
+                    lines.append(text)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        text = cell.text.strip()
+                        if text and len(text) > 40 and text not in lines:
+                            lines.append(text)
+            if lines:
+                return "\n".join(f"- {line}" for line in lines[:50])
+        except Exception:
+            pass
+
+    # 2. Local gitignored bullets file
+    bullets_path = os.path.join(data_dir, "cv_bullets.txt")
+    if os.path.exists(bullets_path):
+        with open(bullets_path) as f:
+            lines = [line.strip() for line in f if line.strip()]
+        if lines:
+            return "\n".join(f"- {line}" for line in lines)
+
+    # 3. Sample template (committed)
+    sample_path = os.path.join(data_dir, "cv_bullets.sample.txt")
+    if os.path.exists(sample_path):
+        print("  ⚠️  Using sample CV bullets — set cv.master_path config or "
+              "populate data/cv_bullets.txt with real bullets.")
+        with open(sample_path) as f:
+            lines = [line.strip() for line in f if line.strip()]
+        if lines:
+            return "\n".join(f"- {line}" for line in lines)
+
+    return ""
 
 
 def _build_user_prompt(job: dict) -> str:
@@ -389,7 +386,7 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
 
     # Load context
     scoring_context = profile.scoring_context or ""
-    bullets = _load_cv_bullets()
+    bullets = _load_cv_bullets(db)
     user_prompt = _build_user_prompt(job)
 
     style_context = STYLE_ANCHORS

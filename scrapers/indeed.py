@@ -40,6 +40,14 @@ INDEED_COUNTRIES = [
 MAX_CONSECUTIVE_TIMEOUTS = 3
 
 
+def _to_indeed_slug(name: str) -> str:
+    """Map a display-name location to Indeed's lowercase country slug.
+    "United Kingdom" → "uk"; everything else is just lowercased."""
+    special = {"united kingdom": "uk"}
+    key = name.strip().lower()
+    return special.get(key, key)
+
+
 class IndeedScraper(BaseScraper):
     SOURCE_NAME = "Indeed"
     ENABLED = True
@@ -50,10 +58,16 @@ class IndeedScraper(BaseScraper):
         total, dupes = 0, 0
         consecutive_timeouts = 0
 
+        from profiles import get_active_profile
+        _p = get_active_profile()
+        terms = _p.search_query_titles or SEARCH_TERMS_INDEED
+        raw_locs = _p.search_locations
+        countries = [_to_indeed_slug(n) for n in raw_locs] if raw_locs else INDEED_COUNTRIES
+
         original_request = patch_requests_for_indeed()
         try:
-            for term in SEARCH_TERMS_INDEED:
-                for country in INDEED_COUNTRIES:
+            for term in terms:
+                for country in countries:
                     results_wanted = 50 if country == "switzerland" else 25
                     try:
                         df = scrape_with_timeout(
