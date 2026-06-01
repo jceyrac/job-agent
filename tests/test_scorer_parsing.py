@@ -429,7 +429,7 @@ class _EvalProfileEU:
 
 
 def test_eval_tier0_empty_lists_noop():
-    """Profile with empty banned/hybrid_ok lists → rules don't fire (web3_remote compat)."""
+    """Profile with empty banned/hybrid_ok lists → rules don't fire."""
     job = _eval_job(work_mode="hybrid", company_country="Ireland", geo_zone="global_remote")
     with patch("scorer._call_groq_fallback_chain") as mock:
         mock.return_value = ('{"score": 6, "reason": "Ireland hybrid passes"}', "test-model")

@@ -160,9 +160,9 @@ The app runs in **single-profile mode** on `unified_jc` (Unified JC). Profiles l
 |----|------|-------|
 | `unified_jc` | Unified JC | Senior PM, Web3/fintech/AI, remote/hybrid, Switzerland + global |
 
-### Dormant profiles
+### Profile mode
 
-`web3_remote` and `ch_hybrid` remain defined in `profiles.py` but are not surfaced in the UI or CLI. To return to multi-profile mode: add them back into `ALL_PROFILES` in `profiles.py` and restore the profile selectors in the tracker UI.
+The app runs in single-profile mode. `UNIFIED_JC` is the only active profile. The multi-profile infrastructure (profile_id in job_scores, search_profiles table) remains as the seam for multi-user/multi-search support in a future phase.
 
 ---
 
