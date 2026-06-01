@@ -3,6 +3,8 @@ data/jobs.db-wal
 data/jobs.db-shm
 data/*.bak.*
 data/.fuse_hidden*
+data/cv_bullets.txt
+data/cv_master.docx
 __pycache__/
 .venv/
 .env

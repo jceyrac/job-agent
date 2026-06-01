@@ -131,16 +131,14 @@ def dedupe_against_db(jobs: list[JobPosting], storage: JobStorage) -> list[JobPo
 
 
 def main():
-    # Universal PM/PO filter — no profile dependency.
-    # remote_or_hybrid=False so on-site CH jobs are kept; web3_remote's
+    # JobFilter built from the active profile's search inputs.
+    # remote_or_hybrid=False so on-site CH jobs are kept; the profile's
     # work_mode gate runs post-scoring in score.py via allowed_work_modes.
+    profile = get_active_profile()
     job_filter = JobFilter(
-        titles=[
-            "product manager", "head of product", "cpo", "vp product",
-            "product owner", "product lead", "product engineer", "project manager",
-        ],
-        exclude=["junior", "intern", "stage", "apprentice"],
-        remote_or_hybrid=False,
+        titles=profile.scrape_titles,
+        exclude=profile.scrape_exclude,
+        remote_or_hybrid=profile.scrape_remote_or_hybrid,
     )
 
     scraper_classes = discover_scrapers()
