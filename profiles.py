@@ -101,106 +101,11 @@ class SearchProfile:
 
 
 # ---------------------------------------------------------------------------
-# Profil par défaut — ex-comportement main.py
+# Single search profile
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------
-# DORMANT PROFILES — defined but not surfaced anywhere.
-# The app runs in single-profile mode (see ACTIVE_PROFILE below).
-# To return to multi-profile: add these back into ALL_PROFILES and
-# restore the profile selectors in the tracker UI.
-# ---------------------------------------------------------------------
-
-WEB3_REMOTE = SearchProfile(
-    id="web3_remote",
-    name="Web3 Remote",
-    allowed_geo_zones=["europe", "global_remote", "unknown"],
-    allowed_work_modes=["remote", "hybrid", "unknown"],
-    location_keywords=[],           # pas de filtre géographique pré-scoring
-    boost_keywords=["web3", "defi", "crypto", "blockchain", "AI", "fintech"],
-    company_sizes=["startup", "scaleup"],
-    score_threshold=5,
-    remote_or_hybrid=True,
-    pre_filter={
-        "title_contains": [
-            "product manager", "product owner", "head of product",
-            "vp product", "lead product", "staff product",
-        ],
-        "exclude_title_contains": [
-            "junior", "intern", "marketing manager", "sales",
-            "engineer", "developer", "data scientist", "designer",
-        ],
-        "exclude_location_contains": [
-            "united states", " usa ", "new york", "san francisco",
-        ],
-    },
-    scoring_context="""You are evaluating jobs for a Senior PM with 10+ years in Web3, DeFi, and AI,
-based in Europe, targeting fully remote roles globally.
-
-Score HIGH (8-10) if: Web3, DeFi, crypto, blockchain, L2, protocol, NFT,
-smart contracts, or AI-native product roles. Remote-first companies.
-Senior, Staff, Lead, or Head of Product titles.
-
-Score MEDIUM (5-7) if: fintech or AI adjacent but no explicit Web3 context.
-Strong PM fundamentals with clear technical depth.
-
-Score LOW (1-4) if: no Web3/AI/crypto context, non-tech verticals,
-junior roles, US-only or no remote option, non-PM titles.""",
-    allowed_countries=None,
-    excluded_sectors=["pharma", "retail", "manufacturing", "government", "healthcare"],
-    excluded_languages=["german"],
-)
-
-# ---------------------------------------------------------------------------
-# Profil Suisse hybride
-# ---------------------------------------------------------------------------
-
-CH_HYBRID = SearchProfile(
-    id="ch_hybrid",
-    name="Switzerland Hybrid",
-    allowed_geo_zones=["europe", "global_remote", "unknown"],
-    allowed_work_modes=["hybrid", "remote", "unknown"],
-    location_keywords=[
-        "Switzerland", "Suisse", "Schweiz", "Svizzera",
-        "Zürich", "Zurich", "Geneva", "Genève", "Genf",
-        "Basel", "Bâle", "Bern", "Berne", "Lausanne", "Lugano",
-        "Winterthur", "St. Gallen", "Sankt Gallen", "Zug", "Luzern", "Lucerne",
-    ],
-    boost_keywords=["fintech", "banking", "AI", "crypto"],
-    company_sizes=["startup", "scaleup", "sme"],
-    score_threshold=5,
-    remote_or_hybrid=True,
-    pre_filter={
-        "exclude_location_contains": [
-            "united states", " usa ", "new york", "san francisco",
-            "los angeles", "seattle", "boston", "chicago",
-        ],
-        "title_contains": [
-            "product manager", "product owner", "head of product",
-            "vp product", "lead product", "staff product", "technical product",
-        ],
-        "exclude_title_contains": [
-            "junior", "intern", "marketing manager", "sales",
-            "engineer", "developer", "data scientist",
-        ],
-    },
-    scoring_context="""This profile is strictly for Product Manager / Product Owner roles based in Switzerland (Zürich, Geneva, Basel, Lausanne, Bern, Zug, Lugano, etc.) where the company has a Swiss office. Hybrid and fully-remote work modes are both acceptable, but the role must be anchored to Switzerland — not 'remote anywhere in EU' or 'remote from any office.' Roles based outside Switzerland should score 1-3 regardless of how strong the company or role looks otherwise. Web3/crypto experience is welcome but not required — fintech, banking, insurance, and operations-heavy tech roles are equally valued.
-
-OVERRIDE the default scoring scale for this profile:
-- Score 7-9: Senior PM/PO role in Switzerland, hybrid or remote, with fintech/banking/Web3/AI/insurance/ops-tech/B2B SaaS context — seniority and Swiss anchoring matter most
-- Score 6-7: PM/PO role in Switzerland, hybrid or remote, any vertical (food-tech, logistics, healthcare ops, government digital) — Swiss presence alone is enough to qualify
-- Score 1-3: role based outside Switzerland, pure on-site with no hybrid option, or non-PM/PO title""",
-    allowed_countries=["Switzerland"],
-    excluded_sectors=["pharma", "retail", "manufacturing", "government"],
-    excluded_languages=["german"],
-)
-
-# ---------------------------------------------------------------------------
-# Profil unifié expérimental — see conversation 2026-05-01
-# Tests whether a single rich scoring_context can replace the WEB3_REMOTE +
-# CH_HYBRID multi-profile approach. Uses the LLM scoring_context as the primary
-# preference-modelling mechanism with minimal hard exclusions in pre_filter.
-# ---------------------------------------------------------------------------
+# The single search profile the app manages. A rich scoring_context is the
+# primary preference-modelling mechanism; pre_filter carries only hard exclusions.
 
 UNIFIED_JC = SearchProfile(
     id="unified_jc",
@@ -407,8 +312,7 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
 ACTIVE_PROFILE: SearchProfile = UNIFIED_JC
 ACTIVE_PROFILE_ID: str = UNIFIED_JC.id
 
-# Only the active profile is surfaced. Dormant profiles stay defined
-# above but are intentionally excluded from this registry.
+# The active profile is the single source of truth for the app.
 ALL_PROFILES: dict[str, SearchProfile] = {
     UNIFIED_JC.id: UNIFIED_JC,
 }

@@ -2342,12 +2342,6 @@ def test_all_profiles_has_only_unified_jc():
     assert set(ALL_PROFILES.keys()) == {"unified_jc"}
 
 
-def test_dormant_profiles_still_importable():
-    from profiles import WEB3_REMOTE, CH_HYBRID
-    assert WEB3_REMOTE.id == "web3_remote"
-    assert CH_HYBRID.id == "ch_hybrid"
-
-
 def test_default_profile_id_is_unified_jc():
     from profiles import DEFAULT_PROFILE_ID
     assert DEFAULT_PROFILE_ID == "unified_jc"
