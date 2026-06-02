@@ -509,7 +509,9 @@ def _call_groq_fallback_chain(messages: list,
             return raw, model
         except Exception as e:
             err = str(e)
-            if any(x in err for x in ("exhausted", "rate limit persistant", "not available", "request too large")):
+            if any(x in err for x in ("exhausted", "rate limit persistant", "not available",
+                                       "request too large", "access denied",
+                                       "401", "403", "api key", "unauthorized")):
                 print(f"  ⚠️  {model} unavailable/exhausted — essai modèle suivant")
                 last_err = e
             else:

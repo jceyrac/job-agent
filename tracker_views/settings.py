@@ -95,17 +95,11 @@ def _render_run_controls(db):
         mins, secs = divmod(elapsed, 60)
         st.info(f"⏳ **{label.title()}** running — {mins}m {secs}s elapsed")
 
-        # Read any new output
+        # Read any new output (stderr is merged into stdout via Popen)
         try:
             new_out = _read_available(proc.stdout)
             if new_out:
                 st.session_state.bg_output += new_out
-        except Exception:
-            pass
-        try:
-            new_err = _read_available(proc.stderr)
-            if new_err:
-                st.session_state.bg_output += new_err
         except Exception:
             pass
 
@@ -140,15 +134,9 @@ def _render_run_controls(db):
     # ── If a process just finished, show results ─────────────────────────
     if proc is not None and proc.poll() is not None:
         ret = proc.returncode
-        # Read any remaining output
+        # Read any remaining output (stderr is merged into stdout via Popen)
         try:
             remaining = proc.stdout.read()
-            if remaining:
-                st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
-        except Exception:
-            pass
-        try:
-            remaining = proc.stderr.read()
             if remaining:
                 st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
         except Exception:
@@ -179,7 +167,7 @@ def _render_run_controls(db):
         if st.button("🕸 Run scrape", use_container_width=True,
                      help="Fetch new jobs from all enabled scrapers. Can be stopped."):
             proc = subprocess.Popen(
-                [sys.executable, "scrape.py"],
+                [sys.executable, "-u", "scrape.py"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=False,  # binary mode for non-blocking reads
             )
@@ -194,8 +182,8 @@ def _render_run_controls(db):
                      help="Score all unscored jobs for the active profile. Can be stopped."):
             active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
             proc = subprocess.Popen(
-                [sys.executable, "score.py", "--profile", active_id],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                [sys.executable, "-u", "score.py", "--profile", active_id],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=False,
             )
             st.session_state.bg_process = proc
