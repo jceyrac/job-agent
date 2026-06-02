@@ -14,6 +14,15 @@ load_dotenv()
 api_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_APIKEY")
 client = Groq(api_key=api_key, max_retries=0)
 
+
+def reload_client() -> None:
+    """Rebuild the Groq client from the current environment. Call after a key
+    is set at runtime (onboarding / Settings) so the in-process client picks it
+    up without restarting Streamlit."""
+    global client
+    client = Groq(api_key=os.getenv("GROQ_API_KEY") or os.getenv("GROQ_APIKEY"),
+                  max_retries=0)
+
 deepseek_api_key = os.environ.get("DEEPSEEK_API_KEY")
 _deepseek_client: OpenAI | None = None
 if deepseek_api_key:

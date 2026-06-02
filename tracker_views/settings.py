@@ -8,7 +8,7 @@ import streamlit as st
 from dotenv import load_dotenv
 load_dotenv()
 
-from tracker_views.shared import ensure_db, get_db, SECTOR_LABELS
+from tracker_views.shared import ensure_db, get_db, set_secret, SECTOR_LABELS
 
 SECRET_SECTOR_CODES = list(SECTOR_LABELS.values())
 
@@ -30,26 +30,6 @@ _SETUP_ADVANCED_VARS = [
     ("JOPLIN_TOKEN",     "Joplin Web Clipper token",                 False),
     ("X_RAPIDAPI_KEY",   "RapidAPI key (Wellfound scraper)",         False),
 ]
-
-
-def _upsert_env(key: str, value: str) -> None:
-    """Upsert one KEY=VALUE line in .env, preserving all other lines."""
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    lines: list[str] = []
-    found = False
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                stripped = line.strip()
-                if stripped.startswith(f"{key}=") or stripped.startswith(f"# {key}="):
-                    lines.append(f"{key}={value}\n")
-                    found = True
-                else:
-                    lines.append(line)
-    if not found:
-        lines.append(f"{key}={value}\n")
-    with open(env_path, "w") as f:
-        f.writelines(lines)
 
 
 def _textarea_to_list(value: str) -> list[str]:
@@ -129,8 +109,7 @@ def _render_setup(db):
             with c3:
                 if st.button("Save", key=f"save_{key}"):
                     if new_val.strip():
-                        _upsert_env(key, new_val.strip())
-                        os.environ[key] = new_val.strip()
+                        set_secret(key, new_val.strip())
                         st.success(f"{key} saved to .env.")
                         st.rerun()
 
@@ -155,8 +134,7 @@ def _render_setup(db):
             with c3:
                 if st.button("Save", key=f"save_{key}"):
                     if new_val.strip():
-                        _upsert_env(key, new_val.strip())
-                        os.environ[key] = new_val.strip()
+                        set_secret(key, new_val.strip())
                         st.success(f"{key} saved to .env.")
                         st.rerun()
 
@@ -177,8 +155,7 @@ def _render_setup(db):
                 with c3:
                     if st.button("Save", key=f"save_{key}"):
                         if new_val.strip():
-                            _upsert_env(key, new_val.strip())
-                            os.environ[key] = new_val.strip()
+                            set_secret(key, new_val.strip())
                             st.success(f"{key} saved to .env.")
                             st.rerun()
 

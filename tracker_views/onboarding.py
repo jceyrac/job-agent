@@ -6,7 +6,7 @@ Flow: Template → Questionnaire → CV → Generate → Review/Refine → Save
 import sys
 import streamlit as st
 
-from tracker_views.shared import ensure_db, get_db, SECTOR_LABELS, COUNTRY_OPTIONS
+from tracker_views.shared import get_db, set_secret, env_is_set, SECTOR_LABELS, COUNTRY_OPTIONS
 
 # ── Template defaults ─────────────────────────────────────────────────────
 # Each template pre-fills the questionnaire dict.  Empty fields use the
@@ -352,17 +352,31 @@ def _render_generate():
     if cv_text:
         st.caption(f"CV: {len(cv_text):,} characters of text extracted")
 
-    # Guard: GROQ_API_KEY must be set
-    import os
-    if not os.getenv("GROQ_API_KEY"):
-        st.error(
-            "⚠️  Groq API key is not set.  The profile generator needs it "
-            "to write your scoring rubric.\n\n"
-            "Go to **Settings → 🔧 Setup** and add your Groq API key, "
-            "then return here."
+    # Guard: GROQ_API_KEY must be set — offer inline entry (Settings is
+    # unreachable during first-run gating, so the user must set it here).
+    if not env_is_set("GROQ_API_KEY"):
+        st.info(
+            "To write your scoring rubric, the app needs a free Groq API key. "
+            "It's used only on your machine."
         )
+        st.markdown(
+            "Create a free account (no credit card) and generate a key at "
+            "[console.groq.com/keys](https://console.groq.com/keys) — it starts "
+            "with `gsk_`."
+        )
+        new_key = st.text_input("Groq API key", type="password",
+                                placeholder="gsk_…", label_visibility="collapsed")
+        c1, c2 = st.columns([1, 4])
+        with c1:
+            if st.button("Save key", type="primary"):
+                if new_key.strip():
+                    set_secret("GROQ_API_KEY", new_key)
+                    st.success("Key saved.")
+                    st.rerun()
+                else:
+                    st.warning("Paste a key first.")
         _back_button(3)
-        return
+        return   # do not show Generate until the key is set
 
     if "generated_criteria" not in st.session_state:
         if st.button("✨ Generate my profile", use_container_width=True, type="primary"):
@@ -375,13 +389,20 @@ def _render_generate():
                     st.rerun()
                 except Exception as e:
                     msg = str(e)
-                    st.error(
-                        f"Generation failed: {msg}\n\n"
-                        "This is usually a temporary quota issue. "
-                        "Check your API key in Settings → Setup and try again."
-                    )
-                    if st.button("Retry"):
+                    # Distinguish auth failures from quota/other errors
+                    if any(token in msg.lower() for token in ("401", "invalid", "api key", "unauthorized")):
+                        st.error(
+                            f"Generation failed: {msg}\n\n"
+                            "That key didn't work — re-enter it below."
+                        )
                         st.rerun()
+                    else:
+                        st.error(
+                            f"Generation failed: {msg}\n\n"
+                            "This is usually a temporary quota issue. Try again."
+                        )
+                        if st.button("Retry"):
+                            st.rerun()
     else:
         st.success("Profile generated!  Proceed to review →")
         if st.button("Review →", use_container_width=True, type="primary"):
@@ -518,9 +539,8 @@ def _render_save():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render():
-    ensure_db()
-    # Don't gate on onboarding_complete here — this page IS the wizard.
-    # Gating is in tracker.py (Prompt 4).
+    # Don't gate on DB existence or onboarding_complete here — this page IS the
+    # wizard. It creates the DB on save. Gating is in tracker.py (Prompt 4).
 
     step = st.session_state.get("onboarding_step", 0)
 

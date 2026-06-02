@@ -70,7 +70,17 @@ def extract_cv_text_from_bytes(data: bytes, filename: str) -> str:
         except Exception:
             pass
 
-        return ""  # neither library available
+        try:
+            import PyPDF2
+            from io import BytesIO
+            reader = PyPDF2.PdfReader(BytesIO(data))
+            return "\n".join(
+                page.extract_text() or "" for page in reader.pages
+            )
+        except Exception:
+            pass
+
+        return ""  # no PDF library available
 
     # ── Plain text / Markdown ─────────────────────────────────────────────
     if ext in (".txt", ".md", ".markdown", ".rst", ""):
