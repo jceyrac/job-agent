@@ -2,6 +2,7 @@ import importlib
 import os
 import pkgutil
 import re
+import time
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -130,6 +131,7 @@ def dedupe_against_db(jobs: list[JobPosting], storage: JobStorage) -> list[JobPo
 
 
 def main():
+    t0 = time.monotonic()
     db = JobStorage(DB_PATH)
 
     # JobFilter built from the active profile's search inputs, resolved from DB.
@@ -196,8 +198,9 @@ def main():
         total_new += batch_new
         print(f"  → {batch_new} new saved to DB, {len(unique_batch) - batch_new} already in DB")
 
+    elapsed = round(time.monotonic() - t0, 1)
     already_count = total_fetched - total_new
-    print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB")
+    print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB ({elapsed:.0f}s)")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
 
@@ -207,6 +210,7 @@ def main():
         jobs_scored=0,
         jobs_above_threshold=0,
         status="scraped",
+        duration_seconds=elapsed,
     )
 
 
