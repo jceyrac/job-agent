@@ -532,7 +532,7 @@ def _render_save():
         for key in ["onboarding_step", "q", "cv_text", "generated_criteria"]:
             st.session_state.pop(key, None)
         st.cache_data.clear()
-        st.switch_page("tracker_views/dashboard.py")
+        st.rerun()
 
     _back_button(5)
 
