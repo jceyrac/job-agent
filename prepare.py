@@ -26,14 +26,13 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
+from paths import DB_PATH, DATA_DIR
 from profiles import ALL_PROFILES
 from scorer import (
     _call_groq_fallback_chain,
     _call_deepseek,
 )
 from storage import JobStorage
-
-DB_PATH = "data/jobs.db"
 
 # ---------------------------------------------------------------------------
 # Model chains for preparation tasks
@@ -205,7 +204,7 @@ def _load_cv_bullets(db) -> str:
     2. data/cv_bullets.txt (local gitignored, one bullet per line)
     3. data/cv_bullets.sample.txt (committed neutral template)
     """
-    data_dir = os.path.join(os.path.dirname(__file__), "data")
+    data_dir = DATA_DIR
 
     # 1. DOCX path from config
     docx_path = db.get_config("cv.master_path")

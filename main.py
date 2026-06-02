@@ -8,10 +8,8 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
+from paths import DB_PATH
 from profiles import DEFAULT_PROFILE_ID
-from storage import JobStorage
-
-DB_PATH = "data/jobs.db"
 
 
 def _ts() -> str:

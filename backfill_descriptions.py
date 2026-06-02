@@ -6,7 +6,7 @@ import sqlite3
 import time
 import sys
 
-DB_PATH = "data/jobs.db"
+from paths import DB_PATH
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",

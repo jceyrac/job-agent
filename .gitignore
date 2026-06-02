@@ -12,3 +12,6 @@ __pycache__/
 *.pyc
 docker-compose.override.yml
 claude-deepseek.sh
+
+# Alternate data directories for testing (JOB_AGENT_DATA_DIR=data_test)
+/data_*/

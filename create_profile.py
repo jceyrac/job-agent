@@ -11,10 +11,9 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
+from paths import DB_PATH
 from profiles import SearchProfile
 from storage import JobStorage
-
-DB_PATH = "data/jobs.db"
 
 WORK_MODES   = ["remote", "hybrid", "on-site", "unknown"]
 GEO_ZONES    = ["europe", "global_remote", "us_only", "apac", "latam", "unknown"]

@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "jobs.db")
+from paths import DB_PATH
 
 MIGRATION_SQL = """
 UPDATE job_tracking

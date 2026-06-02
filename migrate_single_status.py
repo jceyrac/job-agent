@@ -3,7 +3,7 @@
 import sqlite3
 import sys
 
-DB_PATH = "data/jobs.db"
+from paths import DB_PATH
 
 
 def run(db_path: str) -> None:
