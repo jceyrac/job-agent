@@ -285,6 +285,7 @@ def main():
         return
 
     profile = _resolve_profile(args.profile)
+    t0 = time.monotonic()
     db.upsert_profile(profile)
     print(f"Profile: {profile.name} ({profile.id})")
     denylist = getattr(profile, "denylisted_companies", []) or []
@@ -441,6 +442,7 @@ def main():
         jobs_scored=scored_count,
         jobs_above_threshold=len(digest_jobs),
         status="success" if error_count == 0 else "partial",
+        duration_seconds=round(time.monotonic() - t0, 1),
     )
 
     # ── JSON output ───────────────────────────────────────────────────────────
