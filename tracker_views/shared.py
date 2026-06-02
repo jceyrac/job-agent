@@ -83,6 +83,47 @@ def ensure_db():
         st.stop()
 
 
+# ── Secret management (shared by Settings and onboarding) ────────────────────
+
+def env_is_set(key: str) -> bool:
+    """Return True if the env var is set and non-empty."""
+    return bool(os.getenv(key))
+
+
+def upsert_env(key: str, value: str) -> None:
+    """Upsert one KEY=VALUE line in repo-root .env, preserving all other lines."""
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    lines: list[str] = []
+    found = False
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith(f"{key}=") or stripped.startswith(f"# {key}="):
+                    lines.append(f"{key}={value}\n")
+                    found = True
+                else:
+                    lines.append(line)
+    if not found:
+        lines.append(f"{key}={value}\n")
+    with open(env_path, "w") as f:
+        f.writelines(lines)
+
+
+def set_secret(key: str, value: str) -> None:
+    """Persist a secret to .env AND os.environ, then refresh the scorer's Groq
+    client so in-process callers (wizard, Settings) see it immediately.
+    Never logs or returns the value."""
+    value = value.strip()
+    upsert_env(key, value)
+    os.environ[key] = value
+    try:
+        from scorer import reload_client  # local import: avoid load cost/cycle
+        reload_client()
+    except Exception:
+        pass  # scorer import/refresh best-effort; .env+environ already set
+
+
 # ── Cached data loaders ─────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=60, show_spinner=False)
