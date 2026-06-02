@@ -16,11 +16,22 @@ class BaseScraper(ABC):
     def __init__(self, storage: JobStorage = None):
         self._storage = storage
 
+    @classmethod
+    def enabled_config_key(cls) -> str:
+        """Single source of truth for the scraper.enabled config key."""
+        slug = cls.SOURCE_NAME.lower().replace(" ", "_").replace(":", "_")
+        return f"scraper.{slug}.enabled"
+
+    @classmethod
+    def _config_prefix(cls) -> str:
+        """Config key prefix for this scraper (without trailing dot)."""
+        slug = cls.SOURCE_NAME.lower().replace(" ", "_").replace(":", "_")
+        return f"scraper.{slug}"
+
     def is_enabled(self) -> bool:
         if self._storage is None:
             return self.ENABLED
-        key = f"scraper.{self.SOURCE_NAME.lower().replace(' ', '_').replace(':', '_')}.enabled"
-        val = self._storage.get_config(key)
+        val = self._storage.get_config(self.enabled_config_key())
         if val is None:
             return self.ENABLED
         return val.lower() == "true"
@@ -28,7 +39,7 @@ class BaseScraper(ABC):
     def disable(self, reason: str) -> None:
         if self._storage is None:
             return
-        prefix = f"scraper.{self.SOURCE_NAME.lower().replace(' ', '_').replace(':', '_')}"
+        prefix = self._config_prefix()
         self._storage.set_config(f"{prefix}.enabled", "false")
         self._storage.set_config(f"{prefix}.disabled_reason", reason)
         print(f"  🚫 [{self.SOURCE_NAME}] auto-disabled: {reason}")

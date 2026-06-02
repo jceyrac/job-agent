@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from notifier import send_email_digest, export_joplin
-from profiles import ALL_PROFILES, get_active_profile
+from profiles import SearchProfile
 from job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
 from scorer import extract_job_fields, evaluate_for_profile
 from storage import JobStorage
@@ -241,8 +241,11 @@ def main():
                         help="Cap the number of jobs processed this run")
     args = parser.parse_args()
 
+    db = JobStorage(DB_PATH)
+
     if not args.extract and not args.profile:
-        args.profile = get_active_profile().id
+        from profiles import DEFAULT_PROFILE_ID
+        args.profile = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
 
     if args.extract and args.profile:
         print("--extract and --profile are mutually exclusive. Run them separately.")
@@ -252,30 +255,36 @@ def main():
         print("--mock and --rescore are mutually exclusive.")
         sys.exit(1)
 
+    if not os.path.exists(DB_PATH):
+        print("DB not found — run scrape.py first.")
+        sys.exit(1)
+
+    # ── Resolve profile: DB first, code object as fallback/seed ──────────
+    from profiles import load_active_profile, ALL_PROFILES as _ALL, DEFAULT_PROFILE_ID as _DEF
+
+    def _resolve_profile(pid: str):
+        row = db.get_profile(pid)
+        if row:
+            return SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
+        if pid in _ALL:
+            p = _ALL[pid]
+            db.upsert_profile(p)
+            return p
+        print(f"Unknown profile '{pid}'. Valid in code: {list(_ALL.keys())}")
+        sys.exit(1)
+
     if args.mock:
         if not args.profile:
             print("--mock requires --profile.")
             sys.exit(1)
-        if args.profile not in ALL_PROFILES:
-            print(f"Unknown profile '{args.profile}'. Valid: {list(ALL_PROFILES.keys())}")
-            sys.exit(1)
-        _run_mock(ALL_PROFILES[args.profile])
+        _run_mock(_resolve_profile(args.profile))
         return
-
-    if not os.path.exists(DB_PATH):
-        print("DB not found — run scrape.py first.")
-        sys.exit(1)
 
     if args.extract:
         _run_extraction(args.limit)
         return
 
-    if args.profile not in ALL_PROFILES:
-        print(f"Unknown profile '{args.profile}'. Valid: {list(ALL_PROFILES.keys())}")
-        sys.exit(1)
-
-    profile = ALL_PROFILES[args.profile]
-    db = JobStorage(DB_PATH)
+    profile = _resolve_profile(args.profile)
     db.upsert_profile(profile)
     print(f"Profile: {profile.name} ({profile.id})")
     denylist = getattr(profile, "denylisted_companies", []) or []

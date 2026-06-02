@@ -790,6 +790,19 @@ class JobStorage:
                 (profile.id, profile.name, criteria),
             )
 
+    def get_profile(self, profile_id: str) -> dict | None:
+        """Return a single profile row with parsed criteria, or None."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, name, criteria FROM search_profiles WHERE id = ?",
+                (profile_id,),
+            ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["criteria"] = json.loads(d["criteria"]) if d.get("criteria") else {}
+        return d
+
     # ------------------------------------------------------------------
     # Lecture
     # ------------------------------------------------------------------
