@@ -11,7 +11,7 @@ import sqlite3
 from collections import Counter
 from datetime import date
 
-DB_PATH = "data/jobs.db"
+from paths import DB_PATH
 OUTPUT_DIR = "outputs/preference_reports"
 
 STOPWORDS = {

@@ -5,11 +5,10 @@ from datetime import date, timedelta
 
 import streamlit as st
 
+from paths import DB_PATH
 from storage import JobStorage
 
 # ── Constants ───────────────────────────────────────────────────────────────────
-
-DB_PATH = "data/jobs.db"
 
 COUNTRY_OPTIONS = [
     "Switzerland", "Germany", "France", "United Kingdom", "Ireland",

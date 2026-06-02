@@ -2,6 +2,8 @@
 import os
 import streamlit as st
 
+from paths import DB_PATH
+
 st.set_page_config(page_title="Job Tracker", layout="wide", page_icon="💼")
 
 st.html("""
@@ -15,7 +17,6 @@ st.html("""
 """)
 
 # ── First-run gating ───────────────────────────────────────────────────────
-DB_PATH = "data/jobs.db"
 
 
 def _is_onboarded() -> bool:

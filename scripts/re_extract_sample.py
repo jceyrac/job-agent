@@ -11,9 +11,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import JobPosting
+from paths import DB_PATH
 from scorer import extract_job_fields
-
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "jobs.db")
 SAMPLE_SIZE = 10
 
 

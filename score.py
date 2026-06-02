@@ -10,12 +10,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from notifier import send_email_digest, export_joplin
+from paths import DB_PATH
 from profiles import SearchProfile
 from job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
 from scorer import extract_job_fields, evaluate_for_profile
 from storage import JobStorage
-
-DB_PATH = "data/jobs.db"
 
 MOCK_JOBS = [
     {

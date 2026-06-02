@@ -8,7 +8,7 @@ are missing — never raises, always returns a string (possibly empty).
 
 import os
 
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+from paths import DATA_DIR as _DATA_DIR
 
 
 def extract_cv_text_from_bytes(data: bytes, filename: str) -> str:

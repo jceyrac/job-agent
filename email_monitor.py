@@ -27,6 +27,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from groq import Groq
+from paths import DB_PATH
 
 from storage import JobStorage
 
@@ -457,8 +458,8 @@ def main():
         help="Polling interval in seconds (default: 300)",
     )
     parser.add_argument(
-        "--db", default="data/jobs.db",
-        help="Path to SQLite database",
+        "--db", default=None,
+        help="Path to SQLite database (default: JOB_AGENT_DATA_DIR/jobs.db)",
     )
     args = parser.parse_args()
 
@@ -466,7 +467,7 @@ def main():
         logger.error("GROQ_API_KEY env variable is required for classification")
         sys.exit(1)
 
-    db = JobStorage(args.db)
+    db = JobStorage(args.db or DB_PATH)
 
     if args.dry_run:
         monitor = EmailMonitor(db)

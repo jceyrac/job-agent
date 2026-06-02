@@ -9,9 +9,8 @@ load_dotenv()
 
 from filters import JobFilterEngine
 from models import JobFilter, JobPosting
+from paths import DB_PATH
 from storage import JobStorage
-
-DB_PATH = "data/jobs.db"
 
 
 def discover_scrapers():

@@ -53,7 +53,7 @@ COUNTRY_FLAG = {
     "Australia": "🇦🇺", "Japan": "🇯🇵",
 }
 
-DB_PATH = "data/jobs.db"
+from paths import DB_PATH
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Job Tracker", layout="wide", page_icon="💼")

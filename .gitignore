@@ -11,3 +11,6 @@ __pycache__/
 .env
 *.pyc
 docker-compose.override.yml
+
+# Alternate data directories for testing (JOB_AGENT_DATA_DIR=data_test)
+/data_*/

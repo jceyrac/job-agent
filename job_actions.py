@@ -7,11 +7,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from models import JobPosting
+from paths import DB_PATH
 from profiles import ALL_PROFILES
 from scorer import extract_job_fields, evaluate_for_profile
 from storage import JobStorage
-
-DB_PATH = "data/jobs.db"
 
 
 # ---------------------------------------------------------------------------

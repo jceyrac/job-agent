@@ -7,7 +7,7 @@ Schéma 3 tables :
   - job_scores    : scoring par job × profil, statut de suivi
 
 Usage typique dans main.py :
-    db = JobStorage("data/jobs.db")
+    db = JobStorage()
     db.upsert_profile(profile)
     new, cached = db.split_new_cached(all_jobs, profile.id)
     # scorer uniquement `new`
@@ -22,6 +22,8 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional
+
+from paths import DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +282,7 @@ CREATE TABLE IF NOT EXISTS runs (
 
 class JobStorage:
 
-    def __init__(self, db_path: str = "data/jobs.db"):
+    def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
         # For :memory: databases each new connection is a separate empty DB,
         # so we keep a single persistent connection for the lifetime of this object.
