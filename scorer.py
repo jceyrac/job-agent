@@ -31,24 +31,34 @@ if deepseek_api_key:
         base_url="https://api.deepseek.com/v1",
     )
 
-FALLBACK_MODELS = [
-    "llama-3.3-70b-versatile",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "groq/compound",
-    "llama-3.1-8b-instant",
-]
+def _parse_model_list(env_var: str, fallback: str) -> list[str]:
+    """Parse a comma-separated model list from env, or use the fallback."""
+    val = os.getenv(env_var)
+    if val:
+        return [m.strip() for m in val.split(",") if m.strip()]
+    return [m.strip() for m in fallback.split(",")]
 
-# Extraction models — Groq primary + fallback, then DeepSeek as last resort
-EXTRACTION_MODELS = [
-    "llama-3.3-70b-versatile",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-]
 
-# Tier 1 evaluation models — small/cheap only, never 70b
-EVALUATION_MODELS = [
-    "llama-3.1-8b-instant",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-]
+# Model lists — env-overridable so they can be updated without a code commit.
+# Set GROQ_FALLBACK_MODELS, GROQ_EXTRACTION_MODELS, GROQ_EVALUATION_MODELS
+# as comma-separated lists in .env.
+
+FALLBACK_MODELS = _parse_model_list("GROQ_FALLBACK_MODELS",
+    "llama-3.3-70b-versatile,"
+    "meta-llama/llama-4-scout-17b-16e-instruct,"
+    "groq/compound,"
+    "llama-3.1-8b-instant")
+
+EXTRACTION_MODELS = _parse_model_list("GROQ_EXTRACTION_MODELS",
+    "llama-3.3-70b-versatile,"
+    "meta-llama/llama-4-scout-17b-16e-instruct")
+
+EVALUATION_MODELS = _parse_model_list("GROQ_EVALUATION_MODELS",
+    "llama-3.1-8b-instant,"
+    "meta-llama/llama-4-scout-17b-16e-instruct")
+
+# DeepSeek model — also env-overridable
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
 SYSTEM_PROMPT = """You are an expert recruiter scoring job postings for a Senior Product Manager with expertise in Web3, DeFi, AI, and Crypto.
 
@@ -532,9 +542,11 @@ def generate_json(messages: list, max_tokens: int = 3000) -> str:
 # DeepSeek caller (last-resort for extraction)
 # ---------------------------------------------------------------------------
 
-def _call_deepseek(messages: list, model: str = "deepseek-v4-pro",
+def _call_deepseek(messages: list, model: str | None = None,
                    json_mode: bool = True, max_tokens: int = 300) -> str:
     """Call DeepSeek via OpenAI-compatible endpoint. Returns raw response text."""
+    if model is None:
+        model = DEEPSEEK_MODEL
     if _deepseek_client is None:
         raise Exception("DEEPSEEK_API_KEY not set — cannot call DeepSeek")
 
@@ -753,11 +765,26 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
     if raw is None:
         try:
             raw = _call_deepseek(messages)
-            model = "deepseek-v4-pro"
+            model = DEEPSEEK_MODEL
             time.sleep(1)  # rate-limit safety
         except Exception as e:
             print(f"  ❌  DeepSeek extraction failed for '{job.title}': {e}")
             return None
+
+    # DeepSeek reasoning models sometimes return empty — retry without json_mode
+    if raw is not None and not raw.strip():
+        print(f"  ⚠️  DeepSeek returned empty — retrying without json_mode…")
+        try:
+            raw = _call_deepseek(messages, json_mode=False, max_tokens=600)
+            model = DEEPSEEK_MODEL
+            time.sleep(1)
+        except Exception as e:
+            print(f"  ❌  DeepSeek retry failed for '{job.title}': {e}")
+            return None
+
+    if raw is None or not raw.strip():
+        print(f"  ❌  Empty response from all models for '{job.title}'")
+        return None
 
     try:
         result = _parse_extraction_result(raw)

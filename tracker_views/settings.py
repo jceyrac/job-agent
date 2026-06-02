@@ -64,16 +64,6 @@ def _render_run_controls(db):
 
     st.subheader("🚀 Run")
 
-    # Unscored count
-    with db._conn() as conn:
-        total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        scored_distinct = conn.execute(
-            "SELECT COUNT(DISTINCT job_id) FROM job_scores"
-        ).fetchone()[0]
-        unscored = total_jobs - scored_distinct
-
-    st.metric("Unscored jobs", unscored)
-
     # ── Session-state keys for background processes ──────────────────────
     if "bg_process" not in st.session_state:
         st.session_state.bg_process = None       # Popen | None
@@ -88,6 +78,15 @@ def _render_run_controls(db):
     label = st.session_state.bg_label
     bg_output = st.session_state.bg_output
     bg_start = st.session_state.bg_start
+
+    # ── Live metric (always fresh — recomputed on every render) ──────────
+    with db._conn() as conn:
+        total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        scored_distinct = conn.execute(
+            "SELECT COUNT(DISTINCT job_id) FROM job_scores"
+        ).fetchone()[0]
+        unscored = total_jobs - scored_distinct
+    st.metric("Unscored jobs", unscored)
 
     # ── If a process is running, show its status ─────────────────────────
     if proc is not None and proc.poll() is None:
