@@ -500,6 +500,14 @@ def _call_groq_fallback_chain(messages: list,
     raise Exception("All Groq models exhausted for today. Retry tomorrow.") from last_err
 
 
+def generate_json(messages: list, max_tokens: int = 3000) -> str:
+    """Public entry for non-scoring JSON generation (onboarding, etc.).
+    Uses the same FALLBACK_MODELS chain + backoff as scoring."""
+    raw, _model = _call_groq_fallback_chain(messages, json_mode=True,
+                                             max_tokens=max_tokens)
+    return raw
+
+
 # ---------------------------------------------------------------------------
 # DeepSeek caller (last-resort for extraction)
 # ---------------------------------------------------------------------------
