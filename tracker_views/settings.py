@@ -216,7 +216,26 @@ def render():
     _render_run_controls(db)
     _render_profile_editor(db)
     _render_scraper_toggles(db)
+    _render_reonboard(db)
     _render_stats_actions(db)
+
+
+def _render_reonboard(db):
+    """Re-run the onboarding wizard to regenerate the profile."""
+    with st.expander("🔄 Re-run onboarding / regenerate profile", expanded=False):
+        st.caption(
+            "Return to the onboarding wizard to regenerate your profile's "
+            "scoring rubric.  Your current profile is NOT deleted until "
+            "you save a new one in the wizard."
+        )
+        confirm = st.checkbox("Yes, I want to re-run the onboarding wizard.")
+        if confirm and st.button("Re-run onboarding", use_container_width=True):
+            db.set_config("onboarding_complete", "false")
+            st.session_state.pop("onboarding_step", None)
+            st.session_state.pop("q", None)
+            st.session_state.pop("cv_text", None)
+            st.session_state.pop("generated_criteria", None)
+            st.switch_page("tracker_views/onboarding.py")
 
 
 def _render_profile_editor(db):

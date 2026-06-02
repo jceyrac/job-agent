@@ -5,6 +5,7 @@ data/*.bak.*
 data/.fuse_hidden*
 data/cv_bullets.txt
 data/cv_master.docx
+data/cv_master.pdf
 __pycache__/
 .venv/
 .env
