@@ -277,6 +277,18 @@ CREATE TABLE IF NOT EXISTS runs (
 
 
 # ---------------------------------------------------------------------------
+# ── Tiny config helpers for migrations (conn-level, no JobStorage needed) ────
+
+def _config_bool(conn, key: str) -> bool:
+    return conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone() is not None
+
+
+def _set_config(conn, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value)
+    )
+
+
 # JobStorage
 # ---------------------------------------------------------------------------
 
@@ -658,17 +670,33 @@ class JobStorage:
                     pass  # already added
 
             # Phase 5 — drop company-level columns from jobs (SQLite 3.35+)
-            jobs_cols_current = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
-            for col in ("company_country", "industry_sector", "company_size"):
-                if col in jobs_cols_current:
+            # macOS ships SQLite < 3.35, so DROP COLUMN is unsupported there.
+            # The columns are dead weight (data was migrated to companies table);
+            # log once, then skip future attempts.
+            if not _config_bool(conn, "migration.phase5.attempted"):
+                jobs_cols_current = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+                phase5_cols = {"company_country", "industry_sector", "company_size"}
+                remaining = phase5_cols & jobs_cols_current
+                if remaining:
                     try:
-                        conn.execute(f"ALTER TABLE jobs DROP COLUMN {col}")
-                        logger.info(f"[Storage] Phase 5 cleanup: dropped {col} from jobs")
+                        # Try dropping one column to check SQLite version support
+                        test_col = next(iter(remaining))
+                        conn.execute(f"ALTER TABLE jobs DROP COLUMN {test_col}")
+                        logger.info(f"[Storage] Phase 5 cleanup: dropped {test_col} from jobs")
+                        # Drop any others that remain
+                        for col in remaining - {test_col}:
+                            if col in {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}:
+                                try:
+                                    conn.execute(f"ALTER TABLE jobs DROP COLUMN {col}")
+                                    logger.info(f"[Storage] Phase 5 cleanup: dropped {col} from jobs")
+                                except sqlite3.OperationalError:
+                                    pass
                     except sqlite3.OperationalError:
-                        logger.warning(
-                            f"[Storage] Phase 5: cannot drop {col} (SQLite < 3.35) — "
-                            f"column left as dead weight"
+                        logger.info(
+                            f"[Storage] Phase 5: columns {', '.join(sorted(remaining))} "
+                            f"left on jobs table (SQLite < 3.35, harmless dead weight)"
                         )
+                _set_config(conn, "migration.phase5.attempted", "true")
 
             # Phase 6 — contacts + interactions tables
             existing_tables = {row[0] for row in conn.execute(
