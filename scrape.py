@@ -8,7 +8,6 @@ load_dotenv()
 
 from filters import JobFilterEngine
 from models import JobFilter, JobPosting
-from profiles import get_active_profile
 from storage import JobStorage
 
 DB_PATH = "data/jobs.db"
@@ -131,10 +130,13 @@ def dedupe_against_db(jobs: list[JobPosting], storage: JobStorage) -> list[JobPo
 
 
 def main():
-    # JobFilter built from the active profile's search inputs.
+    db = JobStorage(DB_PATH)
+
+    # JobFilter built from the active profile's search inputs, resolved from DB.
     # remote_or_hybrid=False so on-site CH jobs are kept; the profile's
     # work_mode gate runs post-scoring in score.py via allowed_work_modes.
-    profile = get_active_profile()
+    from profiles import load_active_profile
+    profile = load_active_profile(db)
     job_filter = JobFilter(
         titles=profile.scrape_titles,
         exclude=profile.scrape_exclude,
@@ -144,7 +146,6 @@ def main():
     scraper_classes = discover_scrapers()
     print(f"Scrapers found: {[s.SOURCE_NAME for s in scraper_classes]}")
 
-    db = JobStorage(DB_PATH)
     seen_urls: set[str] = set()
     total_fetched = 0
     total_new = 0
@@ -180,7 +181,7 @@ def main():
         unique_batch = dedupe_against_db(unique_batch, db)
 
         # Write batch to DB immediately
-        before_count = db.get_stats(get_active_profile().id)["total"]
+        before_count = db.get_stats(profile.id)["total"]
         for job in unique_batch:
             company_id = None
             if job.company and job.company.strip():
@@ -190,7 +191,7 @@ def main():
                     pass  # name normalizes to empty — skip company link
             db.save_unscored(job, company_id=company_id)
 
-        after_count = db.get_stats(get_active_profile().id)["total"]
+        after_count = db.get_stats(profile.id)["total"]
         batch_new = after_count - before_count
         total_new += batch_new
         print(f"  → {batch_new} new saved to DB, {len(unique_batch) - batch_new} already in DB")
@@ -201,7 +202,7 @@ def main():
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
 
     db.log_run(
-        profile_id=get_active_profile().id,
+        profile_id=profile.id,
         jobs_scraped=total_fetched,
         jobs_scored=0,
         jobs_above_threshold=0,

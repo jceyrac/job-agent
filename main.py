@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
-from profiles import get_active_profile
+from profiles import DEFAULT_PROFILE_ID
 from storage import JobStorage
 
 DB_PATH = "data/jobs.db"
@@ -19,8 +19,8 @@ def _ts() -> str:
 
 
 def main():
-    profile = get_active_profile()
     db = JobStorage(DB_PATH)
+    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
     t0 = time.monotonic()
 
     try:
@@ -34,8 +34,8 @@ def main():
         t2 = time.monotonic()
         print(f"[{_ts()}] Extraction done — {t2 - t1:.0f}s elapsed, {t2 - t0:.0f}s total")
 
-        print(f"\n[{_ts()}] === Step 3: Scoring [{profile.id}] ===")
-        subprocess.run([sys.executable, "score.py", "--profile", profile.id], check=True)
+        print(f"\n[{_ts()}] === Step 3: Scoring [{active_id}] ===")
+        subprocess.run([sys.executable, "score.py", "--profile", active_id], check=True)
         t3 = time.monotonic()
         total = t3 - t0
         print(f"[{_ts()}] Scoring done — {t3 - t2:.0f}s elapsed, {total:.0f}s total")
@@ -45,7 +45,7 @@ def main():
     except Exception as e:
         total = time.monotonic() - t0
         db.log_run(
-            profile_id=profile.id if profile else "unknown",
+            profile_id=active_id,
             jobs_scraped=0,
             jobs_scored=0,
             jobs_above_threshold=0,

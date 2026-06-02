@@ -54,6 +54,8 @@ class SearchProfile:
             "company_sizes":      self.company_sizes,
             "score_threshold":    self.score_threshold,
             "remote_or_hybrid":   self.remote_or_hybrid,
+            "scoring_context":    self.scoring_context,
+            "pre_filter":         self.pre_filter,
             "allowed_countries":    self.allowed_countries,
             "banned_countries":     self.banned_countries,
             "hybrid_ok_countries":    self.hybrid_ok_countries,
@@ -98,6 +100,19 @@ class SearchProfile:
             search_locations=criteria.get("search_locations", []),
             greenhouse_boards=criteria.get("greenhouse_boards", []),
         )
+
+
+def load_active_profile(db) -> "SearchProfile":
+    """Resolve the active profile from the DB, seeding from code on first run.
+    DB is the source of truth; ACTIVE_PROFILE (UNIFIED_JC) is the seed."""
+    pid = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    row = db.get_profile(pid)
+    if not row:
+        seed = ALL_PROFILES.get(pid, ACTIVE_PROFILE)
+        db.upsert_profile(seed)
+        db.set_config("active_profile_id", seed.id)
+        return seed
+    return SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
 
 
 # ---------------------------------------------------------------------------
