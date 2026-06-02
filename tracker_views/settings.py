@@ -1,7 +1,9 @@
 """tracker_views/settings.py — Profile management, stats, and actions."""
 import os
+import select
 import subprocess
 import sys
+import time
 
 import streamlit as st
 
@@ -37,8 +39,27 @@ def _textarea_to_list(value: str) -> list[str]:
     return [line.strip() for line in value.split("\n") if line.strip()]
 
 
+def _read_available(pipe) -> str:
+    """Read all currently available data from a subprocess pipe without blocking."""
+    import os as _os
+    chunks = []
+    fd = pipe.fileno()
+    while True:
+        ready, _, _ = select.select([pipe], [], [], 0)
+        if not ready:
+            break
+        try:
+            chunk = _os.read(fd, 65536)
+        except (ValueError, OSError):
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
 def _render_run_controls(db):
-    """Buttons to trigger scrape & score from the UI."""
+    """Buttons to trigger scrape & score from the UI with stop capability."""
     from profiles import DEFAULT_PROFILE_ID
 
     st.subheader("🚀 Run")
@@ -53,35 +74,135 @@ def _render_run_controls(db):
 
     st.metric("Unscored jobs", unscored)
 
+    # ── Session-state keys for background processes ──────────────────────
+    if "bg_process" not in st.session_state:
+        st.session_state.bg_process = None       # Popen | None
+    if "bg_label" not in st.session_state:
+        st.session_state.bg_label = ""            # "scrape" | "score"
+    if "bg_output" not in st.session_state:
+        st.session_state.bg_output = ""            # accumulated stdout+stderr
+    if "bg_start" not in st.session_state:
+        st.session_state.bg_start = 0.0
+
+    proc = st.session_state.bg_process
+    label = st.session_state.bg_label
+    bg_output = st.session_state.bg_output
+    bg_start = st.session_state.bg_start
+
+    # ── If a process is running, show its status ─────────────────────────
+    if proc is not None and proc.poll() is None:
+        elapsed = int(time.time() - bg_start)
+        mins, secs = divmod(elapsed, 60)
+        st.info(f"⏳ **{label.title()}** running — {mins}m {secs}s elapsed")
+
+        # Read any new output
+        try:
+            new_out = _read_available(proc.stdout)
+            if new_out:
+                st.session_state.bg_output += new_out
+        except Exception:
+            pass
+        try:
+            new_err = _read_available(proc.stderr)
+            if new_err:
+                st.session_state.bg_output += new_err
+        except Exception:
+            pass
+
+        if st.session_state.bg_output:
+            with st.expander("Live output", expanded=False):
+                st.text(st.session_state.bg_output[-8000:])
+
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            if st.button(f"⏹ Stop {label}", use_container_width=True, type="primary"):
+                proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                # Read any final output
+                try:
+                    remaining = proc.stdout.read()
+                    if remaining:
+                        st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+                st.session_state.bg_process = None
+                st.session_state.bg_label = ""
+                st.warning(f"{label.title()} stopped.")
+                st.rerun()
+        with c2:
+            if st.button("🔄 Refresh output", use_container_width=True):
+                st.rerun()
+        return
+
+    # ── If a process just finished, show results ─────────────────────────
+    if proc is not None and proc.poll() is not None:
+        ret = proc.returncode
+        # Read any remaining output
+        try:
+            remaining = proc.stdout.read()
+            if remaining:
+                st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        try:
+            remaining = proc.stderr.read()
+            if remaining:
+                st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
+        except Exception:
+            pass
+
+        final_output = st.session_state.bg_output
+
+        # Clean up session state
+        st.session_state.bg_process = None
+        st.session_state.bg_label = ""
+        st.session_state.bg_output = ""
+        st.session_state.bg_start = 0.0
+
+        if ret == 0:
+            st.success(f"✅ {label.title()} completed successfully!")
+        else:
+            st.error(f"❌ {label.title()} exited with code {ret}")
+
+        st.text_area(f"{label.title()} output", final_output, height=200)
+        if ret == 0:
+            st.cache_data.clear()
+            st.rerun()
+        return
+
+    # ── No process running — show launch buttons ─────────────────────────
     c1, c2 = st.columns(2)
     with c1:
         if st.button("🕸 Run scrape", use_container_width=True,
-                     help="Fetch new jobs from all enabled scrapers. Blocks the UI — this can take ~10–15 min."):
-            with st.spinner("Scraping — this can take ~10–15 min, the page is blocked until it finishes…"):
-                result = subprocess.run(
-                    [sys.executable, "scrape.py"],
-                    capture_output=True, text=True, timeout=1800,
-                )
-            st.text_area("Scrape output", result.stdout + "\n" + result.stderr, height=200)
-            if result.returncode == 0:
-                st.cache_data.clear()
-                st.rerun()
+                     help="Fetch new jobs from all enabled scrapers. Can be stopped."):
+            proc = subprocess.Popen(
+                [sys.executable, "scrape.py"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=False,  # binary mode for non-blocking reads
+            )
+            st.session_state.bg_process = proc
+            st.session_state.bg_label = "scrape"
+            st.session_state.bg_output = ""
+            st.session_state.bg_start = time.time()
+            st.rerun()
 
     with c2:
         if st.button("🎯 Run scoring", use_container_width=True,
-                     help="Score all unscored jobs for the active profile. Blocks the UI."):
+                     help="Score all unscored jobs for the active profile. Can be stopped."):
             active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
-            with st.spinner(f"Scoring [{active_id}] — this can take several minutes…"):
-                result = subprocess.run(
-                    [sys.executable, "score.py", "--profile", active_id],
-                    capture_output=True, text=True, timeout=1800,
-                )
-            st.text_area("Scoring output", result.stdout + "\n" + result.stderr, height=200)
-            if result.returncode == 0:
-                st.cache_data.clear()
-                st.rerun()
-
-    st.caption("Runs block the UI (Streamlit single-thread). Background execution is a future enhancement.")
+            proc = subprocess.Popen(
+                [sys.executable, "score.py", "--profile", active_id],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=False,
+            )
+            st.session_state.bg_process = proc
+            st.session_state.bg_label = "score"
+            st.session_state.bg_output = ""
+            st.session_state.bg_start = time.time()
+            st.rerun()
 
 
 def _render_setup(db):
