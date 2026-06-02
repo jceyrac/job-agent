@@ -389,11 +389,14 @@ def _render_generate():
                     st.rerun()
                 except Exception as e:
                     msg = str(e)
-                    # Distinguish auth failures from quota/other errors
-                    if any(token in msg.lower() for token in ("401", "invalid", "api key", "unauthorized")):
+                    # Distinguish auth/access failures from quota/other errors
+                    if any(token in msg.lower() for token in ("401", "403", "permission", "access denied",
+                                                              "invalid", "api key", "unauthorized")):
                         st.error(
                             f"Generation failed: {msg}\n\n"
-                            "That key didn't work — re-enter it below."
+                            "If this is a network/VPN restriction, try enabling a VPN "
+                            "to a supported region (e.g. United States, Europe). "
+                            "Otherwise, re-enter your key below."
                         )
                         st.rerun()
                     else:
