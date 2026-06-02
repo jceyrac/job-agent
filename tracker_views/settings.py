@@ -1,12 +1,55 @@
 """tracker_views/settings.py — Profile management, stats, and actions."""
+import os
 import subprocess
 import sys
 
 import streamlit as st
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from tracker_views.shared import ensure_db, get_db, SECTOR_LABELS
 
 SECRET_SECTOR_CODES = list(SECTOR_LABELS.values())
+
+# ── Env vars the Setup section manages ──────────────────────────────────────
+# (key, label, required)
+_SETUP_ENV_VARS = [
+    ("GROQ_API_KEY",     "Groq API key (primary scorer LLM)",        True),
+    ("GEMINI_API_KEY",   "Gemini API key (scorer fallback)",         False),
+    ("DEEPSEEK_API_KEY", "DeepSeek API key (extraction fallback)",   False),
+]
+
+_SETUP_EMAIL_VARS = [
+    ("NOTIFY_TO",        "Notification recipient email",             False),
+    ("GMAIL_FROM",       "Gmail sender address",                     False),
+    ("GMAIL_APP_PASSWORD","Gmail app password",                      False),
+]
+
+_SETUP_ADVANCED_VARS = [
+    ("JOPLIN_TOKEN",     "Joplin Web Clipper token",                 False),
+    ("X_RAPIDAPI_KEY",   "RapidAPI key (Wellfound scraper)",         False),
+]
+
+
+def _upsert_env(key: str, value: str) -> None:
+    """Upsert one KEY=VALUE line in .env, preserving all other lines."""
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    lines: list[str] = []
+    found = False
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith(f"{key}=") or stripped.startswith(f"# {key}="):
+                    lines.append(f"{key}={value}\n")
+                    found = True
+                else:
+                    lines.append(line)
+    if not found:
+        lines.append(f"{key}={value}\n")
+    with open(env_path, "w") as f:
+        f.writelines(lines)
 
 
 def _textarea_to_list(value: str) -> list[str]:
@@ -61,11 +104,115 @@ def _render_run_controls(db):
     st.caption("Runs block the UI (Streamlit single-thread). Background execution is a future enhancement.")
 
 
+def _render_setup(db):
+    """First-run Setup section: API keys, CV path, notification email.
+    Secrets go ONLY to .env, never the DB, never the screen, never logs."""
+    with st.expander("🔧 Setup", expanded=False):
+        st.caption("Configure once — applies to all future runs. Secrets are stored in .env (gitignored).")
+
+        # ── API keys ───────────────────────────────────────────────────
+        st.write("**API keys**")
+
+        for key, label, required in _SETUP_ENV_VARS:
+            current = os.getenv(key)
+            status = "✅ set" if current else ("❌ missing" if required else "⚪ not set")
+
+            c1, c2, c3 = st.columns([2, 1, 1])
+            with c1:
+                st.caption(f"{label}  _{status}_")
+            with c2:
+                new_val = st.text_input(
+                    f"{key}_input", type="password",
+                    placeholder="(paste new key)" if not current else "(set — re-enter to change)",
+                    label_visibility="collapsed",
+                )
+            with c3:
+                if st.button("Save", key=f"save_{key}"):
+                    if new_val.strip():
+                        _upsert_env(key, new_val.strip())
+                        os.environ[key] = new_val.strip()
+                        st.success(f"{key} saved to .env.")
+                        st.rerun()
+
+        # ── Email ──────────────────────────────────────────────────────
+        st.divider()
+        st.write("**Notification email**")
+
+        for key, label, _required in _SETUP_EMAIL_VARS:
+            current = os.getenv(key)
+            status = "✅ set" if current else "⚪ not set"
+            is_secret = "PASSWORD" in key
+
+            c1, c2, c3 = st.columns([2, 1, 1])
+            with c1:
+                st.caption(f"{label}  _{status}_")
+            with c2:
+                kwargs: dict = dict(placeholder="(enter value)", label_visibility="collapsed")
+                if is_secret:
+                    kwargs["type"] = "password"
+                    kwargs["placeholder"] = "(set — re-enter to change)" if current else "(enter value)"
+                new_val = st.text_input(f"{key}_input", **kwargs)
+            with c3:
+                if st.button("Save", key=f"save_{key}"):
+                    if new_val.strip():
+                        _upsert_env(key, new_val.strip())
+                        os.environ[key] = new_val.strip()
+                        st.success(f"{key} saved to .env.")
+                        st.rerun()
+
+        # ── Advanced env vars ──────────────────────────────────────────
+        with st.expander("Advanced keys"):
+            for key, label, _required in _SETUP_ADVANCED_VARS:
+                current = os.getenv(key)
+                status = "✅ set" if current else "⚪ not set"
+                c1, c2, c3 = st.columns([2, 1, 1])
+                with c1:
+                    st.caption(f"{label}  _{status}_")
+                with c2:
+                    new_val = st.text_input(
+                        f"{key}_input", type="password",
+                        placeholder="(set — re-enter to change)" if current else "(enter value)",
+                        label_visibility="collapsed",
+                    )
+                with c3:
+                    if st.button("Save", key=f"save_{key}"):
+                        if new_val.strip():
+                            _upsert_env(key, new_val.strip())
+                            os.environ[key] = new_val.strip()
+                            st.success(f"{key} saved to .env.")
+                            st.rerun()
+
+        # ── CV path ────────────────────────────────────────────────────
+        st.divider()
+        st.write("**CV / Resume**")
+        cv_path = db.get_config("cv.master_path") or ""
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            new_cv = st.text_input(
+                "cv_path_input",
+                value=cv_path,
+                placeholder="/path/to/your/cv.docx",
+                label_visibility="collapsed",
+            )
+        with c2:
+            if new_cv != cv_path and st.button("Save CV path"):
+                db.set_config("cv.master_path", new_cv.strip())
+                st.cache_data.clear()
+                st.success("CV path saved.")
+                st.rerun()
+        if cv_path:
+            if os.path.exists(cv_path):
+                st.caption(f"📄 File found: {cv_path}")
+            else:
+                st.caption(f"⚠️ File not found: {cv_path}")
+
+
 def render():
     ensure_db()
     db = get_db()
 
     st.title("⚙️ Settings")
+    _render_setup(db)
     _render_run_controls(db)
     _render_profile_editor(db)
     _render_scraper_toggles(db)
