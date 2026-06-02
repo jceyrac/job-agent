@@ -468,6 +468,15 @@ def _call_groq(messages: list, model: str, max_retries: int = 5,
                 print(f"  ⚠️  Groq timeout ({model}) — retry in {wait}s "
                       f"(tentative {attempt + 1}/{max_retries})")
                 time.sleep(wait)
+            elif "401" in err or "403" in err or "permission" in err.lower() or "access denied" in err.lower():
+                # Auth / access error — don't retry, surface immediately with context
+                raise Exception(
+                    f"Groq API access denied (HTTP {err[:80]}). "
+                    "This is usually a network/VPN restriction — Groq blocks access "
+                    "from certain countries/regions. Try enabling a VPN to a supported "
+                    "region (e.g. United States, Europe) or check your API key at "
+                    "console.groq.com."
+                ) from e
             else:
                 raise  # auth error, bad request → propagate immediately
 

@@ -382,15 +382,23 @@ def generate_profile(q: dict, cv_text: str) -> dict:
 
     try:
         generated = generate_scoring_context(q, cv_text)
-    except Exception:
-        # LLM unavailable — include a placeholder so the user can fill it in
+    except Exception as e:
+        # Re-raise auth/access errors so the wizard can surface them inline
+        # (retrying with the same key is pointless; user must fix key or VPN).
+        msg = str(e).lower()
+        if any(token in msg for token in ("401", "403", "permission", "access denied",
+                                           "invalid", "api key", "unauthorized")):
+            raise
+
+        # Non-auth error (quota, model exhausted, etc.) — include a placeholder
+        # so the user can still hand-edit their scoring context.
         generated = {
             "scoring_context": (
                 "# Scoring rubric\n\n"
-                "The LLM could not generate your scoring rubric "
-                "(API key missing or all models exhausted).  "
-                "Please hand-write your scoring criteria here, "
-                "or check your API key in Settings → Setup and re-run the wizard."
+                f"⚠️ The LLM could not generate your scoring rubric.\n\n"
+                f"**Error:** {str(e).strip()}\n\n"
+                "Please hand-write your scoring criteria below, "
+                "or fix the issue and re-run the wizard."
             ),
             "boost_keywords": [],
         }
