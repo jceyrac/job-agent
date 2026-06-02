@@ -19,15 +19,13 @@ DB_PATH = "data/jobs.db"
 
 
 def _is_onboarded() -> bool:
-    """Return True if the user has completed onboarding and has a usable profile."""
+    """Return True if the user has a usable profile (completed onboarding
+    OR a pre-existing profile with a scoring_context)."""
     if not os.path.exists(DB_PATH):
         return False
     from storage import JobStorage
     from profiles import DEFAULT_PROFILE_ID
     db = JobStorage(DB_PATH)
-    done = db.get_config("onboarding_complete")
-    if done != "true":
-        return False
     active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
     row = db.get_profile(active_id)
     if not row:
@@ -35,6 +33,10 @@ def _is_onboarded() -> bool:
     criteria = row.get("criteria", {})
     if not criteria.get("scoring_context", "").strip():
         return False
+    # If the explicit flag is missing but a usable profile exists
+    # (pre-Phase-2 user), auto-set it so the wizard doesn't show.
+    if db.get_config("onboarding_complete") != "true":
+        db.set_config("onboarding_complete", "true")
     return True
 
 
