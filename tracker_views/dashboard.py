@@ -109,7 +109,7 @@ def render():
     hot_jobs = [
         j for j in load_jobs(exclude_archived=False)
         if (j.get("score") or 0) >= 6
-        and j.get("status") not in ("rejected", "archived")
+        and j.get("status") in ("new", "ready", "queued")
     ][:10]
 
     if not hot_jobs:
