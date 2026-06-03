@@ -112,7 +112,15 @@ def load_active_profile(db) -> "SearchProfile":
         db.upsert_profile(seed)
         db.set_config("active_profile_id", seed.id)
         return seed
-    return SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
+    profile = SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
+    # Backfill scoring_context from the seed profile when the stored row
+    # predates the preference-model v3 field (onboarding gate depends on it).
+    if not profile.scoring_context.strip():
+        seed = ALL_PROFILES.get(pid, ACTIVE_PROFILE)
+        if seed and seed.scoring_context.strip():
+            profile.scoring_context = seed.scoring_context
+            db.upsert_profile(profile)
+    return profile
 
 
 # ---------------------------------------------------------------------------

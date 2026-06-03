@@ -21,18 +21,19 @@ st.html("""
 
 def _is_onboarded() -> bool:
     """Return True if the user has a usable profile (completed onboarding
-    OR a pre-existing profile with a scoring_context)."""
+    OR a pre-existing profile with a scoring_context).
+
+    Uses load_active_profile() rather than a raw DB row so that profiles
+    predating the scoring_context field get backfilled from the code seed."""
     if not os.path.exists(DB_PATH):
         return False
     from storage import JobStorage
-    from profiles import DEFAULT_PROFILE_ID
+    from profiles import load_active_profile
     db = JobStorage(DB_PATH)
-    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
-    row = db.get_profile(active_id)
-    if not row:
+    profile = load_active_profile(db)
+    if not profile:
         return False
-    criteria = row.get("criteria", {})
-    if not criteria.get("scoring_context", "").strip():
+    if not profile.scoring_context.strip():
         return False
     # If the explicit flag is missing but a usable profile exists
     # (pre-Phase-2 user), auto-set it so the wizard doesn't show.
