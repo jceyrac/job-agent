@@ -212,7 +212,6 @@ def _render_list():
         _render_card(job, apps_index=apps_index)
 
 
-@st.fragment
 def _render_card(job: dict, apps_index: dict[str, dict]):
     """Render a compact job card with unified action bar."""
     db = get_db()
