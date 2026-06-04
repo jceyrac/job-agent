@@ -10,6 +10,7 @@ load_dotenv()
 
 from paths import DB_PATH
 from profiles import DEFAULT_PROFILE_ID
+from storage import JobStorage
 
 
 def _ts() -> str:
