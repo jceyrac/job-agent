@@ -298,11 +298,12 @@ def render():
 
     st.title("⚙️ Settings")
     _render_setup(db)
-    _render_run_controls(db)
+    st.divider()
     _render_profile_editor(db)
+    st.divider()
     _render_scraper_toggles(db)
+    st.divider()
     _render_reonboard(db)
-    _render_stats_actions(db)
 
 
 def _render_reonboard(db):
@@ -379,9 +380,10 @@ def _render_profile_editor(db):
         st.divider()
         st.caption("Scoring")
         scoring_context = st.text_area(
-            "Scoring context (injected at top of LLM scorer system prompt)",
+            "Scoring context",
             value=profile.scoring_context,
             height=400,
+            help="Injected at the top of the LLM scorer system prompt. Describe your ideal role, priorities, and hard filters.",
         )
 
         # ── Countries & filters (expander) ──────────────────────────────

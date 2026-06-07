@@ -22,8 +22,8 @@ def render():
 
     st.title("📊 Dashboard")
 
-    col1, col2 = st.columns([3, 1])
-    with col2:
+    # ── Sidebar ────────────────────────────────────────────────────────────
+    with st.sidebar:
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -92,6 +92,8 @@ def render():
                     else:
                         st.caption(f"➔ {cname} ({last})")
 
+    st.divider()
+
     # ── Row 2: Pipeline stats ───────────────────────────────────────────────
     st.subheader("Pipeline")
     stats = db.get_stats(None) if hasattr(db, 'get_stats') else {}
@@ -103,6 +105,28 @@ def render():
                     "rejected": "❌", "archived": "🗄"}
     for col, s in zip([m1, m2, m3, m4, m5, m6], status_order):
         col.metric(f"{status_icons.get(s,'')} {s.title()}", by_status.get(s, 0))
+
+    st.divider()
+
+    # ── Row 2b: DB stats ───────────────────────────────────────────────────
+    st.subheader("Database")
+    with db._conn() as conn:
+        total_jobs      = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        total_scored    = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
+        unscored        = total_jobs - conn.execute(
+            "SELECT COUNT(DISTINCT job_id) FROM job_scores").fetchone()[0]
+        total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+        total_contacts  = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+        unverified      = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE is_unverified = 1").fetchone()[0]
+
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Jobs", total_jobs, f"{total_scored} scored")
+    d2.metric("Unscored", unscored)
+    d3.metric("Companies", total_companies)
+    d4.metric("Contacts", total_contacts, f"{unverified} unverified")
+
+    st.divider()
 
     # ── Row 3: Hot Jobs Feed ────────────────────────────────────────────────
     st.subheader("🔥 Hot Jobs Feed")
@@ -119,9 +143,10 @@ def render():
             with st.container(border=True):
                 c1, c2 = st.columns([4, 1])
                 with c1:
-                    st.markdown(
-                        f"**{score_badge(job.get('score'))}**  "
-                        f"{job.get('title', '')} @ {job.get('company', '')}"
+                    score_str = score_badge(job.get('score'))
+                    st.html(
+                        f'<span style="font-size:18px;font-weight:700;margin-right:6px">{score_str}</span>'
+                        f'{job.get("title", "")} @ {job.get("company", "")}'
                     )
                     country = job.get("company_country") or ""
                     meta = []

@@ -13,6 +13,23 @@ st.html("""
 [data-testid="stSidebarNav"] a[href*="contact_detail"] {
     display: none;
 }
+
+/* Tighten metric label size */
+[data-testid="stMetricLabel"] { font-size: 12px !important; }
+
+/* Make job card containers slightly more compact */
+[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {
+    padding: 0.6rem 0.8rem !important;
+}
+
+/* Sidebar filter section headers */
+.sidebar-section-header {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.5;
+    margin: 1rem 0 0.25rem;
+}
 </style>
 """)
 

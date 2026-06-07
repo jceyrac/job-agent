@@ -1,7 +1,11 @@
 """tracker_views/jobs.py — Jobs list view."""
+import subprocess
+import sys
+import time
+
 import streamlit as st
 
-from profiles import ACTIVE_PROFILE_ID
+from profiles import ACTIVE_PROFILE_ID, DEFAULT_PROFILE_ID
 from tracker_views.shared import (
     ensure_db, get_db,
     load_jobs, load_applications_index,
@@ -15,11 +19,151 @@ from tracker_views.job_helpers import (
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _launch_bg(label: str, cmd: list[str]):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=False)
+    st.session_state.bg_process = proc
+    st.session_state.bg_label = label
+    st.session_state.bg_output = ""
+    st.session_state.bg_start = time.time()
+    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Controls bar
+# ---------------------------------------------------------------------------
+
+def _render_controls_bar(db):
+    """Compact run + cache strip at top of Jobs page."""
+    # ── Session-state keys for background processes ──────────────────────
+    if "bg_process" not in st.session_state:
+        st.session_state.bg_process = None
+    if "bg_label" not in st.session_state:
+        st.session_state.bg_label = ""
+    if "bg_output" not in st.session_state:
+        st.session_state.bg_output = ""
+    if "bg_start" not in st.session_state:
+        st.session_state.bg_start = 0.0
+
+    with db._conn() as conn:
+        total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        scored_distinct = conn.execute(
+            "SELECT COUNT(DISTINCT job_id) FROM job_scores"
+        ).fetchone()[0]
+        unscored = total_jobs - scored_distinct
+
+    c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1])
+
+    proc = st.session_state.bg_process
+    label = st.session_state.bg_label
+
+    if proc is not None and proc.poll() is None:
+        # Process running
+        elapsed = int(time.time() - st.session_state.get("bg_start", time.time()))
+        mins, secs = divmod(elapsed, 60)
+        with c1:
+            st.info(f"⏳ {label.title()} — {mins}m {secs}s")
+        with c2:
+            if st.button("⏹ Stop", use_container_width=True):
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                st.session_state.bg_process = None
+                st.session_state.bg_label = ""
+                st.rerun()
+        with c3:
+            if st.button("🔄 Refresh", use_container_width=True):
+                st.rerun()
+    else:
+        # Check if a process just finished
+        if proc is not None and proc.poll() is not None:
+            ret = proc.returncode
+            # Read remaining output
+            try:
+                remaining = proc.stdout.read()
+                if remaining:
+                    st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
+            except Exception:
+                pass
+
+            final_output = st.session_state.bg_output
+            st.session_state.bg_process = None
+            st.session_state.bg_label = ""
+            st.session_state.bg_output = ""
+            st.session_state.bg_start = 0.0
+
+            if ret == 0:
+                st.success(f"✅ {label.title()} completed successfully!")
+            else:
+                st.error(f"❌ {label.title()} exited with code {ret}")
+
+            with st.expander("Last run output", expanded=False):
+                st.text(final_output[-8000:] if len(final_output) > 8000 else final_output)
+            st.cache_data.clear()
+            st.rerun()
+
+        # No process running — show launch buttons
+        with c1:
+            if st.button("🕸 Run scrape", use_container_width=True):
+                _launch_bg("scrape", [sys.executable, "-u", "scrape.py"])
+        with c2:
+            if st.button("🎯 Run scoring", use_container_width=True):
+                active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+                _launch_bg("score", [sys.executable, "-u", "score.py", "--profile", active_id])
+        with c3:
+            if st.button("🔄 Clear Cache", use_container_width=True):
+                st.cache_data.clear()
+                st.success("Cache cleared.")
+                st.rerun()
+        with c4:
+            if st.button("🔍 Re-extract", use_container_width=True,
+                         help="Run score.py --extract to re-extract job fields"):
+                with st.spinner("Re-extracting…"):
+                    result = subprocess.run(
+                        [sys.executable, "score.py", "--extract"],
+                        capture_output=True, text=True, timeout=600,
+                    )
+                    st.cache_data.clear()
+                    if result.returncode == 0:
+                        st.success("Re-extract done.")
+                    else:
+                        st.error(result.stderr[:500])
+
+    with c5:
+        st.metric("Unscored", unscored)
+
+    # Show live output if a process is running
+    if proc is not None and proc.poll() is None:
+        # Read any new output
+        try:
+            import select as _sel
+            import os as _os
+            ready, _, _ = _sel.select([proc.stdout], [], [], 0)
+            if ready:
+                chunk = _os.read(proc.stdout.fileno(), 65536)
+                if chunk:
+                    st.session_state.bg_output += chunk.decode("utf-8", errors="replace")
+        except Exception:
+            pass
+
+        if st.session_state.bg_output:
+            with st.expander("Live output", expanded=False):
+                st.text(st.session_state.bg_output[-8000:])
+
+
+# ---------------------------------------------------------------------------
 # List view
 # ---------------------------------------------------------------------------
 
 def _render_list():
     st.title("💼 Jobs")
+
+    db = get_db()
+    _render_controls_bar(db)
 
     # ── Sidebar filters ─────────────────────────────────────────────────────
     with st.sidebar:
@@ -28,6 +172,8 @@ def _render_list():
         view = st.radio("View", ["Active jobs", "Non relevant jobs"], key="jobs_view")
 
         min_score = st.slider("Min score", 0, 10, 0, key="jobs_min_score")
+
+        st.markdown("---")
 
         if view == "Active jobs":
             status_filter = st.multiselect(
@@ -41,6 +187,8 @@ def _render_list():
 
         show_stale = st.checkbox("Show stale jobs (>30 days)", key="jobs_show_stale")
         show_archived = view == "Non relevant jobs"
+
+        st.markdown("---")
 
     # Load and filter
     jobs_raw = load_jobs(exclude_archived=False)
@@ -64,6 +212,9 @@ def _render_list():
         sector_filter = st.multiselect("Sector", all_sectors, key="jobs_sector",
                                         format_func=lambda c: sector_label(c))
         language_filter = st.multiselect("Language", all_languages, key="jobs_lang")
+
+        st.markdown("---")
+
         source_filter = st.multiselect("Source", all_sources, key="jobs_source")
 
         per_page = st.selectbox(
@@ -132,7 +283,6 @@ def _render_list():
             m, sec = divmod(rem, 60)
             return f"in {h}h {m}m {sec}s"
 
-    db = get_db()
     last_run = db.get_last_run(ACTIVE_PROFILE_ID)
     dur = _fmt_duration(last_run.get("duration_seconds") if last_run else None)
     dur_str = f" ({dur})" if dur else ""
@@ -178,11 +328,26 @@ def _render_list():
     hot = sum(1 for j in jobs if (j.get("score") or 0) >= 9)
     solid = sum(1 for j in jobs if 7 <= (j.get("score") or 0) <= 8)
     maybe = sum(1 for j in jobs if 5 <= (j.get("score") or 0) <= 6)
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("🔥 Hot (9-10)", hot)
-    mc2.metric("⭐ Solid (7-8)", solid)
-    mc3.metric("👀 Maybe (5-6)", maybe)
-    mc4.metric("Total", total)
+    st.html(f"""
+    <div style="display:flex;gap:8px;margin:0.5rem 0 1rem;">
+      <div style="flex:1;background:var(--secondary-background-color);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:11px;color:var(--text-color);opacity:.6;margin-bottom:2px">🔥 Hot (9-10)</div>
+        <div style="font-size:22px;font-weight:600;color:var(--text-color)">{hot}</div>
+      </div>
+      <div style="flex:1;background:var(--secondary-background-color);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:11px;color:var(--text-color);opacity:.6;margin-bottom:2px">⭐ Solid (7-8)</div>
+        <div style="font-size:22px;font-weight:600;color:var(--text-color)">{solid}</div>
+      </div>
+      <div style="flex:1;background:var(--secondary-background-color);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:11px;color:var(--text-color);opacity:.6;margin-bottom:2px">👀 Maybe (5-6)</div>
+        <div style="font-size:22px;font-weight:600;color:var(--text-color)">{maybe}</div>
+      </div>
+      <div style="flex:1;background:var(--secondary-background-color);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:11px;color:var(--text-color);opacity:.6;margin-bottom:2px">Showing</div>
+        <div style="font-size:22px;font-weight:600;color:var(--text-color)">{total}</div>
+      </div>
+    </div>
+    """)
 
     # Pagination controls
     if per_page != "All" and n_pages > 1:
@@ -225,7 +390,8 @@ def _render_card(job: dict, apps_index: dict[str, dict]):
         col_badge, col_main, col_meta = st.columns([1, 6, 2])
 
         with col_badge:
-            st.markdown(f"### {score_badge(score)}")
+            score_str = score_badge(score)
+            st.html(f'<div style="font-size:18px;font-weight:700;padding-top:4px">{score_str}</div>')
 
         with col_main:
             company = job.get("company", "")
