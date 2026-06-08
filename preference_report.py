@@ -778,26 +778,402 @@ def generate_report(profile_id: str | None = None,
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as f:
         f.write(report)
+    # Also generate action items alongside the report
+    _act_path = generate_action_items(
+        profile_id=profiles[0] if len(profiles) == 1 else None,
+        output_dir=os.path.join(os.path.dirname(out_dir), "action_items") if out_dir else None,
+    )
+    if _act_path:
+        print(f"Action items written to {_act_path}")
+
+    return output_path
+
+
+# ── Action Items generator ────────────────────────────────────────────────────────
+
+def generate_action_items(
+    profile_id: str | None = None,
+    output_dir: str | None = None,
+    anchor_path: str | None = None,
+) -> str | None:
+    """Classify calibration findings into prompt fixes vs code fixes.
+
+    Reads the same signals as the preference report and outputs a structured
+    Markdown file with a ready-to-paste Claude Code brief for code fixes.
+
+    Returns the output file path, or None if no profile_id is given and the
+    default can't be resolved.
+    """
+    from profiles import get_active_profile
+
+    pid = profile_id or get_active_profile().id
+
+    out_dir = output_dir or "outputs/action_items"
+    today = date.today().isoformat()
+    output_path = os.path.join(out_dir, f"action_items_{today}.md")
+
+    conn = _connect()
+
+    # ── Calibration data ────────────────────────────────────────────────────
+    # Over-scored: archived with score >= 8, not Tier-0 cleanup
+    over_rows = conn.execute(
+        """SELECT j.title, j.company, s.score, t.notes, s.profile_id
+             FROM jobs j
+             JOIN job_tracking t ON j.id = t.job_id
+             JOIN job_scores s   ON j.id = s.job_id
+            WHERE t.status = 'archived' AND s.score >= 8
+              AND s.profile_id = ?
+              AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
+            ORDER BY s.score DESC""",
+        (pid,),
+    ).fetchall()
+
+    # Under-scored: applied or rejected with score <= 6
+    under_rows = conn.execute(
+        """SELECT j.title, j.company, s.score, t.status, s.profile_id
+             FROM jobs j
+             JOIN job_tracking t ON j.id = t.job_id
+             JOIN job_scores s   ON j.id = s.job_id
+            WHERE t.status IN ('applied', 'rejected') AND s.score <= 6
+              AND s.profile_id = ?
+            ORDER BY s.score ASC""",
+        (pid,),
+    ).fetchall()
+
+    tp, us, tn, fc = _get_classified_jobs(conn, pid)
+
+    # ── Denylist candidates: companies with ≥3 archived, 0 applied/rejected ──
+    deny_rows = conn.execute(
+        """SELECT j.company, COUNT(*) AS n
+             FROM jobs j
+             JOIN job_tracking t ON j.id = t.job_id
+            WHERE t.status = 'archived'
+              AND j.company_id IS NOT NULL
+              AND j.company NOT IN (
+                  SELECT DISTINCT j2.company FROM jobs j2
+                  JOIN job_tracking t2 ON j2.id = t2.job_id
+                  WHERE t2.status IN ('applied', 'rejected')
+              )
+            GROUP BY j.company
+            HAVING COUNT(*) >= 3
+            ORDER BY n DESC""",
+    ).fetchall()
+
+    # ── Sector exclusions: sectors with ≥5 archived, 0 applied/rejected ─────
+    sector_rows = conn.execute(
+        """SELECT COALESCE(c.industry_sector, 'other') AS sector, COUNT(*) AS n
+             FROM jobs j
+             JOIN job_tracking t ON j.id = t.job_id
+             LEFT JOIN companies c ON j.company_id = c.id
+            WHERE t.status = 'archived'
+              AND COALESCE(c.industry_sector, 'other') NOT IN (
+                  SELECT DISTINCT COALESCE(c2.industry_sector, 'other')
+                  FROM jobs j2
+                  JOIN job_tracking t2 ON j2.id = t2.job_id
+                  LEFT JOIN companies c2 ON j2.company_id = c2.id
+                  WHERE t2.status IN ('applied', 'rejected')
+              )
+            GROUP BY 1
+            HAVING COUNT(*) >= 5
+            ORDER BY n DESC""",
+    ).fetchall()
+
+    # ── Banned country candidates: ≥3 archived, 0 applied/rejected ─────────
+    country_rows = conn.execute(
+        """SELECT COALESCE(j.company_country, 'unknown') AS country, COUNT(*) AS n
+             FROM jobs j
+             JOIN job_tracking t ON j.id = t.job_id
+            WHERE t.status = 'archived'
+              AND j.company_country IS NOT NULL
+              AND j.company_country != 'unknown'
+              AND j.company_country NOT IN (
+                  SELECT DISTINCT j2.company_country FROM jobs j2
+                  JOIN job_tracking t2 ON j2.id = t2.job_id
+                  WHERE t2.status IN ('applied', 'rejected')
+                    AND j2.company_country IS NOT NULL
+              )
+            GROUP BY 1
+            HAVING COUNT(*) >= 3
+            ORDER BY n DESC""",
+    ).fetchall()
+
+    # ── Source quality: sources with 0 strong matches in scored jobs ────────
+    source_rows = conn.execute(
+        """SELECT j.source, COUNT(*) AS total,
+                  COUNT(CASE WHEN s.score >= 8 THEN 1 END) AS strong
+             FROM jobs j
+             LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+            WHERE j.source IS NOT NULL AND j.source != ''
+            GROUP BY j.source
+            HAVING total >= 5 AND strong = 0
+            ORDER BY total DESC""",
+        (pid,),
+    ).fetchall()
+
+    # ── Few-shot anchor staleness ───────────────────────────────────────────
+    anchor_stale = False
+    anchor_date = ""
+    if anchor_path and os.path.exists(anchor_path):
+        anchor_mtime = os.path.getmtime(anchor_path)
+        anchor_age_days = (date.today() - date.fromtimestamp(anchor_mtime)).days
+        anchor_stale = anchor_age_days > 14
+        anchor_date = date.fromtimestamp(anchor_mtime).isoformat()
+    else:
+        # Check outputs/preference_reports/ for anchor files
+        import glob as _glob
+        anchor_files = sorted(_glob.glob("outputs/preference_reports/few_shot_anchors_*.md"), reverse=True)
+        if anchor_files:
+            anchor_mtime = os.path.getmtime(anchor_files[0])
+            anchor_age_days = (date.today() - date.fromtimestamp(anchor_mtime)).days
+            anchor_stale = anchor_age_days > 14
+            anchor_date = date.fromtimestamp(anchor_mtime).isoformat()
+
+    conn.close()
+
+    # ── Classify into prompt fixes and code fixes ───────────────────────────
+    prompt_items: list[str] = []
+    code_items: list[str] = []
+    code_brief_lines: list[str] = []
+
+    # P1: Scoring band miscalibration
+    if len(over_rows) > 0 or len(under_rows) > 0:
+        p1_lines = ["### [P1] Scoring band miscalibration", ""]
+        if over_rows:
+            p1_lines.append(f"**{len(over_rows)} over-scored jobs** (archived despite score ≥ 8):")
+            p1_lines.append("")
+            for r in over_rows[:5]:
+                note = (r["notes"] or "")[:60]
+                p1_lines.append(f"- [{r['score']}/10] {r['title']} · {r['company']}" +
+                               (f" — {note}" if note else ""))
+            p1_lines.append("")
+        if under_rows:
+            p1_lines.append(f"**{len(under_rows)} under-scored jobs** (applied/rejected despite score ≤ 6):")
+            p1_lines.append("")
+            for r in under_rows[:5]:
+                p1_lines.append(f"- [{r['score']}/10] {r['title']} · {r['company']} ({r['status']})")
+            p1_lines.append("")
+        p1_lines.extend([
+            "→ Run: `python preference_report.py --suggest-context --profile {0}`".format(pid),
+            "→ Review proposal, then: `python preference_report.py --apply-context <path>`",
+            "→ Verify: `python score.py --mock --profile {0}`".format(pid),
+            "",
+        ])
+        prompt_items.append("\n".join(p1_lines))
+
+    # P2: Few-shot anchors stale
+    if anchor_stale:
+        prompt_items.append(f"""### [P2] Few-shot anchors stale (last: {anchor_date})
+→ Run: `python preference_report.py --anchors --profile {pid}`
+→ Paste updated anchors into scoring_context, then --apply-context
+""")
+
+    # C1: Denylist candidates
+    if deny_rows:
+        c1_lines = [
+            "### [C1] Denylist candidates",
+            "",
+            "Add to `denylisted_companies` in `profiles.py`:",
+            "",
+        ]
+        from profiles import ALL_PROFILES as _CURRENT
+        current = _CURRENT.get(pid)
+        already_denied = set(current.denylisted_companies) if current else set()
+        new_deny = [(co, n) for co, n in deny_rows if co not in already_denied]
+        if new_deny:
+            for co, n in new_deny:
+                c1_lines.append(f"- **{co}** ({n} archived)")
+            code_items.append("\n".join(c1_lines))
+            code_brief_lines.append("**profiles.py — denylisted_companies** (add):")
+            for co, n in new_deny:
+                code_brief_lines.append(f'- "{co}"  # {n} archived')
+            code_brief_lines.append("")
+        else:
+            c1_lines.append("_All candidates already in profile._")
+            code_items.append("\n".join(c1_lines))
+
+    # C2: Sector exclusions
+    if sector_rows:
+        c2_lines = [
+            "### [C2] Sector exclusions",
+            "",
+            "Add to `excluded_sectors` in `profiles.py`:",
+            "",
+        ]
+        from profiles import ALL_PROFILES as _C2
+        current2 = _C2.get(pid)
+        already_excluded = set(current2.excluded_sectors) if current2 else set()
+        new_sectors = [(s, n) for s, n in sector_rows
+                       if s not in already_excluded and s != "other"]
+        if new_sectors:
+            for s, n in new_sectors:
+                c2_lines.append(f"- `{s}` ({n} archived, 0 applied)")
+            code_items.append("\n".join(c2_lines))
+            code_brief_lines.append("**profiles.py — excluded_sectors** (add):")
+            for s, n in new_sectors:
+                code_brief_lines.append(f'- "{s}"  # {n} archived')
+            code_brief_lines.append("")
+        else:
+            c2_lines.append("_All candidates already in profile._")
+            code_items.append("\n".join(c2_lines))
+
+    # C3: Banned country candidates
+    if country_rows:
+        c3_lines = [
+            "### [C3] Banned country candidates",
+            "",
+            "Add to `banned_countries` in `profiles.py`:",
+            "",
+        ]
+        current3 = _CURRENT.get(pid) if '_CURRENT' in dir() else None
+        already_banned = set(current3.banned_countries) if current3 else set()
+        new_countries = [(c, n) for c, n in country_rows if c not in already_banned]
+        if new_countries:
+            for c, n in new_countries:
+                c3_lines.append(f"- **{c}** ({n} archived, 0 applied)")
+            code_items.append("\n".join(c3_lines))
+            code_brief_lines.append("**profiles.py — banned_countries** (add):")
+            for c, n in new_countries:
+                code_brief_lines.append(f'- "{c}"  # {n} archived')
+            code_brief_lines.append("")
+
+    # C4: Source quality
+    if source_rows:
+        c4_lines = [
+            "### [C4] Source quality",
+            "",
+            "These scrapers returned 0 strong matches (score ≥ 8) in scored jobs. Consider disabling:",
+            "",
+        ]
+        for r in source_rows:
+            c4_lines.append(f"- **{r['source']}**: {r['total']} scraped, 0 strong matches")
+        code_items.append("\n".join(c4_lines))
+        code_brief_lines.append("**Scrapers — review/disable** (0 strong matches):")
+        for r in source_rows:
+            code_brief_lines.append(f"- {r['source']}: {r['total']} jobs, 0 strong matches → review ENABLED flag")
+        code_brief_lines.append("")
+
+    # ── Assemble output ─────────────────────────────────────────────────────
+    lines = [
+        f"# Action Items — {today}",
+        f"Profile: {pid} | Generated from: preference_report_{today}.md",
+        "",
+        "---",
+        "",
+        "## Prompt fixes (apply on server, no deploy needed)",
+        "",
+    ]
+
+    if prompt_items:
+        for item in prompt_items:
+            lines.append(item)
+    else:
+        lines.append("_No prompt fixes found — scoring_context appears well-calibrated._")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## Code fixes (implement in dev → git push → deploy)")
+    lines.append("")
+
+    if code_items:
+        for item in code_items:
+            lines.append(item)
+            lines.append("")
+    else:
+        lines.append("_No code fixes identified._")
+        lines.append("")
+
+    # ── Claude Code brief ───────────────────────────────────────────────────
+    lines.append("---")
+    lines.append("")
+    lines.append("## Claude Code brief")
+    lines.append("")
+    lines.append("<!-- Paste this block into a Claude Code session on dev to implement all code fixes -->")
+    lines.append("")
+    lines.append("```")
+    brief_intro = [
+        f"Read prompts/BUILD_feedback_loop.md for context.",
+        "",
+        f"Implement the following changes from the latest action items report",
+        f"(outputs/action_items/action_items_{today}.md on the server):",
+        "",
+    ]
+    if code_brief_lines:
+        brief_lines = brief_intro + code_brief_lines + [
+            "After implementing, run: python score.py --mock --profile unified_jc",
+            "Expected: all 6 cases in their bands.",
+        ]
+    else:
+        brief_lines = brief_intro + [
+            "_No code changes needed from this report._",
+        ]
+    lines.extend(brief_lines)
+    lines.append("```")
+    lines.append("")
+    lines.append("<!-- End of Claude Code brief -->")
+
+    report = "\n".join(lines)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w") as f:
+        f.write(report)
+
     return output_path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate a preference alignment report from apply/archive data."
+        description="Generate a preference alignment report + action items from apply/archive data."
     )
     parser.add_argument("--profile", default=None,
                         help="Analyse a single profile (optional; defaults to the active profile).")
     parser.add_argument("--output", default=None,
-                        help="Override output path.")
+                        help="Override output path for the preference report.")
     parser.add_argument("--anchors", dest="anchors", action="store_true",
                         help="Export few-shot anchors for scoring_context tuning.")
     parser.add_argument("--print", dest="print_out", action="store_true",
                         help="Also print the report to stdout.")
+    parser.add_argument("--full", dest="full", action="store_true",
+                        help="Generate both preference report and action items (default when no other action specified).")
+    parser.add_argument("--action-items", dest="action_items", action="store_true",
+                        help="Generate action items file standalone (no full report).")
+    parser.add_argument("--suggest-context", dest="suggest_context", action="store_true",
+                        help="Generate a scoring_context proposal via LLM. Use --dry-run to print instead of writing.")
+    parser.add_argument("--dry-run", dest="dry_run", action="store_true",
+                        help="With --suggest-context: print proposal to stdout instead of writing to disk.")
+    parser.add_argument("--apply-context", dest="apply_context", default=None,
+                        metavar="PATH",
+                        help="Apply a context proposal file to the DB. Does NOT call the LLM.")
     args = parser.parse_args()
 
     from profiles import get_active_profile
     profile_id = args.profile or get_active_profile().id
 
+    # ── --apply-context <path> ────────────────────────────────────────────
+    if args.apply_context:
+        _apply_context(profile_id, args.apply_context)
+        return
+
+    # ── --suggest-context ─────────────────────────────────────────────────
+    if args.suggest_context:
+        from storage import JobStorage
+        from context_tuner import propose_context_update
+        db = JobStorage(DB_PATH)
+        proposal_path = propose_context_update(
+            profile_id, db, dry_run=args.dry_run,
+        )
+        if not args.dry_run:
+            print(f"Proposal written to {proposal_path}")
+            print(f"Review, then apply: python preference_report.py --apply-context {proposal_path}")
+        return
+
+    # ── --action-items (standalone) ────────────────────────────────────────
+    if args.action_items:
+        act_path = generate_action_items(profile_id=profile_id)
+        print(f"Action items written to {act_path}")
+        return
+
+    # ── --anchors ─────────────────────────────────────────────────────────
     if args.anchors:
         anchor_block = export_few_shot_anchors(profile_id)
         out_dir = args.output and os.path.dirname(args.output) or OUTPUT_DIR
@@ -813,6 +1189,7 @@ def main():
             print(anchor_block)
         return
 
+    # ── Default / --full: generate report + action items ──────────────────
     path = generate_report(
         profile_id=profile_id,
         output_dir=os.path.dirname(args.output) if args.output else None,
@@ -829,6 +1206,42 @@ def main():
         print()
         with open(path) as f:
             print(f.read())
+
+
+# ── --apply-context implementation ────────────────────────────────────────────────
+
+def _apply_context(profile_id: str, proposal_path: str):
+    """Extract proposed scoring_context from a proposal Markdown file and write it to the DB."""
+    from profiles import SearchProfile
+    from storage import JobStorage
+
+    if not os.path.exists(proposal_path):
+        print(f"Error: file not found: {proposal_path}")
+        return
+
+    with open(proposal_path) as f:
+        content = f.read()
+
+    # Extract block between "## Proposed scoring_context" and the next "---"
+    match = re.search(r'## Proposed scoring_context\n\n(.*?)\n---', content, re.DOTALL)
+    if not match:
+        print("Error: could not find '## Proposed scoring_context' section in proposal file.")
+        return
+
+    new_context = match.group(1).strip()
+
+    db = JobStorage(DB_PATH)
+    row = db.get_profile(profile_id)
+    if not row:
+        print(f"Error: profile '{profile_id}' not found in DB.")
+        return
+
+    profile = SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
+    profile.scoring_context = new_context
+    db.upsert_profile(profile)
+
+    print(f"✅ scoring_context updated for '{profile_id}'.")
+    print(f"   Run: python score.py --mock --profile {profile_id}")
 
 
 if __name__ == "__main__":

@@ -134,7 +134,7 @@ UNIFIED_JC = SearchProfile(
     id="unified_jc",
     name="Unified JC",
     allowed_geo_zones=["europe", "global_remote", "unknown"],
-    allowed_work_modes=["remote", "hybrid", "unknown"],
+    allowed_work_modes=["remote", "hybrid", "on-site", "unknown"],
     location_keywords=[],
     boost_keywords=["fintech", "web3", "defi", "crypto", "blockchain", "AI",
                     "tokenization", "RWA", "stablecoin", "neobank",
@@ -169,16 +169,18 @@ Score from 1 (terrible fit) to 10 (excellent fit). Be honest — most jobs
 will score 3-6. Reserve 8+ for genuinely strong matches and 9-10 for
 roles that hit multiple criteria simultaneously.
 
-# Hard exclusions (cap score at 3)
-- Large corporates: banks, insurance companies, Big 4 consulting,
-  enterprise IT services. The candidate has done this and explicitly
-  does not want to return.
-- Junior, intern, associate, or non-PM roles (marketing PM, sales PM,
-  technical PM without product ownership).
-- On-site roles outside Switzerland (no relocation).
-- Roles requiring professional German or Spanish (only French and
-  English are at professional level).
-- US-only remote roles (timezone incompatible).
+# HARD EXCLUSIONS — NEVER exceed these score caps regardless of other signals
+# These rules take priority over everything else. Apply FIRST, then score within the cap.
+- LARGE CORPORATES (banks, insurance, Big 4 consulting, enterprise IT,
+  stock exchanges, financial market infrastructure): MAX SCORE = 3.
+  The candidate spent years at Accenture and explicitly does not want
+  to return to this environment. Examples: SIX Group, UBS, Credit Suisse,
+  SwissRe, Zurich Insurance, BNP Paribas, Deutsche Bank, SAP, Oracle,
+  IBM, Accenture, Deloitte, PwC, EY, KPMG.
+- JUNIOR / INTERN / ASSOCIATE / non-PM roles: MAX SCORE = 3.
+- ON-SITE outside Switzerland: MAX SCORE = 3 (no relocation).
+- ROLES REQUIRING German or Spanish: MAX SCORE = 3 (only French/English).
+- US-ONLY remote: MAX SCORE = 3 (timezone incompatible).
 
 # Strong preference: company type
 - Startups, scale-ups, and SMEs are the target. Lean, flat, agile
@@ -222,9 +224,12 @@ stage, headcount, flexibility).
    wealthtech, regtech, embedded finance, B2B SaaS for financial
    services.
 4. INTERESTING BUT HARDER — pure Web3 / DeFi / crypto-native companies.
-   Score the role on its merits but acknowledge in the reasoning that
-   the candidate lacks direct Web3 PM experience (CV stretch). Cap ~1
-   below the equivalent RWA/bridge role.
+   Score the role on its merits but CAP THE SCORE at 7-8 maximum. The
+   candidate lacks direct Web3 PM experience (CV stretch). Even if the
+   role looks perfect on paper, it is NOT a 9 or 10 — the candidate
+   has never worked at a crypto-native company. This cap applies even
+   when the company is based in Switzerland. A pure Web3 role that
+   would score 9-10 as an RWA/bridge role MUST score 7-8 max.
 5. NEUTRAL BONUS — companies using AI in their product (good signal of
    innovation). AI-native companies building foundation models or core
    AI products are a stretch given no direct AI PM experience — score
@@ -237,11 +242,16 @@ stage, headcount, flexibility).
   when fully remote (works from Switzerland for a foreign company).
   Hybrid or on-site outside Switzerland is out (already enforced before
   scoring).
+- ON-SITE IN SWITZERLAND IS OK. Do NOT penalize on-site roles at Swiss
+  companies. The candidate can commute within Switzerland. Score these
+  roles on their domain/company fit, not the work mode.
 - IDEAL: Fully remote role with a Swiss company. The candidate works
   from home in Switzerland.
 - ALSO STRONG: Flexible hybrid in Switzerland (Lausanne, Geneva, Zurich,
   Zug, Basel) with 2–3 office days per week. The candidate needs to
   travel to France 1–2 times per month, so flexibility matters.
+- ACCEPTABLE: On-site in Switzerland — score based on domain fit, not
+  work mode.
 - WEAKER: Rigid hybrid requiring 4+ days in a Swiss office.
 - EXCLUDE: On-site or hybrid outside Switzerland (Tier-0 enforced),
   US-only remote, APAC roles.
