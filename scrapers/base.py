@@ -13,8 +13,9 @@ class BaseScraper(ABC):
     SOURCE_NAME: str = "Unknown"
     ENABLED: bool = True
 
-    def __init__(self, storage: JobStorage = None):
+    def __init__(self, storage: JobStorage = None, targets: list[dict] | None = None):
         self._storage = storage
+        self._targets = targets  # list of company dicts with ats_provider, ats_identifier, etc.
 
     @classmethod
     def enabled_config_key(cls) -> str:

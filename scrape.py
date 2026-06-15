@@ -154,14 +154,154 @@ def dedupe_against_db(jobs: list[JobPosting], storage: JobStorage) -> list[JobPo
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Job scraping pipeline")
+    parser.add_argument("--monitored-only", action="store_true",
+                        help="Only scrape monitored companies (company-keyed, no broad boards)")
+    args = parser.parse_args()
+
     t0 = time.monotonic()
     db = JobStorage(DB_PATH)
 
-    # JobFilter built from the active profile's search inputs, resolved from DB.
-    # remote_or_hybrid=False so on-site CH jobs are kept; the profile's
-    # work_mode gate runs post-scoring in score.py via allowed_work_modes.
     from profiles import load_active_profile
     profile = load_active_profile(db)
+
+    if args.monitored_only:
+        _run_monitored_only(db, profile)
+    else:
+        _run_broad_scrape(db, profile)
+
+    elapsed = round(time.monotonic() - t0, 1)
+    print(f"\nScrape complete ({elapsed:.0f}s)")
+
+
+def _run_monitored_only(db: JobStorage, profile) -> None:
+    """Company-keyed monitoring run — only monitored companies, no broad boards."""
+    import importlib
+    t_start = time.monotonic()
+
+    monitored = db.get_monitored_companies()
+    if not monitored:
+        print("Nothing to monitor — no companies with monitored=true.")
+        db.log_run(
+            profile_id=profile.id,
+            jobs_scraped=0, jobs_scored=0, jobs_above_threshold=0,
+            status="scraped", duration_seconds=0, run_type="monitored_only",
+        )
+        return
+
+    # Group companies by ats_provider
+    by_provider: dict[str, list[dict]] = {}
+    for company in monitored:
+        provider = company.get("ats_provider")
+        if provider:
+            by_provider.setdefault(provider, []).append(company)
+
+    print(f"Monitored-only run: {len(monitored)} companies across "
+          f"{len(by_provider)} providers ({', '.join(sorted(by_provider))})")
+
+    seen_urls: set[str] = set()
+    total_fetched = 0
+    total_new = 0
+
+    for provider, companies in sorted(by_provider.items()):
+        print(f"\n[{provider}] {len(companies)} companies")
+        try:
+            module = importlib.import_module(f"scrapers.ats.{provider}")
+        except (ImportError, ModuleNotFoundError):
+            # Fall back to root-level scraper
+            try:
+                module = importlib.import_module(f"scrapers.{provider}")
+            except (ImportError, ModuleNotFoundError):
+                print(f"  ⚠️ No adapter found for provider '{provider}' — skipped")
+                continue
+
+        ScraperClass = None
+        for attr_name in dir(module):
+            obj = getattr(module, attr_name)
+            if (isinstance(obj, type) and hasattr(obj, "fetch")
+                    and hasattr(obj, "SOURCE_NAME")
+                    and obj.__name__ != "BaseScraper"):
+                ScraperClass = obj
+                break
+
+        if ScraperClass is None:
+            print(f"  ⚠️ No scraper class found in {module} — skipped")
+            continue
+
+        scraper = ScraperClass(storage=db, targets=companies)
+        print(f"  Fetching from {scraper.SOURCE_NAME}...")
+
+        # Fetch all openings (no filtering — pure function per spec)
+        try:
+            raw = scraper.fetch(None)  # No JobFilter in monitoring mode
+        except Exception as e:
+            print(f"  ❌ [{scraper.SOURCE_NAME}] fetch failed: {e}")
+            continue
+
+        total_fetched += len(raw)
+        print(f"  → {len(raw)} jobs fetched")
+
+        # URL dedup + DB dedup
+        unique_batch = []
+        for job in raw:
+            if job.url and job.url in seen_urls:
+                continue
+            unique_batch.append(job)
+            if job.url:
+                seen_urls.add(job.url)
+
+        if not unique_batch:
+            print(f"  → 0 new (all URL-duplicates)")
+            continue
+
+        unique_batch = dedupe_against_db(unique_batch, db)
+
+        # Write to DB with monitored_company_id
+        before_count = db.get_stats(profile.id)["total"]
+
+        # Build lookup: company name → company id for monitored_company_id
+        company_name_to_id: dict[str, int] = {}
+        for c in companies:
+            company_name_to_id[c["name"].lower()] = c["id"]
+
+        for job in unique_batch:
+            company_id = None
+            if job.company and job.company.strip():
+                try:
+                    company_id = db.upsert_company(job.company.strip())
+                except ValueError:
+                    pass
+            # Find monitored_company_id by matching company name
+            mon_id = company_name_to_id.get(
+                (job.company or "").strip().lower()
+            ) or company_id
+            db.save_unscored(job, company_id=company_id,
+                            monitored_company_id=mon_id)
+
+        after_count = db.get_stats(profile.id)["total"]
+        batch_new = after_count - before_count
+        total_new += batch_new
+        print(f"  → {batch_new} new saved to DB")
+
+        # Polite delay between providers
+        time.sleep(1.0)
+
+    already_count = total_fetched - total_new
+    print(f"\nMonitored-only run: {total_fetched} fetched, {total_new} new, "
+          f"{already_count} already in DB")
+    db.log_run(
+        profile_id=profile.id,
+        jobs_scraped=total_fetched, jobs_scored=0, jobs_above_threshold=0,
+        status="scraped",
+        duration_seconds=round(time.monotonic() - t_start, 1),
+        run_type="monitored_only",
+    )
+
+
+def _run_broad_scrape(db: JobStorage, profile) -> None:
+    """Broad scrape: all enabled scrapers (boards + discovery), no monitoring filter."""
+    t_start = time.monotonic()
     job_filter = JobFilter(
         titles=profile.scrape_titles,
         exclude=profile.scrape_exclude,
@@ -189,7 +329,6 @@ def main():
         total_fetched += len(filtered)
         print(f"  → {len(filtered)} after filter")
 
-        # URL-based dedup against previously seen URLs
         unique_batch = []
         for job in filtered:
             if job.url and job.url in seen_urls:
@@ -202,10 +341,8 @@ def main():
             print(f"  → 0 new (all URL-duplicates of previous scrapers)")
             continue
 
-        # Dedup against DB (engaged jobs)
         unique_batch = dedupe_against_db(unique_batch, db)
 
-        # Write batch to DB immediately
         before_count = db.get_stats(profile.id)["total"]
         for job in unique_batch:
             company_id = None
@@ -213,7 +350,7 @@ def main():
                 try:
                     company_id = db.upsert_company(job.company.strip())
                 except ValueError:
-                    pass  # name normalizes to empty — skip company link
+                    pass
             db.save_unscored(job, company_id=company_id)
 
         after_count = db.get_stats(profile.id)["total"]
@@ -221,9 +358,8 @@ def main():
         total_new += batch_new
         print(f"  → {batch_new} new saved to DB, {len(unique_batch) - batch_new} already in DB")
 
-    elapsed = round(time.monotonic() - t0, 1)
     already_count = total_fetched - total_new
-    print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB ({elapsed:.0f}s)")
+    print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
 
@@ -233,9 +369,5 @@ def main():
         jobs_scored=0,
         jobs_above_threshold=0,
         status="scraped",
-        duration_seconds=elapsed,
+        duration_seconds=round(time.monotonic() - t_start, 1),
     )
-
-
-if __name__ == "__main__":
-    main()
