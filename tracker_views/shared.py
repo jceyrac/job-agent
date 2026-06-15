@@ -145,6 +145,8 @@ def load_companies(
     sizes: tuple[str, ...] = (),
     min_job_count: int | None = None,
     last_interaction_within_days: int | None = None,
+    monitored: bool | None = None,
+    monitorable: bool | None = None,
 ) -> list[dict]:
     return get_db().get_companies(
         status=status, search=search, exclude_blacklisted=exclude_blacklisted,
@@ -153,6 +155,8 @@ def load_companies(
         sizes=list(sizes) or None,
         min_job_count=min_job_count,
         last_interaction_within_days=last_interaction_within_days,
+        monitored=monitored,
+        monitorable=monitorable,
     )
 
 
