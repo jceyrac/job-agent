@@ -371,3 +371,7 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
         status="scraped",
         duration_seconds=round(time.monotonic() - t_start, 1),
     )
+
+
+if __name__ == "__main__":
+    main()
