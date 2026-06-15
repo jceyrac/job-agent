@@ -4,6 +4,7 @@ import select
 import subprocess
 import sys
 import time
+from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -303,8 +304,95 @@ def render():
     st.divider()
     _render_scraper_toggles(db)
     st.divider()
+    _render_monitored_companies(db)
+    st.divider()
     _render_reonboard(db)
 
+
+def _render_monitored_companies(db):
+    """Monitored companies management panel."""
+    st.subheader("🎯 Monitored Companies")
+
+    # ── Add company form ──
+    with st.expander("➕ Add a company to monitor", expanded=False):
+        careers_url = st.text_input(
+            "Careers URL",
+            placeholder="https://boards.greenhouse.io/fireblocks",
+            key="mon_add_url",
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🔍 Detect ATS", use_container_width=True,
+                         disabled=not careers_url):
+                try:
+                    from ats_detection import resolve_scrape_method, DetectionError
+                    result = resolve_scrape_method(careers_url)
+                    st.success(
+                        f"Detected: **{result['provider']}** "
+                        f"→ `{result['identifier']}`"
+                    )
+                    name = urlparse(careers_url).hostname.replace("boards.", "")\
+                        .replace("jobs.", "").split(".")[0].title()
+                    company_name = st.text_input("Company name", value=name, key="mon_add_name")
+                    if st.button("✅ Add & Monitor", use_container_width=True):
+                        cid = db.upsert_company_from_detection(
+                            company_name, careers_url,
+                            result["provider"], result["identifier"])
+                        db.set_company_monitored(cid, True)
+                        st.success(f"Added **{company_name}** — monitoring active")
+                        st.cache_data.clear()
+                        st.rerun()
+                except DetectionError as e:
+                    st.warning(str(e))
+                    with st.form("mon_manual_entry"):
+                        st.caption("Manual entry:")
+                        provider = st.selectbox(
+                            "Provider",
+                            ["greenhouse", "lever", "ashby", "workday",
+                             "smartrecruiters", "workable"],
+                        )
+                        identifier = st.text_input("Identifier (token / board / account ID)")
+                        company_name = st.text_input("Company name")
+                        if st.form_submit_button("Add manually"):
+                            try:
+                                cid = db.upsert_company_from_detection(
+                                    company_name, careers_url, provider, identifier)
+                                db.set_company_monitored(cid, True)
+                                st.success(f"Added **{company_name}**")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(str(ex))
+        with c2:
+            pass
+
+    # ── Monitored companies list ──
+    monitored = db.get_monitored_companies()
+    if not monitored:
+        st.info("No companies monitored yet. Add one above!")
+        return
+
+    st.caption(f"{len(monitored)} monitored companies")
+
+    for company in monitored:
+        cid = company["id"]
+        name = company["name"]
+        provider = company.get("ats_provider", "—")
+        identifier = company.get("ats_identifier", "")
+        cols = st.columns([4, 2, 1])
+        with cols[0]:
+            st.markdown(f"**{name}**  \n`{provider}` → `{identifier}`")
+        with cols[1]:
+            st.caption(f"Active" if company.get("monitored") else "Paused")
+        with cols[2]:
+            if st.button("⏸ Pause" if company.get("monitored") else "▶ Resume",
+                        key=f"mon_toggle_{cid}", use_container_width=True):
+                new_state = not company.get("monitored", False)
+                db.set_company_monitored(cid, new_state)
+                st.cache_data.clear()
+                st.rerun()
+
+    st.markdown("---")
 
 def _render_reonboard(db):
     """Re-run the onboarding wizard to regenerate the profile."""
