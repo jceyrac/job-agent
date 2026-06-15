@@ -1,26 +1,30 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: [unversioned template] → 1.0.0
-  Bump rationale: Initial ratification — all 9 principles codified from existing project practices.
+  Version change: 1.0.0 → 1.1.0
+  Bump rationale: MINOR — expansion matérielle du Principe VIII pour
+  refléter la décision de conserver la découverte ATS. Les sources
+  company-keyed sont pilotées par une liste d'entreprises (toutes les
+  connues d'un provider en découverte, ou les monitorées seulement en
+  monitoring), et non par les seules entreprises monitorées.
 
-  Added sections:
-    - Core Principles (I through IX, all 9 from user input)
-    - Architecture Constraints (expanding I, IV, VIII, IX)
-    - Development Workflow (expanding II, V, VI, VII)
-    - Governance (versioning, amendment, compliance review)
+  Modified principles:
+    - VIII. Scrapers organisés par modèle d'acquisition — pilotage des
+      sources company-keyed élargi à une liste paramétrable par
+      l'orchestrateur (découverte vs monitoring) ; adaptateurs ATS
+      qualifiés de fonctions pures ; garantie d'exécution autonome du
+      monitoring (--monitored-only).
 
-  Removed sections: None (template was empty)
-
-  Modified principles: None (first version)
+  Added sections: None
+  Removed sections: None
 
   Templates requiring updates:
-    - .specify/templates/plan-template.md     ✅ No changes needed (Constitution Check defers to this file)
-    - .specify/templates/spec-template.md     ✅ No changes needed (generic, no constitution references)
-    - .specify/templates/tasks-template.md    ✅ No changes needed (generic, no constitution references)
-    - .specify/templates/checklist-template.md ✅ No changes needed (generic, no constitution references)
+    - .specify/templates/plan-template.md     ✅ No changes needed
+    - .specify/templates/spec-template.md     ✅ No changes needed
+    - .specify/templates/tasks-template.md    ✅ No changes needed
+    - .specify/templates/checklist-template.md ✅ No changes needed
 
-  Follow-up TODOs: None — all placeholders resolved.
+  Follow-up TODOs: None.
 -->
 
 # Job Agent Constitution
@@ -132,15 +136,22 @@ Les scrapers sont classés en deux catégories, invoquables indépendamment :
 - **Boards d'agrégation** (LinkedIn, Indeed, Wellfound, etc.) :
   query-driven, filet large. Paramétrés par des requêtes de recherche.
 - **Sources company-keyed** (adaptateurs ATS Greenhouse/Lever/Ashby,
-  scrapers de sites carrières) : pilotées par l'ensemble des entreprises
-  monitorées. Pas de requête, on prend toute la liste.
+  scrapers de sites carrières) : pilotées par **une liste d'entreprises**
+  décidée par l'orchestrateur, pas par une requête. Les adaptateurs sont
+  des fonctions pures (liste → offres), sans logique de mode interne. La
+  liste varie selon le chemin : **toutes** les entreprises connues d'un
+  provider en découverte (filet large), ou les seules `monitored = true`
+  en monitoring.
 
 Les deux catégories MUST pouvoir tourner séparément (ex. `--source
-linkedin` vs `--source greenhouse`).
+linkedin` vs `--source greenhouse`), et le monitoring MUST pouvoir tourner
+seul (`--monitored-only`) sans déclencher le filet large.
 
 **Rationale** : Les deux modèles ont des rythmes de changement différents
-(entreprises monitorées vs. termes de recherche) et des contraintes de
-rate-limiting distinctes. Les séparer permet l'itération indépendante.
+(liste d'entreprises vs. termes de recherche) et des contraintes de
+rate-limiting distinctes. Découpler le filtre (la liste passée) de
+l'adaptateur (fonction pure) permet de servir découverte et monitoring
+avec un seul code par provider.
 
 ### IX. Le scoring est une couche optionnelle
 
@@ -224,4 +235,4 @@ constitution, la constitution prévaut.
 - Toute violation MUST être justifiée dans la section Complexity Tracking
   du plan, avec la raison et l'alternative plus simple rejetée.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-06-12
+**Version**: 1.1.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-06-15

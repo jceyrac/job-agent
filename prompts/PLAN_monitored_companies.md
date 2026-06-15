@@ -7,6 +7,8 @@
 
 Le snapshot public GitHub est antérieur à l'arbre de travail réel : il montre encore `main.py` monolithique, `filters.py` qui pré-filtre sur le titre, et une sortie JSON/MD. Le plan vise l'état courant — split `scrape.py` (scraping → DB) / `score.py` (scoring, flags `--profile` / `--rescore`), `main.py` orchestrateur fin, SQLite (WAL) via `storage.py`, `profiles.py` avec le dataclass `SearchProfile` portant `scoring_context`, profil unique `unified_jc`, `scorer.py` injectant `scoring_context` dans le system prompt, et `scrapers/base.py` (BaseScraper ABC) + un fichier par scraper. Les signatures et noms de colonnes exacts sont à confirmer contre la `storage.py` réelle au moment des tâches.
 
+**Périmètre / Stable core.** Cette feature touche explicitement des fichiers « Stable core » de la constitution (`storage.py`, `scrape.py`, `score.py` / `scorer.py`, `scrapers/`, plus `tracker_views/settings.py` et `dashboard.py` qui ne sont pas stable-core). Le specify doit les déclarer in-scope pour que la Constitution Check passe. Les 162 tests de `tests/test_storage.py` doivent rester verts en Phase A et être étendus aux nouvelles colonnes.
+
 ---
 
 # Partie 1 — Clarifications (résolues)
@@ -113,9 +115,9 @@ Le booléen `monitored` **est** le filtre (clause `WHERE`), pas un mode câblé 
 
 **Delta / nouvelles offres uniquement.** Chaque run de monitoring diffe contre les jobs déjà vus par **id stable de l'offre** (fourni par l'ATS ; Greenhouse expose un `id` par poste) et ne fait remonter/notifier que les nouvelles. Couche orthogonale aux deux chemins, nécessaire dans les deux.
 
-## UI (tracker.py / Streamlit)
+## UI (tracker_views/ — Streamlit)
 
-Settings → panneau « Monitored companies » : liste, ajout (coller l'URL carrières → détection ATS → si résolu, activer le toggle, sinon afficher « non scrapable »), pause/réactivation, retrait. Jobs → badge de provenance indépendant du score, tri/épinglage optionnel. À aligner avec le `SPEC_tracker_redesign` (contrôles de run en haut, Settings limité au config-only).
+L'UI est `tracker_views/` (`settings.py`, `dashboard.py`, `onboarding.py`, `shared.py`), pas un `tracker.py` unique. Le panneau « Monitored companies » va dans `tracker_views/settings.py` : liste, ajout (coller l'URL carrières → détection ATS → si résolu, activer le toggle, sinon afficher « non scrapable »), pause/réactivation, retrait. Le badge de provenance va dans la vue Jobs, indépendant du score, tri/épinglage optionnel. À aligner avec le `SPEC_tracker_redesign` (contrôles de run en haut, Settings limité au config-only). Rappel constitution : `tracker_views/shared.py` et `onboarding.py` sont « Stable core » — ne pas les modifier sauf nécessité explicite ; le panneau va donc dans `settings.py` (non stable-core).
 
 ## Découpage en phases (validation séquentielle)
 
