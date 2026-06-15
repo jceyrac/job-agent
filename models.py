@@ -28,6 +28,10 @@ class JobPosting:
     language_required: Optional[str] = None  # controlled list (english, french, ...)
     extracted_at: Optional[datetime] = None  # NULL = extraction not yet run
     extracted_by: Optional[str] = None        # model identifier that performed extraction
+
+    # Monitored companies — provenance
+    monitored_company_id: Optional[int] = None  # FK → companies.id, set at scrape time
+    filtered_non_product: bool = False          # title gate disposition
     country_code: Optional[str] = None        # ISO 3166-1 alpha-2, e.g. CH, DE, FR, US
     salary_text: Optional[str] = None           # free-text salary signal from extraction
     comp_annual_eur: Optional[int] = None       # normalized annual EUR, when parseable

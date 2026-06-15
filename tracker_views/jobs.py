@@ -400,7 +400,13 @@ def _render_card(job: dict, apps_index: dict[str, dict]):
                 company_text = md_link(company, f"/company_detail?id={company_id}")
             else:
                 company_text = company
+            # Provenance badge for monitored-company jobs
+            is_monitored = job.get("monitored_company_id") is not None
             title_md = md_link(f"**{job.get('title', '')}**", f"/job_detail?id={job_id}")
+            if is_monitored:
+                st.html(f'<span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;'
+                        f'border-radius:4px;font-size:12px;font-weight:600">'
+                        f'🎯 Monitored · {company}</span>')
             st.markdown(f"{title_md}  @ {company_text}")
             parts = [f"📍 {job.get('location', '')}" if job.get("location") else "",
                      job.get("work_mode", ""), job.get("company_size", "")]

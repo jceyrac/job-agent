@@ -924,6 +924,20 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     # ── Tier 1: LLM evaluation with small model ────────────────────────────
     profile_context = profile.scoring_context if hasattr(profile, "scoring_context") else ""
 
+    # Inject monitoring provenance as prose into the scoring context (C4, Principle IV)
+    if getattr(job, "monitored_company_id", None):
+        monitoring_note = (
+            "This job is from a company the user actively monitors — treat as a strong "
+            "positive signal. However, score honestly: if the role is clearly junior or "
+            "the company type is fundamentally mismatched (large bank, Big 4, etc.), "
+            "apply a soft downgrade. Seniority is assessed from the full description, "
+            "not the title alone."
+        )
+        if profile_context:
+            profile_context = f"{monitoring_note}\n\n{profile_context}"
+        else:
+            profile_context = monitoring_note
+
     prompt = (
         f"Profile context:\n{profile_context.strip()}\n\n"
         f"Job (already classified):\n"
