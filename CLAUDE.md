@@ -170,10 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Monitored Companies** (`specs/001-monitored-companies/`)
-- Spec: `specs/001-monitored-companies/spec.md`
-- Plan: `specs/001-monitored-companies/plan.md`
-- Data model: `specs/001-monitored-companies/data-model.md`
-- Quickstart: `specs/001-monitored-companies/quickstart.md`
-- Contracts: `specs/001-monitored-companies/contracts/cli.md`
+Current feature: **Pipeline Monitoring Step** (`specs/002-pipeline-monitoring-step/`)
+- Spec: `specs/002-pipeline-monitoring-step/spec.md`
+- Plan: `specs/002-pipeline-monitoring-step/plan.md`
+- Tasks: `specs/002-pipeline-monitoring-step/tasks.md`
 <!-- SPECKIT END -->
