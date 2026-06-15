@@ -1,5 +1,6 @@
 """job_agent — automated PM job search (single-profile mode)."""
 
+import argparse
 import subprocess
 import sys
 import time
@@ -18,26 +19,77 @@ def _ts() -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="job_agent full pipeline")
+    parser.add_argument("--monitored-only", action="store_true",
+                        help="Run only the monitored-company scrape step, then extract+score")
+    parser.add_argument("--no-monitoring", action="store_true",
+                        help="Skip the monitored-company scrape step even if enabled in config")
+    args = parser.parse_args()
+
+    if args.monitored_only and args.no_monitoring:
+        print("--monitored-only and --no-monitoring are mutually exclusive.")
+        sys.exit(1)
+
     db = JobStorage(DB_PATH)
     active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
     t0 = time.monotonic()
 
+    # ── Decision logic ──────────────────────────────────────────────────────
+    run_broad = not args.monitored_only
+    run_monitoring = False
+
+    if args.monitored_only:
+        run_monitoring = True
+    elif not args.no_monitoring:
+        cfg = db.get_config("monitoring.enabled_in_pipeline")
+        enabled_in_config = cfg is None or cfg.lower() == "true"
+        if enabled_in_config:
+            run_monitoring = bool(db.get_monitored_companies())
+
     try:
-        print(f"[{_ts()}] === Step 1: Scraping ===")
-        subprocess.run([sys.executable, "scrape.py"], check=True)
-        t1 = time.monotonic()
-        print(f"[{_ts()}] Scraping done — {t1 - t0:.0f}s elapsed")
+        step_num = 1
+        t_prev = t0
 
-        print(f"\n[{_ts()}] === Step 2: Extraction ===")
+        # ── Step: Monitored-company scrape (conditional) ────────────────────
+        if run_monitoring:
+            print(f"\n[{_ts()}] === Step {step_num}: Monitored scrape ===")
+            subprocess.run([sys.executable, "scrape.py", "--monitored-only"],
+                           check=True)
+            t_now = time.monotonic()
+            print(f"[{_ts()}] Monitored scrape done"
+                  f" — {t_now - t_prev:.0f}s elapsed"
+                  + (f", {t_now - t0:.0f}s total" if step_num > 1 else ""))
+            step_num += 1
+            t_prev = t_now
+
+        # ── Step: Broad scrape (conditional) ────────────────────────────────
+        if run_broad:
+            print(f"\n[{_ts()}] === Step {step_num}: Broad scrape ===")
+            subprocess.run([sys.executable, "scrape.py"], check=True)
+            t_now = time.monotonic()
+            print(f"[{_ts()}] Broad scrape done"
+                  f" — {t_now - t_prev:.0f}s elapsed"
+                  + (f", {t_now - t0:.0f}s total" if step_num > 1 else ""))
+            step_num += 1
+            t_prev = t_now
+
+        # ── Step: Extraction ────────────────────────────────────────────────
+        print(f"\n[{_ts()}] === Step {step_num}: Extraction ===")
         subprocess.run([sys.executable, "score.py", "--extract"], check=True)
-        t2 = time.monotonic()
-        print(f"[{_ts()}] Extraction done — {t2 - t1:.0f}s elapsed, {t2 - t0:.0f}s total")
+        t_now = time.monotonic()
+        print(f"[{_ts()}] Extraction done"
+              f" — {t_now - t_prev:.0f}s elapsed, {t_now - t0:.0f}s total")
+        step_num += 1
+        t_prev = t_now
 
-        print(f"\n[{_ts()}] === Step 3: Scoring [{active_id}] ===")
-        subprocess.run([sys.executable, "score.py", "--profile", active_id], check=True)
-        t3 = time.monotonic()
-        total = t3 - t0
-        print(f"[{_ts()}] Scoring done — {t3 - t2:.0f}s elapsed, {total:.0f}s total")
+        # ── Step: Scoring ───────────────────────────────────────────────────
+        print(f"\n[{_ts()}] === Step {step_num}: Scoring [{active_id}] ===")
+        subprocess.run([sys.executable, "score.py", "--profile", active_id],
+                       check=True)
+        t_now = time.monotonic()
+        total = t_now - t0
+        print(f"[{_ts()}] Scoring done"
+              f" — {t_now - t_prev:.0f}s elapsed, {total:.0f}s total")
 
         db.update_last_run(duration_seconds=round(total, 1))
 

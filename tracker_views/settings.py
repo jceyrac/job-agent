@@ -162,7 +162,7 @@ def _render_run_controls(db):
         return
 
     # ── No process running — show launch buttons ─────────────────────────
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("🕸 Run scrape", use_container_width=True,
                      help="Fetch new jobs from all enabled scrapers. Can be stopped."):
@@ -178,6 +178,21 @@ def _render_run_controls(db):
             st.rerun()
 
     with c2:
+        if st.button("🎯 Run monitoring", use_container_width=True,
+                     help="Run scrape.py --monitored-only. Fetches all openings "
+                          "from monitored companies, independent of the broad scrape."):
+            proc = subprocess.Popen(
+                [sys.executable, "-u", "scrape.py", "--monitored-only"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=False,
+            )
+            st.session_state.bg_process = proc
+            st.session_state.bg_label = "monitoring"
+            st.session_state.bg_output = ""
+            st.session_state.bg_start = time.time()
+            st.rerun()
+
+    with c3:
         if st.button("🎯 Run scoring", use_container_width=True,
                      help="Score all unscored jobs for the active profile. Can be stopped."):
             active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
@@ -317,6 +332,24 @@ def _render_monitored_companies(db):
         monitoring_badge,
     )
     st.subheader("🎯 Monitored Companies")
+
+    # ── Pipeline config checkbox ──
+    cfg = db.get_config("monitoring.enabled_in_pipeline")
+    enabled_in_pipeline = cfg is None or cfg.lower() == "true"
+    new_val = st.checkbox(
+        "Include monitored-company scrape in the full pipeline run",
+        value=enabled_in_pipeline,
+        key="monitoring_enabled_in_pipeline",
+        help="When on and at least one company is monitored, `python main.py` "
+             "will also run `scrape.py --monitored-only` as part of the full "
+             "pipeline. Independent of this setting, you can always run "
+             "monitoring on its own (button above) or via "
+             "`scrape.py --monitored-only`.",
+    )
+    if new_val != enabled_in_pipeline:
+        db.set_config("monitoring.enabled_in_pipeline",
+                      "true" if new_val else "false")
+        st.rerun()
 
     # ── Add company form ──
     with st.expander("➕ Add a company to monitor", expanded=False):
