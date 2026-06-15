@@ -271,7 +271,16 @@ CREATE TABLE IF NOT EXISTS runs (
     jobs_scored INTEGER,
     jobs_above_threshold INTEGER,
     status TEXT,
-    error_msg TEXT
+    error_msg TEXT,
+    duration_seconds REAL,
+    run_type TEXT DEFAULT 'full'
+);
+
+-- Schema migrations tracking — idempotent, applied exactly once
+CREATE TABLE IF NOT EXISTS migrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    applied_at TEXT NOT NULL
 );
 """
 
@@ -779,7 +788,125 @@ class JobStorage:
                 """)
                 logger.info("[Storage] Phase 6 migration: created interactions table")
 
+            # ── Monitored Companies — Phase A: data model ──
+            self._migrate_monitored_companies(conn)
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
+
+    def _migration_applied(self, conn, name: str) -> bool:
+        """Check if a named migration has already been applied."""
+        row = conn.execute(
+            "SELECT 1 FROM migrations WHERE name = ?", (name,)
+        ).fetchone()
+        return row is not None
+
+    def _record_migration(self, conn, name: str) -> None:
+        conn.execute(
+            "INSERT INTO migrations (name, applied_at) VALUES (?, ?)",
+            (name, _now()),
+        )
+
+    def _migrate_monitored_companies(self, conn) -> None:
+        """Phase A: extend companies, jobs, runs for monitored companies feature."""
+
+        # --- companies: ATS / monitoring columns ---
+        companies_cols = {row[1] for row in conn.execute("PRAGMA table_info(companies)").fetchall()}
+        # Ensure base columns exist (for DBs created before these were in the schema)
+        for col, defn in [
+            ("website",       "TEXT"),
+            ("careers_url",   "TEXT"),
+            ("notes",         "TEXT"),
+            ("summary",       "TEXT"),
+            ("company_country", "TEXT"),
+            ("industry_sector", "TEXT"),
+            ("company_size",  "TEXT"),
+            ("enriched_at",   "TEXT"),
+            ("enriched_by",   "TEXT"),
+        ]:
+            if col not in companies_cols:
+                try:
+                    conn.execute(f"ALTER TABLE companies ADD COLUMN {col} {defn}")
+                    companies_cols.add(col)
+                except sqlite3.OperationalError:
+                    pass  # column already exists (race with earlier migration)
+        for col, defn in [
+            ("ats_provider",  "TEXT"),
+            ("ats_identifier", "TEXT"),
+            ("scraper_id",    "TEXT"),
+            ("monitored",     "BOOLEAN DEFAULT FALSE"),
+            ("detected_at",   "TEXT"),
+        ]:
+            if col not in companies_cols:
+                conn.execute(f"ALTER TABLE companies ADD COLUMN {col} {defn}")
+                logger.info(f"[Storage] Monitored: added {col} to companies")
+
+        # --- jobs: monitored_company_id FK + filtered_non_product ---
+        jobs_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "monitored_company_id" not in jobs_cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN monitored_company_id INTEGER REFERENCES companies(id)")
+            logger.info("[Storage] Monitored: added monitored_company_id to jobs")
+        if "filtered_non_product" not in jobs_cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN filtered_non_product BOOLEAN DEFAULT FALSE")
+            logger.info("[Storage] Monitored: added filtered_non_product to jobs")
+
+        # --- runs: run_type ---
+        runs_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        if "run_type" not in runs_cols:
+            conn.execute("ALTER TABLE runs ADD COLUMN run_type TEXT DEFAULT 'full'")
+            logger.info("[Storage] Monitored: added run_type to runs")
+
+        # --- Seed Greenhouse boards ---
+        if not self._migration_applied(conn, "seed_greenhouse_boards"):
+            self._seed_greenhouse_boards(conn)
+            self._record_migration(conn, "seed_greenhouse_boards")
+
+    def _seed_greenhouse_boards(self, conn) -> None:
+        """Seed ~30 Greenhouse boards from the current CRYPTO_WEB3_BOARDS constant."""
+        # Import here to avoid circular dependency at module load
+        try:
+            from scrapers.greenhouse import CRYPTO_WEB3_BOARDS
+        except ImportError:
+            import importlib
+            mod = importlib.import_module("scrapers.greenhouse")
+            CRYPTO_WEB3_BOARDS = getattr(mod, "CRYPTO_WEB3_BOARDS", [])
+
+        if not CRYPTO_WEB3_BOARDS:
+            return
+
+        seeded = 0
+        now = _now()
+        for token in CRYPTO_WEB3_BOARDS:
+            # Derive a display name from the token: "coinbase" → "Coinbase", "avalabs" → "Ava Labs"
+            name = token.replace("-", " ").replace("_", " ").title()
+            name_norm = _normalize_company_name(name)
+            if not name_norm:
+                continue
+            existing = conn.execute(
+                "SELECT id FROM companies WHERE name_normalized = ?", (name_norm,)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE companies SET
+                           ats_provider = 'greenhouse',
+                           ats_identifier = ?,
+                           monitored = TRUE,
+                           last_seen_at = ?
+                       WHERE id = ?""",
+                    (token, now, existing["id"]))
+            else:
+                conn.execute(
+                    """INSERT INTO companies
+                       (name, name_normalized, careers_url,
+                        ats_provider, ats_identifier, monitored,
+                        status, first_seen_at, last_seen_at, created_at, detected_at)
+                       VALUES (?, ?, ?, 'greenhouse', ?, TRUE, 'prospect', ?, ?, ?, ?)""",
+                    (name, name_norm,
+                     f"https://boards.greenhouse.io/{token}",
+                     token, now, now, now, now))
+            seeded += 1
+
+        if seeded:
+            logger.info(f"[Storage] Monitored: seeded {seeded} Greenhouse boards as companies")
 
     @contextmanager
     def _conn(self):
@@ -987,20 +1114,22 @@ class JobStorage:
                    VALUES (?, ?, ?, ?)""",
                 (company_id, status, note, now))
 
-    def _upsert_job_raw(self, job, conn, now: str, company_id: int | None = None) -> None:
+    def _upsert_job_raw(self, job, conn, now: str, company_id: int | None = None,
+                         monitored_company_id: int | None = None) -> None:
         """Insère ou met à jour la table jobs (données brutes uniquement)."""
         conn.execute(
             """INSERT INTO jobs (
                    id, title, company, company_id, url, source, location, base_location,
-                   posted_date, description, first_seen, last_seen
+                   posted_date, description, first_seen, last_seen, monitored_company_id
                ) VALUES (
                    :id, :title, :company, :company_id, :url, :source, :location, :base_location,
-                   :posted_date, :description, :now, :now
+                   :posted_date, :description, :now, :now, :monitored_company_id
                )
                ON CONFLICT(id) DO UPDATE SET
                    last_seen  = excluded.last_seen,
                    base_location = excluded.base_location,
-                   company_id = COALESCE(jobs.company_id, excluded.company_id)""",
+                   company_id = COALESCE(jobs.company_id, excluded.company_id),
+                   monitored_company_id = COALESCE(jobs.monitored_company_id, excluded.monitored_company_id)""",
             {
                 "id":            job.id,
                 "title":         job.title,
@@ -1013,6 +1142,7 @@ class JobStorage:
                 "posted_date":   str(getattr(job, "posted_date", "") or ""),
                 "description":   getattr(job, "description", None),
                 "now":           now,
+                "monitored_company_id": monitored_company_id,
             },
         )
 
@@ -1232,14 +1362,16 @@ class JobStorage:
                 enriched_by=extracted_by, _conn=conn)
 
     def save_scored(self, job, score_result: dict, profile_id: str,
-                    company_id: int | None = None) -> None:
+                    company_id: int | None = None,
+                    monitored_company_id: int | None = None) -> None:
         """
         Sauvegarde un job avec son score pour un profil donné.
         Après Phase 1e.4: only writes profile-dependent columns to job_scores.
         """
         now = _now()
         with self._conn() as conn:
-            self._upsert_job_raw(job, conn, now, company_id=company_id)
+            self._upsert_job_raw(job, conn, now, company_id=company_id,
+                                monitored_company_id=monitored_company_id)
             conn.execute(
                 """INSERT INTO job_scores (
                        job_id, profile_id,
@@ -1263,14 +1395,16 @@ class JobStorage:
             self._update_job_extraction_fields(job, score_result, conn, now,
                                                company_id=company_id)
 
-    def save_unscored(self, job, company_id: int | None = None) -> None:
+    def save_unscored(self, job, company_id: int | None = None,
+                       monitored_company_id: int | None = None) -> None:
         """
         Enregistre un job sans score (échec scorer persistant).
         Le job sera retenté au prochain run (absent de job_scores).
         """
         now = _now()
         with self._conn() as conn:
-            self._upsert_job_raw(job, conn, now, company_id=company_id)
+            self._upsert_job_raw(job, conn, now, company_id=company_id,
+                                monitored_company_id=monitored_company_id)
 
     def get_engaged_job_keys(self) -> list[dict]:
         """Return (title, company, id) for jobs with status in {applied, ready, queued, archived}.
@@ -1572,6 +1706,123 @@ class JobStorage:
                    ORDER BY j.last_seen DESC""",
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Monitored Companies — queries and mutations
+    # ------------------------------------------------------------------
+
+    def set_company_monitored(self, company_id: int, monitored: bool) -> None:
+        """Toggle the monitored flag on a company. Does NOT touch scraping config."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE companies SET monitored = ? WHERE id = ?",
+                (int(monitored), company_id),
+            )
+
+    def get_monitored_companies(self) -> list[dict]:
+        """Return all companies where monitored=true (active, not paused)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, name, ats_provider, ats_identifier, scraper_id,
+                          careers_url, detected_at
+                   FROM companies
+                   WHERE monitored = TRUE
+                   ORDER BY name"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def is_company_scrapable(self, company_id: int) -> bool:
+        """A company is scrapable if it has an ATS provider or a dedicated scraper."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT ats_provider, scraper_id FROM companies WHERE id = ?",
+                (company_id,),
+            ).fetchone()
+        if not row:
+            return False
+        return bool(row["ats_provider"] or row["scraper_id"])
+
+    def get_companies_by_ats_provider(self, provider: str) -> list[dict]:
+        """Return monitored companies for a specific ATS provider."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, name, ats_identifier, scraper_id
+                   FROM companies
+                   WHERE monitored = TRUE AND ats_provider = ?
+                   ORDER BY name""",
+                (provider,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_job_monitored_company(self, job_id: str, company_id: int) -> None:
+        """Record that a job came from a monitored company (set at scrape time)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE jobs SET monitored_company_id = ? WHERE id = ?",
+                (company_id, job_id),
+            )
+
+    def set_job_filtered_non_product(self, job_id: str) -> None:
+        """Mark a job as filtered by the PM title gate."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE jobs SET filtered_non_product = TRUE WHERE id = ?",
+                (job_id,),
+            )
+
+    def upsert_company_from_detection(self, name: str, careers_url: str,
+                                       ats_provider: str,
+                                       ats_identifier: str) -> int:
+        """Create or update a company from ATS detection. Returns company id."""
+        name_norm = _normalize_company_name(name)
+        if not name_norm:
+            raise ValueError(f"Company name normalizes to empty: {name!r}")
+        now = _now()
+        with self._conn() as conn:
+            existing = conn.execute(
+                "SELECT id FROM companies WHERE name_normalized = ?",
+                (name_norm,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE companies SET
+                           careers_url = COALESCE(NULLIF(?, ''), companies.careers_url),
+                           ats_provider = ?,
+                           ats_identifier = ?,
+                           detected_at = ?,
+                           last_seen_at = ?
+                       WHERE id = ?""",
+                    (careers_url, ats_provider, ats_identifier, now, now, existing["id"]),
+                )
+                return existing["id"]
+            else:
+                conn.execute(
+                    """INSERT INTO companies
+                       (name, name_normalized, website, careers_url,
+                        ats_provider, ats_identifier,
+                        status, monitored,
+                        first_seen_at, last_seen_at, created_at, detected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 'prospect', FALSE, ?, ?, ?, ?)""",
+                    (name, name_norm, None, careers_url,
+                     ats_provider, ats_identifier,
+                     now, now, now, now),
+                )
+                return conn.execute(
+                    "SELECT id FROM companies WHERE name_normalized = ?",
+                    (name_norm,),
+                ).fetchone()["id"]
+
+    def get_monitored_company_for_job(self, job_id: str) -> dict | None:
+        """Return the monitored company info for a job, if any."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT c.id, c.name, c.monitored
+                   FROM jobs j
+                   JOIN companies c ON j.monitored_company_id = c.id
+                   WHERE j.id = ?""",
+                (job_id,),
+            ).fetchone()
+        return dict(row) if row else None
 
     # ------------------------------------------------------------------
     # Config key-value store
@@ -2416,13 +2667,14 @@ class JobStorage:
         status: str,
         error_msg: str = None,
         duration_seconds: float = None,
+        run_type: str = "full",
     ) -> None:
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO runs
-                   (ran_at, profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg, duration_seconds)
-                   VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?)""",
-                (profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg, duration_seconds),
+                   (ran_at, profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg, duration_seconds, run_type)
+                   VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (profile_id, jobs_scraped, jobs_scored, jobs_above_threshold, status, error_msg, duration_seconds, run_type),
             )
 
     def update_last_run(

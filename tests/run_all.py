@@ -21,17 +21,17 @@ from test_storage import run_storage_tests
 
 
 def _load_scrapers():
-    from scrapers.remoteok        import RemoteOKScraper
-    from scrapers.web3career      import Web3CareerScraper
-    from scrapers.weworkremotely  import WeWorkRemotelyScraper
-    from scrapers.cryptojobs_com  import CryptoJobsComScraper
-    from scrapers.cryptojobslist  import CryptoJobsListScraper
-    from scrapers.tietalent       import TieTalentScraper
-    from scrapers.greenhouse      import GreenhouseScraper
-    from scrapers.defi_jobs       import DeFiJobsScraper
-    from scrapers.jobup           import JobupScraper
-    from scrapers.wellfound       import WellfoundScraper
-    from scrapers.linkedin       import LinkedInScraper
+    from scrapers.boards.remoteok        import RemoteOKScraper
+    from scrapers.boards.web3career      import Web3CareerScraper
+    from scrapers.boards.weworkremotely  import WeWorkRemotelyScraper
+    from scrapers.boards.cryptojobs_com  import CryptoJobsComScraper
+    from scrapers.boards.cryptojobslist  import CryptoJobsListScraper
+    from scrapers.boards.tietalent       import TieTalentScraper
+    from scrapers.greenhouse             import GreenhouseScraper
+    from scrapers.boards.defi_jobs       import DeFiJobsScraper
+    from scrapers.boards.jobup           import JobupScraper
+    from scrapers.boards.wellfound       import WellfoundScraper
+    from scrapers.boards.linkedin        import LinkedInScraper
 
     # optional_fields: fields that are best-effort for this source.
     # A None/missing value raises ⚠️  instead of ❌ and does not cause FAIL.

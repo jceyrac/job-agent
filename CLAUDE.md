@@ -170,6 +170,10 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+Current feature: **Monitored Companies** (`specs/001-monitored-companies/`)
+- Spec: `specs/001-monitored-companies/spec.md`
+- Plan: `specs/001-monitored-companies/plan.md`
+- Data model: `specs/001-monitored-companies/data-model.md`
+- Quickstart: `specs/001-monitored-companies/quickstart.md`
+- Contracts: `specs/001-monitored-companies/contracts/cli.md`
 <!-- SPECKIT END -->

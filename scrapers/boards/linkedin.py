@@ -1,7 +1,7 @@
 import time
 
 from scrapers.base import BaseScraper
-from scrapers._jobspy_helpers import scrape_with_timeout, add_unique
+from scrapers.boards._jobspy_helpers import scrape_with_timeout, add_unique
 from models import JobFilter, JobPosting
 
 SEARCH_TERMS_LINKEDIN = [

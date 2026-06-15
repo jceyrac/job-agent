@@ -14,9 +14,31 @@ from storage import JobStorage
 
 
 def discover_scrapers():
-    package_path = os.path.join(os.path.dirname(__file__), "scrapers")
+    scrapers_dir = os.path.join(os.path.dirname(__file__), "scrapers")
     scraper_classes = []
-    for _, module_name, _ in pkgutil.iter_modules([package_path]):
+
+    # Scan sub-packages: boards/, ats/, company_sites/ (and root-level for legacy)
+    for subpkg in ("boards", "ats", "company_sites"):
+        pkg_path = os.path.join(scrapers_dir, subpkg)
+        if not os.path.isdir(pkg_path):
+            continue
+        for _, module_name, _ in pkgutil.iter_modules([pkg_path]):
+            if module_name in ("base", "__init__"):
+                continue
+            module = importlib.import_module(f"scrapers.{subpkg}.{module_name}")
+            for attr_name in dir(module):
+                obj = getattr(module, attr_name)
+                if (
+                    isinstance(obj, type)
+                    and hasattr(obj, "fetch")
+                    and hasattr(obj, "SOURCE_NAME")
+                    and obj.__name__ != "BaseScraper"
+                    and getattr(obj, "ENABLED", True)
+                ):
+                    scraper_classes.append(obj)
+
+    # Also scan root-level scrapers/ for non-migrated modules (greenhouse, disabled scrapers)
+    for _, module_name, _ in pkgutil.iter_modules([scrapers_dir]):
         if module_name in ("base", "__init__"):
             continue
         module = importlib.import_module(f"scrapers.{module_name}")
@@ -29,7 +51,9 @@ def discover_scrapers():
                 and obj.__name__ != "BaseScraper"
                 and getattr(obj, "ENABLED", True)
             ):
-                scraper_classes.append(obj)
+                if obj not in scraper_classes:
+                    scraper_classes.append(obj)
+
     return scraper_classes
 
 

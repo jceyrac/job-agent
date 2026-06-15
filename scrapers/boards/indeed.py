@@ -7,7 +7,7 @@ Re-enable after IP block clears:
 import time
 
 from scrapers.base import BaseScraper
-from scrapers._jobspy_helpers import scrape_with_timeout, add_unique, patch_requests_for_indeed, unpatch_requests
+from scrapers.boards._jobspy_helpers import scrape_with_timeout, add_unique, patch_requests_for_indeed, unpatch_requests
 from models import JobFilter, JobPosting
 
 SEARCH_TERMS_INDEED = [
