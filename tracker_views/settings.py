@@ -65,38 +65,6 @@ def _render_run_controls(db):
 
     st.subheader("🚀 Run")
 
-    # ── Pipeline config checkboxes ───────────────────────────────────────
-    c_p1, c_p2 = st.columns(2)
-    with c_p1:
-        scrape_cfg = db.get_config("scrape.enabled_in_pipeline")
-        scrape_enabled = scrape_cfg is None or scrape_cfg.lower() == "true"
-        new_scrape = st.checkbox(
-            "Include broad scrape in the full pipeline run",
-            value=scrape_enabled,
-            key="scrape_enabled_in_pipeline",
-            help="When off, `python main.py` skips the broad scrape step. "
-                 "You can still run it on demand with the button below.",
-        )
-        if new_scrape != scrape_enabled:
-            db.set_config("scrape.enabled_in_pipeline",
-                          "true" if new_scrape else "false")
-            st.rerun()
-    with c_p2:
-        mon_cfg = db.get_config("monitoring.enabled_in_pipeline")
-        mon_enabled = mon_cfg is None or mon_cfg.lower() == "true"
-        new_mon = st.checkbox(
-            "Include monitored-company scrape in the full pipeline run",
-            value=mon_enabled,
-            key="monitoring_enabled_in_pipeline",
-            help="When on and at least one company is monitored, `python main.py` "
-                 "will also run `scrape.py --monitored-only` as part of the full "
-                 "pipeline.",
-        )
-        if new_mon != mon_enabled:
-            db.set_config("monitoring.enabled_in_pipeline",
-                          "true" if new_mon else "false")
-            st.rerun()
-
     # ── Session-state keys for background processes ──────────────────────
     if "bg_process" not in st.session_state:
         st.session_state.bg_process = None       # Popen | None
@@ -364,6 +332,28 @@ def _render_monitored_companies(db):
         monitoring_badge,
     )
     st.subheader("🎯 Monitored Companies")
+
+    # ── Pipeline toggle: include monitoring in full pipeline ──────────────
+    mon_cfg = db.get_config("monitoring.enabled_in_pipeline")
+    mon_enabled = mon_cfg is None or mon_cfg.lower() == "true"
+    scrape_cfg = db.get_config("scrape.enabled_in_pipeline")
+    scrape_enabled = scrape_cfg is None or scrape_cfg.lower() == "true"
+
+    new_mon = st.checkbox(
+        "Include monitored-company scrape in the full pipeline run",
+        value=mon_enabled,
+        key="monitoring_enabled_in_pipeline",
+        help="When on and at least one company is monitored, `python main.py` "
+             "will also run `scrape.py --monitored-only` as part of the full "
+             "pipeline. At least one scrape source must remain active.",
+    )
+    if new_mon != mon_enabled:
+        if not new_mon and not scrape_enabled:
+            st.warning("Cannot disable both scrape sources — at least one must remain active.")
+        else:
+            db.set_config("monitoring.enabled_in_pipeline",
+                          "true" if new_mon else "false")
+            st.rerun()
 
     # ── Add company form ──
     with st.expander("➕ Add a company to monitor", expanded=False):
@@ -656,11 +646,33 @@ def _render_profile_editor(db):
 
 
 def _render_scraper_toggles(db):
-    """Enable/disable individual scrapers via their config keys."""
+    """Enable/disable individual scrapers + pipeline inclusion toggle."""
     from scrape import discover_scrapers
 
     st.divider()
     st.subheader("🔌 Scraper Toggles")
+
+    # ── Pipeline toggle: include broad scrape in full pipeline ────────────
+    scrape_cfg = db.get_config("scrape.enabled_in_pipeline")
+    scrape_enabled = scrape_cfg is None or scrape_cfg.lower() == "true"
+    mon_cfg = db.get_config("monitoring.enabled_in_pipeline")
+    mon_enabled = mon_cfg is None or mon_cfg.lower() == "true"
+
+    new_scrape = st.checkbox(
+        "Include broad scrape in the full pipeline run",
+        value=scrape_enabled,
+        key="scrape_enabled_in_pipeline",
+        help="When on, `python main.py` runs the broad scrape (boards + discovery) "
+             "as a pipeline step. You can still run it on demand with the "
+             "'🕸 Run scrape' button. At least one scrape source must remain active.",
+    )
+    if new_scrape != scrape_enabled:
+        if not new_scrape and not mon_enabled:
+            st.warning("Cannot disable both scrape sources — at least one must remain active.")
+        else:
+            db.set_config("scrape.enabled_in_pipeline",
+                          "true" if new_scrape else "false")
+            st.rerun()
 
     scraper_classes = sorted(discover_scrapers(), key=lambda c: c.SOURCE_NAME)
 
