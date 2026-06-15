@@ -24,6 +24,8 @@ def main():
                         help="Run only the monitored-company scrape step, then extract+score")
     parser.add_argument("--no-monitoring", action="store_true",
                         help="Skip the monitored-company scrape step even if enabled in config")
+    parser.add_argument("--no-scrape", action="store_true",
+                        help="Skip the broad scrape step even if enabled in config")
     args = parser.parse_args()
 
     if args.monitored_only and args.no_monitoring:
@@ -35,16 +37,26 @@ def main():
     t0 = time.monotonic()
 
     # ── Decision logic ──────────────────────────────────────────────────────
-    run_broad = not args.monitored_only
-    run_monitoring = False
+    # Broad scrape: off if --monitored-only or --no-scrape, else config-controlled
+    if args.monitored_only or args.no_scrape:
+        run_broad = False
+    else:
+        cfg = db.get_config("scrape.enabled_in_pipeline")
+        run_broad = cfg is None or cfg.lower() == "true"
 
+    # Monitoring: forced on by --monitored-only, off by --no-monitoring,
+    # else config-controlled (and only runs if ≥1 monitored company exists)
     if args.monitored_only:
         run_monitoring = True
-    elif not args.no_monitoring:
+    elif args.no_monitoring:
+        run_monitoring = False
+    else:
         cfg = db.get_config("monitoring.enabled_in_pipeline")
         enabled_in_config = cfg is None or cfg.lower() == "true"
         if enabled_in_config:
             run_monitoring = bool(db.get_monitored_companies())
+        else:
+            run_monitoring = False
 
     try:
         step_num = 1
