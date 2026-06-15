@@ -6,7 +6,7 @@
 
 ## Summary
 
-Add targeted company monitoring to the job agent: a `monitored` boolean on companies, a `--monitored-only` scrape mode that collects all openings from monitored companies via ATS adapters, a deterministic PM-family title gate protecting the Groq quota, a provenance badge in the UI, and a monitoring signal injected into the LLM scoring context. The scraper taxonomy refactors from a flat `scrapers/` directory into `boards/`, `ats/`, and `company_sites/` sub-packages.
+Add targeted company monitoring to the job agent: a `monitored` boolean on companies, a `--monitored-only` scrape mode that collects all openings from monitored companies via ATS adapters, a deterministic PM-family title gate protecting the Groq quota, a provenance badge in the UI, and a monitoring signal injected into the LLM scoring context. The scraper taxonomy refactors from a flat `scrapers/` directory into `boards/`, `ats/`, and `company_sites/` sub-packages. A later refinement (Phase 8a) adds a three-state monitoring-status UI model and fixes a pause/resume defect in the Settings panel.
 
 ## Technical Context
 
@@ -38,7 +38,7 @@ Add targeted company monitoring to the job agent: a `monitored` boolean on compa
 | II. Deux chemins d'amélioration | ✅ PASS | Monitoring toggle, ATS provider, and company list are prose/config (DB rows). Scraper adapters, title gate, and UI are code. |
 | III. Profil unifié unique | ✅ PASS | Monitoring is profile-independent (simple boolean on companies, not per-profile_id). The profile_id seam on jobs/scores is untouched. |
 | IV. Structure déterministe, prose LLM uniquement | ✅ PASS | Title gate is deterministic (substring match). Monitoring signal is injected as LLM prose (scoring context), not hard-coded score bonus. `filtered_non_product` disposition is deterministic. |
-| V. Modification chirurgicale | ✅ PASS | Phased (A→E), each independently validated. No opportunistic refactors. No new dependencies. |
+| V. Modification chirurgicale | ✅ PASS | Phased (A→E, plus 8a refinement), each independently validated. No opportunistic refactors. No new dependencies. |
 | VI. Validation empirique | ✅ PASS | Each phase validated against known companies (Coinbase, Kraken, Fireblocks). FELFEL regression check preserved. |
 | VII. Sécurité d'abord | ✅ PASS | No new secrets. Reuses existing HTTP stack. Monitoring config is DB data, not environment variables. |
 | VIII. Scrapers organisés par modèle d'acquisition | ✅ PASS | This feature explicitly implements the monitoring path of the discovery/monitoring split defined in Principle VIII. `boards/` = query-driven, `ats/` = company-keyed. `--monitored-only` guarantees autonomous monitoring. |
@@ -52,10 +52,10 @@ Add targeted company monitoring to the job agent: a `monitored` boolean on compa
 specs/001-monitored-companies/
 ├── plan.md              # This file
 ├── spec.md              # Feature specification
-├── research.md          # Phase 0 research decisions
-├── data-model.md        # Phase 1 data model
-├── quickstart.md        # Phase 1 validation guide
-└── contracts/           # Phase 1 CLI contracts
+├── research.md          # Phase 0 research decisions (Decision 11: Phase 8a)
+├── data-model.md         # Phase 1 data model
+├── quickstart.md         # Phase 1 validation guide
+└── contracts/            # Phase 1 CLI contracts
     └── cli.md
 ```
 
@@ -89,16 +89,24 @@ scrapers/
 
 scrape.py                # Gains --monitored-only flag + company-keyed dispatcher
 score.py                 # Gains title gate (pre-LLM skip) + monitoring signal injection
-storage.py               # Extended: companies columns, filtered_non_product, migrations table
+storage.py               # Extended: companies columns, filtered_non_product, migrations table,
+                          # plus (Phase 8a) get_all_monitorable_companies() and
+                          # get_companies(monitored=, monitorable=) — additive only
 tracker.py               # Global CSS for provenance badge
 tracker_views/
 ├── jobs.py              # Provenance badge rendering
-├── job_helpers.py       # Badge in job cards
-├── settings.py          # Monitored companies management panel
-└── shared.py            # Monitoring helpers (if needed)
+├── job_helpers.py        # Badge in job cards
+├── companies.py          # (Phase 8a) monitoring badge + sidebar "Monitoring status" filter
+├── company_detail.py      # (Phase 8a) monitoring badge + toggle (3-state)
+├── settings.py            # Monitored companies management panel; (Phase 8a) fixed to
+                            # source from get_all_monitorable_companies(), toggle instead
+                            # of pause/resume buttons
+└── shared.py              # Monitoring helpers: (Phase 8a) _scraper_slug,
+                            # is_monitoring_source_enabled, monitoring_badge,
+                            # load_all_monitorable_companies
 ```
 
-**Structure Decision**: Single project structure as existing. New sub-packages under `scrapers/` follow the constitution's taxonomy (Principle VIII). Existing `boards/` scrapers are moved verbatim — no logic changes.
+**Structure Decision**: Single project structure as existing. New sub-packages under `scrapers/` follow the constitution's taxonomy (Principle VIII). Existing `boards/` scrapers are moved verbatim — no logic changes. Phase 8a touches only `storage.py` (additive methods) and `tracker_views/*` (UI) — no scraper or scoring changes.
 
 ## Complexity Tracking
 
@@ -113,3 +121,4 @@ tracker_views/
 | **C** — ATS adapters | Lever, Ashby, Workday, SmartRecruiters, Workable | Each validated against a known company (Kraken/Ashby, Swissquote/SmartRecruiters, Lombard Odier/Workday) |
 | **D** — ATS detection + company addition UI | URL-based ATS detection (hostname match + vanity fetch + manual fallback), add-company form in Settings | Enter a known Greenhouse URL → resolves correctly |
 | **E** — Scoring + gate + badge + management UI | Title gate, monitoring signal injection in scoring context, provenance badge `🎯 Monitored · {company}`, Settings management panel | FELFEL regression passes; badge renders independent of score; pause skips in next run |
+| **8a** — Monitoring status UI refinement | Three-state monitoring model (not monitorable / monitorable-but-disabled / monitorable-enabled) across Companies list, company detail, and Settings; fix `_render_monitored_companies()` to source from `get_all_monitorable_companies()`; replace pause/resume buttons with `st.toggle` | Toggle a company off in Settings → remains visible with toggle off, can be toggled back on; disabling the underlying scraper shows a disabled toggle + caption everywhere |

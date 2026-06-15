@@ -310,7 +310,12 @@ def render():
 
 
 def _render_monitored_companies(db):
-    """Monitored companies management panel."""
+    """Monitored companies management panel — three-state model with st.toggle."""
+    from tracker_views.shared import (
+        load_all_monitorable_companies,
+        is_monitoring_source_enabled,
+        monitoring_badge,
+    )
     st.subheader("🎯 Monitored Companies")
 
     # ── Add company form ──
@@ -366,31 +371,47 @@ def _render_monitored_companies(db):
         with c2:
             pass
 
-    # ── Monitored companies list ──
-    monitored = db.get_monitored_companies()
-    if not monitored:
-        st.info("No companies monitored yet. Add one above!")
+    # ── All monitorable companies list (fix: sourced from get_all_monitorable,
+    #   not get_monitored — paused companies remain visible) ──
+    all_monitorable = load_all_monitorable_companies(db)
+    if not all_monitorable:
+        st.info("No monitorable companies yet. Add one above!")
         return
 
-    st.caption(f"{len(monitored)} monitored companies")
+    active_count = sum(1 for c in all_monitorable if c.get("monitored"))
+    st.caption(f"{len(all_monitorable)} monitorable companies ({active_count} active)")
 
-    for company in monitored:
+    for company in all_monitorable:
         cid = company["id"]
         name = company["name"]
         provider = company.get("ats_provider", "—")
         identifier = company.get("ats_identifier", "")
+        is_monitored = bool(company.get("monitored"))
+        source_enabled = is_monitoring_source_enabled(db, company)
+
         cols = st.columns([4, 2, 1])
         with cols[0]:
+            badge_html = monitoring_badge(company)
+            if badge_html:
+                st.html(badge_html)
             st.markdown(f"**{name}**  \n`{provider}` → `{identifier}`")
         with cols[1]:
-            st.caption(f"Active" if company.get("monitored") else "Paused")
+            if not source_enabled:
+                st.caption("⚪ Scraper disabled")
+            else:
+                st.caption("Active" if is_monitored else "Paused")
         with cols[2]:
-            if st.button("⏸ Pause" if company.get("monitored") else "▶ Resume",
-                        key=f"mon_toggle_{cid}", use_container_width=True):
-                new_state = not company.get("monitored", False)
-                db.set_company_monitored(cid, new_state)
-                st.cache_data.clear()
-                st.rerun()
+            if not source_enabled:
+                st.toggle("Monitor", value=False, disabled=True,
+                          key=f"mon_toggle_{cid}",
+                          help=f"Enable the {provider} scraper in Settings to monitor this company.")
+            else:
+                new_val = st.toggle("Monitor", value=is_monitored,
+                                    key=f"mon_toggle_{cid}")
+                if new_val != is_monitored:
+                    db.set_company_monitored(cid, new_val)
+                    st.cache_data.clear()
+                    st.rerun()
 
     st.markdown("---")
 

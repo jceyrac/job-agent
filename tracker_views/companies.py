@@ -6,7 +6,7 @@ import streamlit as st
 from tracker_views.shared import (
     ensure_db, get_db,
     load_companies, md_link,
-    company_status_badge,
+    company_status_badge, monitoring_badge,
     COMPANY_STATUSES, COUNTRY_OPTIONS, COUNTRY_FLAG, SECTOR_LABELS, sector_label,
 )
 from tracker_views.forms import add_company_dialog
@@ -79,8 +79,25 @@ def _render_list():
             key="co_sort",
         )
 
+    st.markdown("---")
+    st.markdown("**Monitoring**")
+    mon_status = st.radio(
+        "Monitoring status",
+        ["All", "Monitored only", "Monitorable (not yet monitored)"],
+        key="co_mon_status",
+    )
+
     last_ix_days = _LAST_IX_DAYS.get(last_ix_choice)
     only_never = (last_ix_choice == "Never interacted")
+
+    mon_filter = None
+    mon_monitorable = None
+    if mon_status == "Monitored only":
+        mon_filter = True
+        mon_monitorable = True
+    elif mon_status == "Monitorable (not yet monitored)":
+        mon_filter = False
+        mon_monitorable = True
 
     companies = load_companies(
         status=status_filter if status_filter else None,
@@ -91,6 +108,8 @@ def _render_list():
         sizes=tuple(size_filter),
         min_job_count=int(min_jobs) if min_jobs else None,
         last_interaction_within_days=last_ix_days,
+        monitored=mon_filter,
+        monitorable=mon_monitorable,
     )
 
     if only_never:
@@ -135,6 +154,9 @@ def _render_list():
             with c1:
                 st.markdown(md_link(f"**{c['name']}**",
                                     f"/company_detail?id={c['id']}"))
+                badge = monitoring_badge(c)
+                if badge:
+                    st.html(badge)
                 st.caption(
                     f"{company_status_badge(c['status'])} | "
                     f"💼 {c['job_count']} jobs | 👥 {c['contact_count']} contacts"

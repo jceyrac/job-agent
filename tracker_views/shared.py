@@ -427,3 +427,65 @@ def phone_link(phone: str) -> str:
     if not phone:
         return ""
     return f"[📞 {phone}](tel:{phone})"
+
+
+# ---------------------------------------------------------------------------
+# Monitoring helpers (Phase 8a)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=30)
+def load_all_monitorable_companies(_db) -> list[dict]:
+    """Cached loader for the monitorable-company set used by Settings and filters."""
+    return _db.get_all_monitorable_companies()
+
+
+def _scraper_slug(source_name: str) -> str:
+    """Mirrors BaseScraper._config_prefix() for lightweight UI config lookups."""
+    slug = source_name.lower().replace(" ", "_").replace(":", "_")
+    return f"scraper.{slug}"
+
+
+def _read_config_bool(db, key: str) -> bool | None:
+    val = db.get_config(key)
+    if val is None:
+        return None
+    return val.lower() == "true"
+
+
+def is_monitoring_source_enabled(db, company: dict) -> bool:
+    """Return False only when the company's scraper is explicitly disabled via config.
+    Defaults to True when the config key is absent (scraper is enabled).
+
+    company must have 'ats_provider' — we derive the slug from it, or from the
+    SOURCE_NAME of the dedicated scraper.
+    """
+    provider = (company.get("ats_provider") or "").strip()
+    if not provider:
+        # Dedicated scraper: look up scraper_id
+        sid = company.get("scraper_id")
+        if not sid:
+            return True  # shouldn't happen since we filter before calling
+        provider = sid
+    slug = _scraper_slug(provider)
+    enabled_val = db.get_config(f"{slug}.enabled")
+    if enabled_val is None:
+        return True  # not explicitly disabled → enabled
+    return enabled_val.lower() == "true"
+
+
+def monitoring_badge(company: dict) -> str:
+    """Return an HTML badge string for the company's monitoring status, or ''."""
+    ats = company.get("ats_provider")
+    sid = company.get("scraper_id")
+    if not ats and not sid:
+        return ""  # not monitorable
+    provider = ats or sid or "?"
+    monitored = company.get("monitored")
+    if monitored:
+        return (f'<span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;'
+                f'border-radius:4px;font-size:12px;font-weight:600">'
+                f'🟢 Monitored · {provider}</span>')
+    else:
+        return (f'<span style="background:#f5f5f5;color:#666;padding:2px 8px;'
+                f'border-radius:4px;font-size:12px;font-weight:600">'
+                f'⚪ Monitorable · {provider}</span>')

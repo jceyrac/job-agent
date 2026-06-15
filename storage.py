@@ -1731,6 +1731,20 @@ class JobStorage:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_all_monitorable_companies(self) -> list[dict]:
+        """Return all companies that have a scraping source (ATS or dedicated scraper),
+        regardless of monitored state.  Used by Settings UI so paused companies
+        remain visible — fixes the pause/resume disappearing-row bug."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, name, ats_provider, ats_identifier, scraper_id,
+                          careers_url, monitored, detected_at
+                   FROM companies
+                   WHERE ats_provider IS NOT NULL OR scraper_id IS NOT NULL
+                   ORDER BY name"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def is_company_scrapable(self, company_id: int) -> bool:
         """A company is scrapable if it has an ATS provider or a dedicated scraper."""
         with self._conn() as conn:
@@ -2183,6 +2197,8 @@ class JobStorage:
         sizes: list[str] | None = None,
         min_job_count: int | None = None,
         last_interaction_within_days: int | None = None,
+        monitored: bool | None = None,
+        monitorable: bool | None = None,
     ) -> list[dict]:
         """List companies with job/contact/interaction counts and last interaction date."""
         clauses = []
@@ -2214,6 +2230,16 @@ class JobStorage:
                 "last_ix.occurred_at >= datetime('now', ? || ' days')"
             )
             params.append(f"-{last_interaction_within_days}")
+        if monitored is not None:
+            if monitored:
+                clauses.append("c.monitored = 1")
+            else:
+                clauses.append("(c.monitored IS NULL OR c.monitored = 0)")
+        if monitorable is not None:
+            if monitorable:
+                clauses.append("(c.ats_provider IS NOT NULL OR c.scraper_id IS NOT NULL)")
+            else:
+                clauses.append("(c.ats_provider IS NULL AND c.scraper_id IS NULL)")
 
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
@@ -2265,6 +2291,8 @@ class JobStorage:
             SELECT
                 c.id, c.name, c.website, c.status, c.notes,
                 c.company_country, c.industry_sector, c.company_size,
+                c.careers_url, c.ats_provider, c.ats_identifier,
+                c.scraper_id, c.monitored, c.first_seen_at, c.last_seen_at, c.summary,
                 c.first_seen_at, c.last_seen_at, c.summary,
                 COALESCE(jcnt.cnt, 0)    AS job_count,
                 COALESCE(ctcnt.cnt, 0)   AS contact_count,

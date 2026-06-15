@@ -233,6 +233,82 @@
 
 ---
 
+## Phase 8a: Monitoring Status UI Refinement (extends US5 + US7)
+
+**Source**: `prompts/BUILD_monitoring_status_ui.md`
+
+**Goal**: Phases 8 and 9 above describe the original badge + pause/resume design.
+This phase replaces/extends that design with: (a) a fix for a real pause/resume
+bug found in `_render_monitored_companies()` (paused companies disappeared from
+the list because it only iterated `monitored=true` rows), and (b) a three-state
+monitoring model (not monitorable / monitorable-but-scraper-disabled /
+monitorable-and-enabled) surfaced consistently across the Companies list, company
+detail, and Settings.
+
+**Independent Test**: Toggle a Greenhouse company off in Settings → it remains
+visible in the list with the toggle now off (no disappearing row). Disable the
+Greenhouse scraper globally → all Greenhouse companies show a disabled toggle +
+"Enable the Greenhouse scraper..." caption everywhere.
+
+### Implementation
+
+- [ ] T067a [US5][US7] Add `get_all_monitorable_companies()` to `storage.py`: returns
+  companies where `ats_provider IS NOT NULL OR scraper_id IS NOT NULL`, regardless
+  of `monitored` state (fixes the pause/resume disappearing-row bug — Settings
+  must source from this, not `get_monitored_companies()`).
+- [ ] T067b [US5][US7] Extend `get_companies()` in `storage.py` with optional
+  `monitored: bool | None` and `monitorable: bool | None` kwargs, both `None` by
+  default (no-op for existing callers). `monitored=True` → `c.monitored = 1`;
+  `monitored=False` → `(c.monitored IS NULL OR c.monitored = 0)`;
+  `monitorable=True` → `(c.ats_provider IS NOT NULL OR c.scraper_id IS NOT NULL)`;
+  `monitorable=False` → the negation.
+- [ ] T067c [US5][US7] Add to `tracker_views/shared.py`: `_scraper_slug(name)` helper
+  (mirrors `BaseScraper._config_prefix()`), `is_monitoring_source_enabled(db, company)`
+  (reads `scraper.<slug>.enabled` config, defaults to enabled if unset),
+  `monitoring_badge(company)` (returns `🟢 Monitored · {provider}` /
+  `⚪ Monitorable · {provider}` / `""` if not monitorable), and cached loader
+  `load_all_monitorable_companies()`.
+- [ ] T067d [US5] In `tracker_views/companies.py`: replace the simple provenance
+  badge from T067 with `monitoring_badge(c)` in the card caption line. Add a
+  sidebar radio "Monitoring status": `All` / `Monitored only` / `Monitorable (not
+  yet monitored)`, mapped to the `monitored`/`monitorable` kwargs from T067b and
+  passed to `load_companies()`.
+- [ ] T067e [US5] In `tracker_views/company_detail.py`: after the meta chips, render
+  `monitoring_badge(company)`. If non-empty and `is_monitoring_source_enabled(db,
+  company)`, show an interactive `st.toggle` bound to `set_company_monitored()`.
+  If the source is disabled, show the same toggle `disabled=True` with caption
+  "Enable the {Provider} scraper in Settings to monitor this company." If the
+  company has no `ats_provider`/`scraper_id`, render nothing. Ensure
+  `get_company_by_id()`'s SELECT includes `ats_provider`, `ats_identifier`,
+  `scraper_id`, `monitored`.
+- [ ] T076a [US7] Replace `_render_monitored_companies()` in
+  `tracker_views/settings.py`: iterate `load_all_monitorable_companies()` instead
+  of `get_monitored_companies()` (T076's source). Replace the Pause/Resume button
+  with `st.toggle`, `disabled=not is_monitoring_source_enabled(db, company)`.
+  Status caption: "Active" / "Paused" when source enabled, "⚪ Scraper disabled"
+  when not. Update the summary caption to
+  `f"{len(all_monitorable)} monitorable companies ({active_count} active)"`.
+- [ ] T067f Run `python -m pytest tests/test_storage.py -q` — all tests green
+  (T067a/T067b are additive, no existing-call signature changes).
+
+### Validation (manual, per quickstart.md)
+
+- [ ] T067g A company with no `ats_provider`/`scraper_id` shows no badge and no
+  toggle in list, detail, or Settings.
+- [ ] T067h Set `scraper.greenhouse.enabled = "false"` (existing scraper toggle) →
+  all Greenhouse companies show a disabled toggle + enable-scraper caption in
+  detail view and Settings.
+- [ ] T067i In Settings, toggle a Greenhouse company Active → Paused → it remains
+  in the list with the toggle off (regression test for the original bug). Toggle
+  Paused → Active from the same row.
+- [ ] T067j Companies list: "Monitored only" / "Monitorable (not yet monitored)" /
+  "All" radio filters correctly; badge appears on cards.
+
+**Checkpoint**: Pause/resume bug fixed. Three-state monitoring model consistent
+across Companies list, company detail, and Settings.
+
+---
+
 ## Phase 10: Polish & Cross-Cutting Concerns
 
 **Purpose**: Tests, docs, final validation.
@@ -260,6 +336,7 @@
 - **User Story 4 — Scoring signal (Phase 7)**: Depends on Foundational (Phase 2). Independent of UI phases.
 - **User Story 5 — Visual distinction (Phase 8)**: Depends on Foundational (Phase 2). Independent of other Phase E items.
 - **User Story 7 — Settings panel (Phase 9)**: Depends on Phase 5 (needs add-company form). Independent of Phases 6-8.
+- **Monitoring Status UI Refinement (Phase 8a)**: Depends on Phase 8 and Phase 9 (extends/replaces their UI surfaces).
 - **Polish (Phase 10)**: Depends on all prior phases.
 
 ### User Story Dependencies
@@ -321,7 +398,8 @@ Task: "Add provenance badge in job_helpers.py"        # Phase 8
 6. Add scoring signal → Monitoring affects scores
 7. Add visual distinction → Badge visible in UI
 8. Add Settings panel → Bulk management
-9. Polish → Tests, validation, commit
+9. Refine monitoring status UI (three-state model, fix pause/resume bug)
+10. Polish → Tests, validation, commit
 
 ### Phases 6-8 Can Run in Parallel
 

@@ -44,6 +44,31 @@ def _render_detail(company_id: int):
         meta.append(f"[🌐 {company['website']}]({company['website']})")
     st.caption(" · ".join(meta) if meta else "")
 
+    # ── Monitoring badge + toggle (Phase 8a three-state model) ──
+    from tracker_views.shared import monitoring_badge, is_monitoring_source_enabled
+    badge_html = monitoring_badge(company)
+    if badge_html:
+        st.html(badge_html)
+        source_enabled = is_monitoring_source_enabled(db, company)
+        if source_enabled:
+            new_mon = st.toggle(
+                "Monitor this company",
+                value=bool(company.get("monitored")),
+                key=f"mon_toggle_detail_{company_id}",
+            )
+            if new_mon != bool(company.get("monitored")):
+                db.set_company_monitored(company_id, new_mon)
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            provider = company.get("ats_provider") or company.get("scraper_id") or "?"
+            st.toggle(
+                "Monitor this company",
+                value=False, disabled=True,
+                key=f"mon_toggle_detail_dis_{company_id}",
+                help=f"Enable the {provider} scraper in Settings to monitor this company.",
+            )
+
     # Status change
     new_status = st.selectbox(
         "Status", COMPANY_STATUSES,

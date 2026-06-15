@@ -12,10 +12,10 @@
 
 ### Session 2026-06-15
 
-- Q: Quelle est la liste précise des titres qui passent le gate de fonction ? → A: Product Manager, Senior/Staff/Principal/Lead/Group Product Manager, Director/Head/VP/Chief Product Officer, Product Owner, Technical Product Owner. Matching sous-chaîne insensible à la casse, jamais égalité stricte. Règle de sécurité : en cas de doute on garde (faux positif = un appel LLM, faux négatif = cible perdue). Cas de régression FELFEL (« Senior Tech Product Owner ») doit passer.
+- Q: Quelle est la liste précise des titres qui passent le gate de fonction ? → A: Product Manager, Senior/Staff/Principal/Lead/Group Product Manager, Director/Head/VP/Chief Product Officer, Product Owner, Technical Product Owner. Matching sous-chaîne insensible à la casse, jamais égalité stricte. Règle de sécurité : en cas de doute on garde (faux positif = un appel LLM, faux négatif = cible perdue). Cas de régression FELFEL (« Senior Tech Product Owner ») doit passer.
 - Q: Où placer le gate de fonction (titre) dans le pipeline ? → A: Skip déterministe placé juste avant l'appel LLM dans score.py. Le scraper reste large (filet complet), la ligne est écrite en base avec la disposition `filtered_non_product` pour audit, et aucun crédit Groq n'est dépensé sur un poste hors famille.
 - Q: Comment traiter la séniorité dans le gate ? → A: Pas de gate dur sur la séniorité. La séniorité est souvent invisible dans le titre seul ; elle reste un signal de scoring (le LLM voit le texte complet et rétrograde un poste junior), pas un filtre de collecte.
-- Q: Quel est le plancher de score pour un poste monitoré ? → A: Signal positif fort, pas un override. Un poste clairement inadapté (junior net, entreprise disqualifiante) score bas. La rétrogradation « grande entreprise / banque / Big 4 » est douce — un PM senior banque privée atterrit au milieu ; un PM senior scale-up crypto suisse monte haut. Le badge de provenance est indépendant du score.
+- Q: Quel est le plancher de score pour un poste monitoré ? → A: Signal positif fort, pas un override. Un poste clairement inadapté (junior net, entreprise disqualifiante) score bas. La rétrogradation « grande entreprise / banque / Big 4 » est douce — un PM senior banque privée atterrit au milieu ; un PM senior scale-up crypto suisse monte haut. Le badge de provenance est indépendant du score.
 - Q: Comment modéliser le monitoring (multi-profil vs simple booléen) ? → A: Simple booléen `monitored` sur la table `companies`. Déploiement mono-utilisateur par installation (chaque utilisateur clone le repo avec sa propre DB). La couture `profile_id` existante reste sur jobs/scores et n'est pas étendue au monitoring.
 - Q: Comment les entreprises entrent-elles dans le système ? → A: Deux voies. (a) Accumulation automatique : chaque job scrapé alimente `companies` (sans ATS résolu, donc pas encore monitorable). (b) Ajout manuel via l'UI : l'utilisateur fournit l'URL carrières, le système déduit le `scrape_method`. Le toggle monitoring n'est activable que si un `scrape_method` est résolu.
 - Q: Comment détecter l'ATS d'une entreprise depuis son URL carrières ? → A: D'abord match du hostname (boards.greenhouse.io, jobs.lever.co, *.ashbyhq.com, *.myworkdayjobs.com, careers.smartrecruiters.com, apply.workable.com…). Si le domaine est un vanity (fréquent en crypto : Coinbase, Ripple, Sygnum, Taurus…), un fetch unique de la page carrières repère le board sous-jacent. Fallback manuel : l'utilisateur peut saisir provider + identifiant à la main.
@@ -23,6 +23,12 @@
 - Q: Comment le toggle monitoring interagit-il avec la config ATS ? → A: Pause = `monitored = false`. La config de scraping (`ats_provider`, `ats_identifier`, `scraper_id`) persiste et n'est jamais supprimée pour une simple pause. L'adaptateur itère les entreprises `monitored = true` — une entreprise en pause est ignorée sans toucher à sa configuration.
 - Q: Quel est le mode d'exécution du monitoring ? → A: `scrape.py` gagne un flag `--monitored-only` (dans le style de `--profile` / `--rescore`). Le run ne touche que les sources company-keyed (pas les boards d'agrégation). Peut tourner plus souvent que le filet large. Dédoublonnage contre les jobs existants pour ne faire remonter que les nouvelles offres.
 - Q: Quelle mise en valeur visuelle pour les jobs monitorés ? → A: Badge de provenance `🎯 Monitored · {company}`, indépendant du score, visible même sans scoring. Optionnellement, tri/épinglage des jobs monitorés en tête.
+
+### Session 2026-06-15 (suite — UI de statut de monitoring)
+
+- Q: Comment afficher l'état de monitoring d'une entreprise dans l'UI (liste, détail, Settings) ? → A: Modèle à trois états dérivé de `ats_provider`/`scraper_id` et de l'activation du scraper correspondant (`scraper.<slug>.enabled`). (1) Pas de source de monitoring → aucun badge, aucun toggle, nulle part. (2) Source présente mais scraper désactivé → toggle visible mais désactivé, avec un message « Active le scraper {Provider} dans Settings pour monitorer cette entreprise. » (3) Source présente et scraper activé → toggle interactif, badge `🟢 Monitored · {provider}` ou `⚪ Monitorable · {provider}` selon `monitored`.
+- Q: Pourquoi corriger le panneau « Monitored Companies » des Settings ? → A: Bug identifié — `_render_monitored_companies()` n'itère que les entreprises `monitored=true`, donc une entreprise mise en pause disparaît de la liste et le bouton « Resume » devient inatteignable. Le panneau doit itérer `get_all_monitorable_companies()` (toute entreprise avec `ats_provider` ou `scraper_id`, peu importe l'état `monitored`), et remplacer le bouton Pause/Resume par un `st.toggle`.
+- Q: Faut-il des filtres sur la liste des entreprises ? → A: Oui — un filtre « Monitoring status » (`All` / `Monitored only` / `Monitorable (not yet monitored)`) dans la sidebar de la page Companies, en plus du badge sur chaque carte.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -140,17 +146,18 @@ The user wants to monitor a company that is not yet in the system. They provide 
 
 ### User Story 7 - Manage monitored companies in Settings (Priority: P3)
 
-The Settings page includes a panel listing all monitored companies with their ATS provider, monitoring status (active/paused), and last monitoring check timestamp. The user can pause, resume, or remove companies from this list. Pausing sets `monitored = false` while preserving all scraping configuration.
+The Settings page includes a panel listing all monitorable companies (any company with a resolved `ats_provider` or `scraper_id`, regardless of current `monitored` state) with their ATS provider, monitoring status (active/paused/scraper disabled), and last monitoring check timestamp. The user can toggle monitoring on or off per company via a single toggle control. Turning the toggle off sets `monitored = false` while preserving all scraping configuration; the company remains visible in the list afterwards so it can be turned back on.
 
 **Why this priority**: Bulk management is useful at scale but can be handled company-by-company initially.
 
-**Independent Test**: Navigate to Settings, view the monitored companies list, pause one, verify it's skipped in the next `--monitored-only` run.
+**Independent Test**: Navigate to Settings, view the monitorable companies list, toggle one off, verify it remains visible with the toggle off and is skipped in the next `--monitored-only` run, then toggle it back on.
 
 **Acceptance Scenarios**:
 
-1. **Given** 50 monitored companies, **When** the user opens Settings, **Then** all 50 are listed with their ATS provider, monitoring status, and last check date.
-2. **Given** a monitored company in the Settings list, **When** the user clicks "Pause", **Then** `monitored` is set to `false` but the scraping configuration persists. The company no longer appears in monitoring runs.
-3. **Given** a paused company, **When** the user clicks "Resume", **Then** monitoring resumes with the same scraping configuration as before the pause.
+1. **Given** 50 monitorable companies (any mix of `monitored=true`/`false`), **When** the user opens Settings, **Then** all 50 are listed with their ATS provider, monitoring status, and last check date.
+2. **Given** a monitored company in the Settings list, **When** the user turns its toggle off, **Then** `monitored` is set to `false` but the scraping configuration persists, the company REMAINS in the list with the toggle now off, and it no longer appears in monitoring runs.
+3. **Given** a company in the Settings list with its toggle off, **When** the user turns the toggle back on, **Then** monitoring resumes with the same scraping configuration as before, from the same row in the list.
+4. **Given** a company whose `ats_provider`/`scraper_id` corresponds to a scraper that is currently disabled (via `scraper.<slug>.enabled = false`), **When** the user views it in Settings, **Then** its toggle is shown but disabled, with a status caption indicating the scraper is disabled.
 
 ---
 
@@ -158,10 +165,11 @@ The Settings page includes a panel listing all monitored companies with their AT
 
 - What happens when a monitored company changes its ATS provider (e.g., Greenhouse → Lever)? The company's `ats_provider` and `ats_identifier` fields must be updatable without affecting monitoring status.
 - What happens when a monitored company's ATS returns zero openings for multiple consecutive runs? The company remains monitored; no special action is taken. Stale companies are a user-managed concern.
-- What happens when the user monitors a company, then that company's scraper is later disabled globally (e.g., the scraper's `ENABLED = False`)? The monitoring toggle should show a warning state ("scraper unavailable").
+- What happens when the user monitors a company, then that company's scraper is later disabled globally (e.g., via `scraper.<slug>.enabled = false`)? The monitoring toggle for that company is shown but disabled everywhere (Companies list badge, company detail, Settings), with a caption pointing to the scraper toggle in Settings. The underlying `monitored` value is preserved (not silently reset) so monitoring resumes automatically once the scraper is re-enabled.
 - What happens when a job appears in both a broad scrape and a monitoring run? The deduplication by URL ensures only one row exists; the job's monitored-company status is derived from the company relationship, not the scrape source.
 - What happens when the user tries to monitor a company that already has 200+ monitored siblings? The system allows it — the "hundreds not thousands" limit is user-driven, not system-enforced. Performance targets assume hundreds; degradation beyond that is acceptable.
 - What happens when the title gate encounters a genuinely ambiguous title (e.g., "Product Specialist" — could be PM or could be sales)? Per the safety rule, it passes — a false positive costs one LLM call, a false negative loses a target.
+- What happens to a company with neither `ats_provider` nor `scraper_id` set (not monitorable at all)? No monitoring badge and no toggle is rendered for it anywhere — Companies list, company detail, or Settings. It does not appear in the Settings "monitorable companies" panel.
 
 ## Requirements *(mandatory)*
 
@@ -215,12 +223,21 @@ The Settings page includes a panel listing all monitored companies with their AT
 
 **Settings management**
 
-- **FR-025**: The Settings page MUST include a panel listing all monitored companies with their ATS provider, monitoring status (active/paused), and last monitoring check timestamp.
-- **FR-026**: The Settings panel MUST allow pausing (setting `monitored = false`) and resuming (setting `monitored = true`) per company without losing scraping configuration.
+- **FR-025**: The Settings page MUST include a panel listing all monitorable companies (any company with `ats_provider` or `scraper_id` set, regardless of current `monitored` state) with their ATS provider, monitoring status, and last monitoring check timestamp.
+- **FR-026**: ~~The Settings panel MUST allow pausing (setting `monitored = false`) and resuming (setting `monitored = true`) per company without losing scraping configuration.~~ **Superseded by FR-029** — the pause/resume button pair is replaced by a single toggle, and the panel's source list is corrected so paused companies remain visible (see FR-027–FR-030).
+
+**Monitoring status UI — three-state model (added 2026-06-15, UI refinement)**
+
+- **FR-027**: For any company, the system MUST derive one of three monitoring states from `ats_provider`/`scraper_id` and the corresponding scraper's enabled config (`scraper.<slug>.enabled`): (1) **not monitorable** — neither `ats_provider` nor `scraper_id` is set; (2) **monitorable, scraper disabled** — a monitoring source is set but its scraper is disabled; (3) **monitorable, scraper enabled** — a monitoring source is set and its scraper is enabled.
+- **FR-028**: In state (1) (not monitorable), the system MUST render no monitoring badge and no toggle in the Companies list, company detail view, or Settings.
+- **FR-029**: In state (2) (monitorable, scraper disabled), the system MUST render the monitoring toggle in a disabled state, accompanied by a caption identifying which scraper must be enabled (e.g., "Enable the Greenhouse scraper in Settings to monitor this company"). The badge MUST still indicate the monitorable/monitored status (⚪/🟢) so the underlying `monitored` value remains visible even though it cannot currently be changed.
+- **FR-030**: In state (3) (monitorable, scraper enabled), the system MUST render an interactive toggle bound to `companies.monitored`, and a badge: `🟢 Monitored · {provider}` when `monitored = true`, or `⚪ Monitorable · {provider}` when `monitored = false`.
+- **FR-031**: The Companies list page MUST provide a "Monitoring status" filter (`All` / `Monitored only` / `Monitorable (not yet monitored)`) in the sidebar, and MUST display the monitoring badge (per FR-030/FR-029) on each company card when the company is monitorable.
+- **FR-032**: The Settings "Monitored Companies" panel MUST source its list from all monitorable companies (state (2) or (3) — i.e., `ats_provider IS NOT NULL OR scraper_id IS NOT NULL`), NOT only from companies where `monitored = true`. This corrects a defect where toggling a company off removed it from the panel, making it impossible to toggle back on.
 
 ### Key Entities
 
-- **Company**: Gains a `monitored` boolean (opt-in flag). The scraping configuration fields (`ats_provider`, `ats_identifier`, `scraper_id`) already exist or are added; they persist across pause/resume cycles and are never deleted for a simple pause. `scrape_method` is derived or stored to determine whether the toggle is available.
+- **Company**: Gains a `monitored` boolean (opt-in flag). The scraping configuration fields (`ats_provider`, `ats_identifier`, `scraper_id`) already exist or are added; they persist across pause/resume cycles and are never deleted for a simple pause. `scrape_method` is derived or stored to determine whether the toggle is available. Monitoring UI state (FR-027) is derived, not stored — no new columns.
 - **Job**: Gains a `filtered_non_product` disposition (boolean or status field) set by the title gate when a job's title doesn't match the PM family. No other new fields — monitored status is derived through `company_id → companies.monitored`.
 - **Monitoring Run**: A pipeline run with `run_type = monitored_only`, tracked in the existing `pipeline_runs` table (or equivalent). Distinct from the broad scrape run type.
 
@@ -236,6 +253,8 @@ The Settings page includes a panel listing all monitored companies with their AT
 - **SC-006**: Non-PM jobs (engineering, sales, legal, etc.) from monitored companies never reach the LLM — they are caught by the title gate and marked `filtered_non_product`.
 - **SC-007**: The user can add a company via careers URL, have its ATS detected, toggle monitoring on, and see its openings appear scored and badged within two monitoring runs.
 - **SC-008**: Pausing a company prevents it from being contacted during the next `--monitored-only` run, verified by checking run output.
+- **SC-009**: In Settings, toggling a monitorable company off and then back on is possible from the same list view without the company disappearing between the two actions.
+- **SC-010**: When a company's monitoring scraper is globally disabled, its monitoring toggle is visibly inert (disabled + explanatory caption) in the Companies list, company detail, and Settings — never silently no-op.
 
 ## Assumptions
 
@@ -245,3 +264,4 @@ The Settings page includes a panel listing all monitored companies with their AT
 - The Groq free tier daily quota (1000 req/day) is a binding constraint. The title gate exists primarily to protect this quota by filtering out non-PM openings before they reach the LLM.
 - Companies that enter via automatic accumulation (scraped jobs) may not have a resolved ATS — they are not monitorable until the user manually enriches them with a careers URL or provider + identifier.
 - The title gate placement (post-scrape, pre-LLM) is intentional: it respects the constitution's principle that scrapers are broad and filtering is the scorer's domain, while pragmatically protecting the LLM quota. The `filtered_non_product` disposition preserves auditability.
+- The three-state monitoring UI model (FR-027–FR-032) is purely a UI/derivation layer over existing columns (`ats_provider`, `ats_identifier`, `scraper_id`, `monitored`) and existing per-scraper config (`scraper.<slug>.enabled`). No new database columns or migrations are introduced by this refinement.
