@@ -2253,6 +2253,7 @@ class JobStorage:
                 c.id, c.name, c.website, c.status,
                 c.company_country, c.industry_sector, c.company_size,
                 c.first_seen_at, c.last_seen_at, c.summary,
+                c.ats_provider, c.ats_identifier, c.scraper_id, c.monitored,
                 COALESCE(jcnt.cnt, 0)    AS job_count,
                 COALESCE(ctcnt.cnt, 0)   AS contact_count,
                 COALESCE(ixcnt.cnt, 0)   AS interaction_count,
