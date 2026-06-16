@@ -791,6 +791,9 @@ class JobStorage:
             # ── Monitored Companies — Phase A: data model ──
             self._migrate_monitored_companies(conn)
 
+            # ── Company Researcher — migration ──
+            self._migrate_company_researcher(conn)
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     def _migration_applied(self, conn, name: str) -> bool:
@@ -859,6 +862,21 @@ class JobStorage:
         if not self._migration_applied(conn, "seed_greenhouse_boards"):
             self._seed_greenhouse_boards(conn)
             self._record_migration(conn, "seed_greenhouse_boards")
+
+    def _migrate_company_researcher(self, conn) -> None:
+        """Add company researcher columns to companies table."""
+        companies_cols = {row[1] for row in
+                          conn.execute("PRAGMA table_info(companies)").fetchall()}
+        for col, defn in [
+            ("monitoring_status",   "TEXT NOT NULL DEFAULT 'unmonitored'"),
+            ("scraping_method",     "TEXT"),
+            ("research_notes",      "TEXT"),
+            ("research_confidence", "TEXT"),
+            ("researched_at",       "TEXT"),
+        ]:
+            if col not in companies_cols:
+                conn.execute(f"ALTER TABLE companies ADD COLUMN {col} {defn}")
+                logger.info(f"[Storage] Company Researcher: added {col} to companies")
 
     def _seed_greenhouse_boards(self, conn) -> None:
         """Seed ~30 Greenhouse boards from the current CRYPTO_WEB3_BOARDS constant."""
@@ -1837,6 +1855,74 @@ class JobStorage:
                 (job_id,),
             ).fetchone()
         return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Company Researcher — watch_pending → watch_ready pipeline
+    # ------------------------------------------------------------------
+
+    VALID_MONITORING_STATUSES = frozenset({
+        "unmonitored", "watch_pending", "watch_ready", "watching",
+    })
+
+    def set_monitoring_status(self, company_id: int, status: str) -> None:
+        if status not in self.VALID_MONITORING_STATUSES:
+            raise ValueError(
+                f"Invalid monitoring status: {status!r}. "
+                f"Valid: {self.VALID_MONITORING_STATUSES}"
+            )
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE companies SET monitoring_status = ? WHERE id = ?",
+                (status, company_id),
+            )
+
+    def get_watch_pending_companies(self) -> list[dict]:
+        """Return companies with monitoring_status = 'watch_pending'."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, name, website, careers_url, ats_provider,
+                          ats_identifier, monitoring_status, scraping_method,
+                          research_notes, research_confidence, researched_at
+                   FROM companies
+                   WHERE monitoring_status = 'watch_pending'
+                   ORDER BY name"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_company_research(self, company_id: int, result) -> None:
+        """Write research fields and transition status.
+
+        result is a ResearchResult dataclass with at least:
+          scraping_method, ats_provider, ats_board_slug, ats_board_url,
+          detection_method, notes, confidence
+        """
+        now = _now()
+        # Determine target status based on scraping_method
+        actionable = {"greenhouse", "lever", "workable", "ashby", "custom_html"}
+        new_status = "watch_ready" if result.scraping_method in actionable else "watch_pending"
+
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE companies SET
+                       ats_provider = COALESCE(?, companies.ats_provider),
+                       ats_identifier = COALESCE(?, companies.ats_identifier),
+                       scraping_method = ?,
+                       research_notes = ?,
+                       research_confidence = ?,
+                       monitoring_status = ?,
+                       researched_at = ?
+                   WHERE id = ?""",
+                (
+                    result.ats_provider,
+                    result.ats_board_slug,
+                    result.scraping_method,
+                    result.notes,
+                    result.confidence,
+                    new_status,
+                    now,
+                    company_id,
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Config key-value store

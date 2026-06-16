@@ -170,8 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Lever & Workable Scrapers** (`specs/003-lever-workable-scrapers/`)
-- Spec: `specs/003-lever-workable-scrapers/spec.md`
-- Plan: `specs/003-lever-workable-scrapers/plan.md`
-- Tasks: `specs/003-lever-workable-scrapers/tasks.md`
+Current feature: **Company Researcher** (`specs/004-company-researcher/`)
+- Spec: `specs/004-company-researcher/spec.md`
+- Plan: `specs/004-company-researcher/plan.md`
+- Tasks: `specs/004-company-researcher/tasks.md`
 <!-- SPECKIT END -->
