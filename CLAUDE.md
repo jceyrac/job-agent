@@ -170,8 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Monitoring Status UI + CSV Import** (`specs/005-monitoring-status-and-import/`)
-- Spec: `specs/005-monitoring-status-and-import/spec.md`
-- Plan: `specs/005-monitoring-status-and-import/plan.md`
-- Tasks: `specs/005-monitoring-status-and-import/tasks.md`
+Current feature: **Settings Monitoring Consolidation** (`specs/005a-settings-monitoring-consolidation/`)
+- Spec: `specs/005a-settings-monitoring-consolidation/spec.md`
+- Plan: `specs/005a-settings-monitoring-consolidation/plan.md`
+- Tasks: `specs/005a-settings-monitoring-consolidation/tasks.md`
 <!-- SPECKIT END -->

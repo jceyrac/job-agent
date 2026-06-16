@@ -319,23 +319,22 @@ def render():
     st.divider()
     _render_scraper_toggles(db)
     st.divider()
-    _render_monitored_companies(db)
+    _render_company_monitoring(db)
     st.divider()
     _render_reonboard(db)
-    st.divider()
-    _render_company_monitoring(db)
 
 
-def _render_monitored_companies(db):
-    """Monitored companies management panel — three-state model with st.toggle."""
-    from tracker_views.shared import (
-        load_all_monitorable_companies,
-        is_monitoring_source_enabled,
-        monitoring_badge,
-    )
-    st.subheader("🎯 Monitored Companies")
+def _render_company_monitoring(db):
+    """Consolidated company monitoring section — management + import + research."""
+    import csv
+    import io
 
-    # ── Pipeline toggle: include monitoring in full pipeline ──────────────
+    st.subheader("📡 Company Monitoring")
+
+    # ── Subsection 1: Monitored companies ──────────────────────────────────
+    st.markdown("#### Monitored companies")
+
+    # Pipeline toggle
     mon_cfg = db.get_config("monitoring.enabled_in_pipeline")
     mon_enabled = mon_cfg is None or mon_cfg.lower() == "true"
     scrape_cfg = db.get_config("scrape.enabled_in_pipeline")
@@ -357,111 +356,55 @@ def _render_monitored_companies(db):
                           "true" if new_mon else "false")
             st.rerun()
 
-    # ── Add company form ──
-    with st.expander("➕ Add a company to monitor", expanded=False):
-        careers_url = st.text_input(
-            "Careers URL",
-            placeholder="https://boards.greenhouse.io/fireblocks",
-            key="mon_add_url",
-        )
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🔍 Detect ATS", use_container_width=True,
-                         disabled=not careers_url):
-                try:
-                    from ats_detection import resolve_scrape_method, DetectionError
-                    result = resolve_scrape_method(careers_url)
-                    st.success(
-                        f"Detected: **{result['provider']}** "
-                        f"→ `{result['identifier']}`"
-                    )
-                    name = urlparse(careers_url).hostname.replace("boards.", "")\
-                        .replace("jobs.", "").split(".")[0].title()
-                    company_name = st.text_input("Company name", value=name, key="mon_add_name")
-                    if st.button("✅ Add & Monitor", use_container_width=True):
-                        cid = db.upsert_company_from_detection(
-                            company_name, careers_url,
-                            result["provider"], result["identifier"])
-                        db.set_company_monitored(cid, True)
-                        st.success(f"Added **{company_name}** — monitoring active")
+    # Company list (paused companies remain visible)
+    from tracker_views.shared import (
+        load_all_monitorable_companies,
+        is_monitoring_source_enabled,
+        monitoring_badge,
+    )
+    all_monitorable = load_all_monitorable_companies(db)
+    if all_monitorable:
+        active_count = sum(1 for c in all_monitorable if c.get("monitored"))
+        st.caption(f"{len(all_monitorable)} monitorable companies ({active_count} active)")
+
+        for company in all_monitorable:
+            cid = company["id"]
+            name = company["name"]
+            provider = company.get("ats_provider", "—")
+            identifier = company.get("ats_identifier", "")
+            is_monitored = bool(company.get("monitored"))
+            source_enabled = is_monitoring_source_enabled(db, company)
+
+            cols = st.columns([4, 2, 1])
+            with cols[0]:
+                badge_html = monitoring_badge(company)
+                if badge_html:
+                    st.html(badge_html)
+                st.markdown(f"**{name}**  \n`{provider}` → `{identifier}`")
+            with cols[1]:
+                if not source_enabled:
+                    st.caption("⚪ Scraper disabled")
+                else:
+                    st.caption("Active" if is_monitored else "Paused")
+            with cols[2]:
+                if not source_enabled:
+                    st.toggle("Monitor", value=False, disabled=True,
+                              key=f"mon_toggle_{cid}",
+                              help=f"Enable the {provider} scraper in Settings to monitor this company.")
+                else:
+                    new_val = st.toggle("Monitor", value=is_monitored,
+                                        key=f"mon_toggle_{cid}")
+                    if new_val != is_monitored:
+                        db.set_company_monitored(cid, new_val)
                         st.cache_data.clear()
                         st.rerun()
-                except DetectionError as e:
-                    st.warning(str(e))
-                    with st.form("mon_manual_entry"):
-                        st.caption("Manual entry:")
-                        provider = st.selectbox(
-                            "Provider",
-                            ["greenhouse", "lever", "ashby", "workday",
-                             "smartrecruiters", "workable"],
-                        )
-                        identifier = st.text_input("Identifier (token / board / account ID)")
-                        company_name = st.text_input("Company name")
-                        if st.form_submit_button("Add manually"):
-                            try:
-                                cid = db.upsert_company_from_detection(
-                                    company_name, careers_url, provider, identifier)
-                                db.set_company_monitored(cid, True)
-                                st.success(f"Added **{company_name}**")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as ex:
-                                st.error(str(ex))
-        with c2:
-            pass
+    else:
+        st.info("No monitorable companies yet. Add companies via the Companies page, "
+                "or import a CSV below.")
 
-    # ── All monitorable companies list (fix: sourced from get_all_monitorable,
-    #   not get_monitored — paused companies remain visible) ──
-    all_monitorable = load_all_monitorable_companies(db)
-    if not all_monitorable:
-        st.info("No monitorable companies yet. Add one above!")
-        return
+    st.divider()
 
-    active_count = sum(1 for c in all_monitorable if c.get("monitored"))
-    st.caption(f"{len(all_monitorable)} monitorable companies ({active_count} active)")
-
-    for company in all_monitorable:
-        cid = company["id"]
-        name = company["name"]
-        provider = company.get("ats_provider", "—")
-        identifier = company.get("ats_identifier", "")
-        is_monitored = bool(company.get("monitored"))
-        source_enabled = is_monitoring_source_enabled(db, company)
-
-        cols = st.columns([4, 2, 1])
-        with cols[0]:
-            badge_html = monitoring_badge(company)
-            if badge_html:
-                st.html(badge_html)
-            st.markdown(f"**{name}**  \n`{provider}` → `{identifier}`")
-        with cols[1]:
-            if not source_enabled:
-                st.caption("⚪ Scraper disabled")
-            else:
-                st.caption("Active" if is_monitored else "Paused")
-        with cols[2]:
-            if not source_enabled:
-                st.toggle("Monitor", value=False, disabled=True,
-                          key=f"mon_toggle_{cid}",
-                          help=f"Enable the {provider} scraper in Settings to monitor this company.")
-            else:
-                new_val = st.toggle("Monitor", value=is_monitored,
-                                    key=f"mon_toggle_{cid}")
-                if new_val != is_monitored:
-                    db.set_company_monitored(cid, new_val)
-                    st.cache_data.clear()
-                    st.rerun()
-
-    st.markdown("---")
-
-def _render_company_monitoring(db):
-    """CSV import + research controls for company monitoring."""
-    import csv
-    import io
-
-    st.subheader("📡 Company Monitoring")
-
-    # ── CSV import ─────────────────────────────────────────────────────────
+    # ── Subsection 2: Import companies to watch ────────────────────────────
     st.markdown("#### Import companies to watch")
     csv_file = st.file_uploader(
         "Upload a CSV with company names",
@@ -496,7 +439,6 @@ def _render_company_monitoring(db):
                 st.cache_data.clear()
 
     # ── Research all pending ───────────────────────────────────────────────
-    st.markdown("#### Research pending companies")
     pending = db.get_watch_pending_companies()
     st.caption(f"{len(pending)} companies waiting for research")
 
