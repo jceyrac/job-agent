@@ -170,8 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Settings Monitoring Consolidation** (`specs/005a-settings-monitoring-consolidation/`)
-- Spec: `specs/005a-settings-monitoring-consolidation/spec.md`
-- Plan: `specs/005a-settings-monitoring-consolidation/plan.md`
-- Tasks: `specs/005a-settings-monitoring-consolidation/tasks.md`
+Current feature: **Research Run Output + Filter** (`specs/005b-research-run-output/`)
+- Spec: `specs/005b-research-run-output/spec.md`
+- Plan: `specs/005b-research-run-output/plan.md`
+- Tasks: `specs/005b-research-run-output/tasks.md`
 <!-- SPECKIT END -->

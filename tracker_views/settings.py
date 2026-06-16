@@ -446,33 +446,74 @@ def _render_company_monitoring(db):
         f"🔍 Research all ({len(pending)} companies)",
         use_container_width=True,
     ):
-        from company_researcher import research_all_pending
-        progress = st.progress(0, "Researching...")
-        status_text = st.empty()
+        from company_researcher import research_company, update_company_from_research
         results = []
         total = len(pending)
-        for i, company in enumerate(pending):
-            status_text.text(f"{i+1}/{total}: {company['name']}")
-            from company_researcher import research_company, update_company_from_research
-            result = research_company(
-                company["name"],
-                company.get("website") or company.get("careers_url"),
-            )
-            results.append((company, result))
-            update_company_from_research(db, company["id"], result)
-            progress.progress((i + 1) / total)
-            import time
-            time.sleep(0.5)
 
-        progress.empty()
-        status_text.empty()
+        with st.status("🔍 Researching companies...", expanded=True) as status_block:
+            progress = st.progress(0)
+            for i, company in enumerate(pending):
+                st.write(f"**{company['name']}** — researching...")
+                result = research_company(
+                    company["name"],
+                    company.get("website") or company.get("careers_url"),
+                )
+                update_company_from_research(db, company["id"], result)
+                results.append((company, result))
 
-        actionable = [r for _, r in results if r.scraping_method != "none"]
-        st.success(
-            f"✅ {len(actionable)}/{total} companies resolved with a scraping method"
-        )
+                icon = _research_outcome_icon(result)
+                st.write(
+                    f"{icon} **{company['name']}** → "
+                    f"`{result.ats_provider or 'none'}` / "
+                    f"`{result.scraping_method}` ({result.confidence})"
+                    + (f" — {result.notes}" if result.notes else "")
+                )
+                progress.progress((i + 1) / total)
+                import time
+                time.sleep(0.5)
+
+            status_block.update(label="✅ Research complete", state="complete")
+
+        _render_research_summary([(c, r) for c, r in results])
         st.cache_data.clear()
-        st.rerun()
+
+
+def _research_outcome_icon(result) -> str:
+    if result.scraping_method in ("greenhouse", "lever", "workable", "ashby"):
+        return "✅"
+    if result.scraping_method == "custom_html":
+        return "🟡"
+    if result.scraping_method == "jobspy":
+        return "🔵"
+    if result.scraping_method == "none":
+        return "❌"
+    return "⚠️"  # manual / unknown
+
+
+def _render_research_summary(results: list) -> None:
+    """Render a dataframe + aggregate counts for a research run."""
+    import pandas as pd
+    rows = []
+    counts: dict[str, int] = {"✅": 0, "🟡": 0, "🔵": 0, "❌": 0, "⚠️": 0}
+    for company, result in results:
+        icon = _research_outcome_icon(result)
+        counts[icon] = counts.get(icon, 0) + 1
+        rows.append({
+            "Company": company["name"],
+            "ATS": result.ats_provider or "—",
+            "Method": result.scraping_method,
+            "Confidence": result.confidence,
+            "Notes": (result.notes or "")[:80],
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption(
+            f"✅ {counts['✅']} resolved  "
+            f"🟡 {counts['🟡']} custom HTML  "
+            f"🔵 {counts['🔵']} JobSpy  "
+            f"❌ {counts['❌']} no page  "
+            f"⚠️ {counts['⚠️']} manual"
+        )
 
 
 def _render_reonboard(db):

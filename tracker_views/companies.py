@@ -83,21 +83,12 @@ def _render_list():
     st.markdown("**Monitoring**")
     mon_status = st.radio(
         "Monitoring status",
-        ["All", "Monitored only", "Monitorable (not yet monitored)"],
+        ["📡 Any monitored", "All", "🔍 To research", "⏸ Ready", "✅ Watching"],
         key="co_mon_status",
     )
 
     last_ix_days = _LAST_IX_DAYS.get(last_ix_choice)
     only_never = (last_ix_choice == "Never interacted")
-
-    mon_filter = None
-    mon_monitorable = None
-    if mon_status == "Monitored only":
-        mon_filter = True
-        mon_monitorable = True
-    elif mon_status == "Monitorable (not yet monitored)":
-        mon_filter = False
-        mon_monitorable = True
 
     companies = load_companies(
         status=status_filter if status_filter else None,
@@ -108,9 +99,20 @@ def _render_list():
         sizes=tuple(size_filter),
         min_job_count=int(min_jobs) if min_jobs else None,
         last_interaction_within_days=last_ix_days,
-        monitored=mon_filter,
-        monitorable=mon_monitorable,
     )
+
+    # Filter by monitoring_status in-memory
+    mon_status_map = {
+        "🔍 To research": "watch_pending",
+        "⏸ Ready":      "watch_ready",
+        "✅ Watching":   "watching",
+    }
+    if mon_status in mon_status_map:
+        companies = [c for c in companies
+                     if c.get("monitoring_status") == mon_status_map[mon_status]]
+    elif mon_status == "📡 Any monitored":
+        companies = [c for c in companies
+                     if c.get("monitoring_status") in ("watch_pending", "watch_ready", "watching")]
 
     if only_never:
         companies = [c for c in companies if not c.get("last_interaction_at")]
