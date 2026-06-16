@@ -873,6 +873,7 @@ class JobStorage:
             ("research_notes",      "TEXT"),
             ("research_confidence", "TEXT"),
             ("researched_at",       "TEXT"),
+            ("x_handle",            "TEXT"),
         ]:
             if col not in companies_cols:
                 conn.execute(f"ALTER TABLE companies ADD COLUMN {col} {defn}")
@@ -1742,9 +1743,9 @@ class JobStorage:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT id, name, ats_provider, ats_identifier, scraper_id,
-                          careers_url, detected_at
+                          careers_url, detected_at, monitoring_status
                    FROM companies
-                   WHERE monitored = TRUE
+                   WHERE monitoring_status = 'watching'
                    ORDER BY name"""
             ).fetchall()
         return [dict(r) for r in rows]
@@ -1923,6 +1924,58 @@ class JobStorage:
                     company_id,
                 ),
             )
+
+    def import_companies_from_csv(self, rows: list[dict]) -> dict:
+        """Import companies from CSV rows. Sets monitoring_status='watch_pending'.
+
+        Returns {"imported": int, "skipped": list[str]}.
+        Deduplicates on case-insensitive name match against existing companies.
+        """
+        imported = 0
+        skipped: list[str] = []
+        now = _now()
+        with self._conn() as conn:
+            for row in rows:
+                name = (row.get("Name") or "").strip()
+                if not name:
+                    continue
+                name_norm = _normalize_company_name(name)
+                if not name_norm:
+                    continue
+
+                existing = conn.execute(
+                    "SELECT id, name FROM companies WHERE name_normalized = ?",
+                    (name_norm,),
+                ).fetchone()
+                if existing:
+                    skipped.append(existing["name"])
+                    continue
+
+                website = (row.get("Website") or "").strip() or None
+                careers_url = (row.get("Career website") or "").strip() or None
+                ats_provider = (row.get("ATS") or "").strip() or None
+                x_handle = (row.get("X account") or "").strip() or None
+                notes = (row.get("Comment") or row.get("Location") or "").strip() or None
+                sector = (row.get("Field") or "").strip() or None
+
+                conn.execute(
+                    """INSERT INTO companies
+                       (name, name_normalized, website, careers_url,
+                        ats_provider, x_handle, notes,
+                        industry_sector, monitoring_status,
+                        status, first_seen_at, last_seen_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watch_pending',
+                               'prospect', ?, ?, ?)""",
+                    (name, name_norm, website, careers_url,
+                     ats_provider, x_handle, notes, sector,
+                     now, now, now),
+                )
+                imported += 1
+
+        logger.info(
+            f"[Storage] CSV import: {imported} imported, {len(skipped)} skipped"
+        )
+        return {"imported": imported, "skipped": skipped}
 
     # ------------------------------------------------------------------
     # Config key-value store
@@ -2340,6 +2393,8 @@ class JobStorage:
                 c.company_country, c.industry_sector, c.company_size,
                 c.first_seen_at, c.last_seen_at, c.summary,
                 c.ats_provider, c.ats_identifier, c.scraper_id, c.monitored,
+                c.monitoring_status, c.scraping_method, c.research_notes,
+                c.research_confidence, c.researched_at,
                 COALESCE(jcnt.cnt, 0)    AS job_count,
                 COALESCE(ctcnt.cnt, 0)   AS contact_count,
                 COALESCE(ixcnt.cnt, 0)   AS interaction_count,

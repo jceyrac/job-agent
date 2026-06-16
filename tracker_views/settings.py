@@ -322,6 +322,8 @@ def render():
     _render_monitored_companies(db)
     st.divider()
     _render_reonboard(db)
+    st.divider()
+    _render_company_monitoring(db)
 
 
 def _render_monitored_companies(db):
@@ -451,6 +453,85 @@ def _render_monitored_companies(db):
                     st.rerun()
 
     st.markdown("---")
+
+def _render_company_monitoring(db):
+    """CSV import + research controls for company monitoring."""
+    import csv
+    import io
+
+    st.subheader("📡 Company Monitoring")
+
+    # ── CSV import ─────────────────────────────────────────────────────────
+    st.markdown("#### Import companies to watch")
+    csv_file = st.file_uploader(
+        "Upload a CSV with company names",
+        type=["csv"],
+        key="mon_csv_upload",
+        help="CSV must have a 'Name' column. Other columns (Website, Career website, "
+             "ATS, X account, Comment, etc.) are optional. All imported companies "
+             "start at 'To research' status.",
+    )
+    if csv_file is not None:
+        content = csv_file.read().decode("utf-8", errors="replace")
+        reader = csv.DictReader(io.StringIO(content))
+        rows = list(reader)
+        if not rows:
+            st.warning("CSV is empty or has no header row.")
+        else:
+            if st.button(f"Import {len(rows)} companies", use_container_width=True):
+                result = db.import_companies_from_csv(rows)
+                imported = result["imported"]
+                skipped = result["skipped"]
+                msg = f"✅ {imported} companies imported"
+                if skipped:
+                    msg += f"\n\n⚠️ {len(skipped)} already existed — skipped"
+                    if len(skipped) <= 10:
+                        msg += f": {', '.join(skipped)}"
+                st.success(msg)
+                if imported > 0:
+                    st.info(
+                        f"{imported} companies ready for research. "
+                        f"Click the button below to run the researcher."
+                    )
+                st.cache_data.clear()
+
+    # ── Research all pending ───────────────────────────────────────────────
+    st.markdown("#### Research pending companies")
+    pending = db.get_watch_pending_companies()
+    st.caption(f"{len(pending)} companies waiting for research")
+
+    if pending and st.button(
+        f"🔍 Research all ({len(pending)} companies)",
+        use_container_width=True,
+    ):
+        from company_researcher import research_all_pending
+        progress = st.progress(0, "Researching...")
+        status_text = st.empty()
+        results = []
+        total = len(pending)
+        for i, company in enumerate(pending):
+            status_text.text(f"{i+1}/{total}: {company['name']}")
+            from company_researcher import research_company, update_company_from_research
+            result = research_company(
+                company["name"],
+                company.get("website") or company.get("careers_url"),
+            )
+            results.append((company, result))
+            update_company_from_research(db, company["id"], result)
+            progress.progress((i + 1) / total)
+            import time
+            time.sleep(0.5)
+
+        progress.empty()
+        status_text.empty()
+
+        actionable = [r for _, r in results if r.scraping_method != "none"]
+        st.success(
+            f"✅ {len(actionable)}/{total} companies resolved with a scraping method"
+        )
+        st.cache_data.clear()
+        st.rerun()
+
 
 def _render_reonboard(db):
     """Re-run the onboarding wizard to regenerate the profile."""

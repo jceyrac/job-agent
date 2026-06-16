@@ -477,6 +477,18 @@ def is_monitoring_source_enabled(db, company: dict) -> bool:
     return enabled_val.lower() == "true"
 
 
+def monitoring_status_badge(company: dict) -> str:
+    """Return an HTML badge for the monitoring_status column."""
+    status = company.get("monitoring_status", "unmonitored")
+    badges = {
+        "unmonitored":   ('<span style="color:#999">⬜ Not watched</span>'),
+        "watch_pending": ('<span style="color:#1976d2">🔍 To research</span>'),
+        "watch_ready":   ('<span style="color:#f57c00">⏸ Ready</span>'),
+        "watching":      ('<span style="color:#2e7d32">✅ Active</span>'),
+    }
+    return badges.get(status, badges["unmonitored"])
+
+
 def monitoring_badge(company: dict) -> str:
     """Return an HTML badge string for the company's monitoring status, or ''."""
     ats = company.get("ats_provider")

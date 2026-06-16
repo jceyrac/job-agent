@@ -6,6 +6,7 @@ from tracker_views.shared import (
     load_company_by_id, load_jobs_for_company, load_contacts,
     score_badge, company_status_badge, relationship_badge,
     COMPANY_STATUSES, COUNTRY_FLAG, sector_label,
+    monitoring_status_badge,
 )
 from tracker_views.forms import add_contact_dialog, log_interaction_dialog
 
@@ -43,6 +44,79 @@ def _render_detail(company_id: int):
     if company.get("website"):
         meta.append(f"[🌐 {company['website']}]({company['website']})")
     st.caption(" · ".join(meta) if meta else "")
+
+    # ── Monitoring status section ─────────────────────────────────────────
+    st.divider()
+    st.subheader("📡 Monitoring")
+    mon_status = company.get("monitoring_status", "unmonitored")
+    st.markdown(monitoring_status_badge(company), unsafe_allow_html=True)
+
+    if mon_status == "unmonitored":
+        if st.button("👁 Watch this company", use_container_width=True):
+            db.set_monitoring_status(company_id, "watch_pending")
+            st.cache_data.clear()
+            st.rerun()
+
+    elif mon_status == "watch_pending":
+        if company.get("research_notes"):
+            st.caption(f"Notes: {company['research_notes']}")
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
+            if st.button("🔍 Research now", use_container_width=True):
+                with st.spinner(f"Researching {company['name']}..."):
+                    from company_researcher import research_company, update_company_from_research
+                    result = research_company(
+                        company["name"],
+                        company.get("website") or company.get("careers_url"))
+                    update_company_from_research(db, company_id, result)
+                    st.cache_data.clear()
+                    st.rerun()
+        with c_r2:
+            if st.button("✖ Stop watching", use_container_width=True):
+                db.set_monitoring_status(company_id, "unmonitored")
+                st.cache_data.clear()
+                st.rerun()
+
+    elif mon_status == "watch_ready":
+        ats = company.get("ats_provider", "—")
+        method = company.get("scraping_method", "—")
+        confidence = company.get("research_confidence", "—")
+        board = company.get("ats_identifier", "—")
+        st.caption(f"ATS: **{ats}** | Method: **{method}** | "
+                   f"Board: `{board}` | Confidence: **{confidence}**")
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
+            if st.button("▶ Activate monitoring", use_container_width=True):
+                db.set_monitoring_status(company_id, "watching")
+                db.set_company_monitored(company_id, True)
+                st.cache_data.clear()
+                st.rerun()
+        with c_r2:
+            if st.button("✖ Stop watching", use_container_width=True):
+                db.set_monitoring_status(company_id, "unmonitored")
+                st.cache_data.clear()
+                st.rerun()
+
+    elif mon_status == "watching":
+        ats = company.get("ats_provider", "—")
+        careers = company.get("careers_url", "—")
+        st.caption(f"ATS: **{ats}** | Careers: {careers}")
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
+            if st.button("⏸ Pause monitoring", use_container_width=True):
+                db.set_monitoring_status(company_id, "watch_ready")
+                st.cache_data.clear()
+                st.rerun()
+        with c_r2:
+            if st.button("🔍 Re-research", use_container_width=True):
+                with st.spinner(f"Re-researching {company['name']}..."):
+                    from company_researcher import research_company, update_company_from_research
+                    result = research_company(
+                        company["name"],
+                        company.get("website") or company.get("careers_url"))
+                    update_company_from_research(db, company_id, result)
+                    st.cache_data.clear()
+                    st.rerun()
 
     # ── Monitoring badge + toggle (Phase 8a three-state model) ──
     from tracker_views.shared import monitoring_badge, is_monitoring_source_enabled
