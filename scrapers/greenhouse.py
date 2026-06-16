@@ -43,6 +43,8 @@ CRYPTO_WEB3_BOARDS = [
     "brex",          # fintech
     "mercury",       # fintech
     "ramp",          # fintech
+    "dfinity",       # Dfinity / ICP — Zug
+    "amun",          # 21.co / 21Shares — Zurich
 ]
 
 PM_TITLE_KEYWORDS = [

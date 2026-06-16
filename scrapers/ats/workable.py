@@ -1,6 +1,6 @@
-"""Workable ATS adapter — company-keyed scraper driven by DB targets.
+"""Workable scraper — board scraper (hardcoded slugs) + ATS adapter (DB targets).
 
-Board public JSON: apply.workable.com/api/v3/accounts/{id}/jobs
+API: POST apply.workable.com/api/v3/accounts/{id}/jobs
 """
 
 import time
@@ -12,67 +12,98 @@ from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
 
 BASE_URL = "https://apply.workable.com/api/v3/accounts"
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; job_agent/1.0)"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; job_agent/1.0)",
+    "Content-Type": "application/json",
+}
+
+# Hardcoded slugs for broad scrape — add new companies here.
+DEFAULT_SLUGS = ["walletconnect", "walletconnect-foundation"]
+
+POST_BODY = {"query": "", "location": [], "department": [], "worktype": [], "remote": []}
 
 
 class WorkableScraper(BaseScraper):
     SOURCE_NAME = "Workable"
     ENABLED = True
 
+    def _get_slugs(self) -> list[dict]:
+        """Resolve scraping targets: DB targets (monitoring) or hardcoded slugs (broad scrape)."""
+        if self._targets:
+            return [{"slug": c["ats_identifier"], "name": c.get("name", c["ats_identifier"].title())}
+                    for c in self._targets if c.get("ats_identifier")]
+        return [{"slug": s, "name": s.replace("-", " ").title()} for s in DEFAULT_SLUGS]
+
     def fetch(self, job_filter: JobFilter | None = None) -> list[JobPosting]:
-        if self._targets is None:
-            print(f"[{self.SOURCE_NAME}] No targets — use --monitored-only or pass targets")
+        slugs = self._get_slugs()
+        if not slugs:
+            print(f"[{self.SOURCE_NAME}] No targets — add slugs or use --monitored-only")
             return []
 
         jobs: list[JobPosting] = []
-        for company in self._targets:
-            account_id = company.get("ats_identifier")
-            if not account_id:
-                continue
+        for entry in slugs:
+            slug = entry["slug"]
+            name = entry["name"]
             try:
                 with httpx.Client(headers=HEADERS, timeout=15, follow_redirects=True) as client:
-                    r = client.get(f"{BASE_URL}/{account_id}/jobs")
-                    if r.status_code != 200:
-                        print(f"  [{self.SOURCE_NAME}] {account_id}: HTTP {r.status_code}")
-                        continue
-                    data = r.json()
-                    results = data.get("results", []) or data.get("jobs", []) or []
+                    next_page = None
+                    while True:
+                        body = dict(POST_BODY)
+                        if next_page:
+                            body["next_page"] = next_page
+                        r = client.post(f"{BASE_URL}/{slug}/jobs", json=body)
+                        if r.status_code != 200:
+                            print(f"  [{self.SOURCE_NAME}] {slug}: HTTP {r.status_code}")
+                            break
+                        data = r.json()
+                        results = data.get("results", []) or []
 
-                    for item in results:
-                        title = item.get("title", "")
-                        location = item.get("location", "") or ""
-                        if isinstance(location, dict):
-                            location = location.get("name", location.get("city", ""))
-                        url = item.get("application_url", "") or \
-                              f"https://apply.workable.com/{account_id}/j/{item.get('shortcode', '')}"
+                        for item in results:
+                            title = item.get("title", "")
+                            loc = item.get("location") or {}
+                            if isinstance(loc, dict):
+                                location = ", ".join(
+                                    p for p in [loc.get("city"), loc.get("country")]
+                                    if p
+                                ) or "Unknown"
+                            else:
+                                location = str(loc) if loc else "Unknown"
 
-                        posted_date = None
-                        raw_date = item.get("published", "") or item.get("created_at", "")
-                        if raw_date:
-                            try:
-                                posted_date = datetime.fromisoformat(
-                                    raw_date[:10]).date()
-                            except (ValueError, TypeError):
-                                pass
+                            url = item.get("url", "") or \
+                                  item.get("application_url", "") or \
+                                  f"https://apply.workable.com/{slug}/j/{item.get('shortcode','')}"
 
-                        desc = (item.get("description", "") or "")[:500]
+                            posted_date = None
+                            raw_date = item.get("created_at", "")
+                            if raw_date:
+                                try:
+                                    posted_date = datetime.fromisoformat(
+                                        raw_date[:10]).date()
+                                except (ValueError, TypeError):
+                                    pass
 
-                        jobs.append(JobPosting(
-                            source=self.SOURCE_NAME,
-                            title=title,
-                            company=company.get("name", account_id.title()),
-                            location=location or "Unknown",
-                            url=url,
-                            posted_date=posted_date,
-                            description=desc or None,
-                            work_mode=None,
-                            base_location=location or None,
-                        ))
+                            desc = (item.get("description", "") or "")[:500]
+
+                            jobs.append(JobPosting(
+                                source=self.SOURCE_NAME,
+                                title=title,
+                                company=name,
+                                location=location,
+                                url=url,
+                                posted_date=posted_date,
+                                description=desc or None,
+                                work_mode=None,
+                                base_location=location,
+                            ))
+
+                        next_page = data.get("next_page")
+                        if not next_page:
+                            break
+                        time.sleep(0.3)
                 time.sleep(0.5)
             except Exception as e:
-                print(f"  [{self.SOURCE_NAME}] {account_id}: {e}")
+                print(f"  [{self.SOURCE_NAME}] {slug}: {e}")
                 continue
 
-        print(f"[{self.SOURCE_NAME}] {len(jobs)} jobs fetched across "
-              f"{len(self._targets)} companies")
+        print(f"[{self.SOURCE_NAME}] {len(jobs)} jobs fetched across {len(slugs)} board(s)")
         return jobs
