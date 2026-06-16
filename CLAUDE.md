@@ -170,8 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Pipeline Monitoring Step** (`specs/002-pipeline-monitoring-step/`)
-- Spec: `specs/002-pipeline-monitoring-step/spec.md`
-- Plan: `specs/002-pipeline-monitoring-step/plan.md`
-- Tasks: `specs/002-pipeline-monitoring-step/tasks.md`
+Current feature: **Lever & Workable Scrapers** (`specs/003-lever-workable-scrapers/`)
+- Spec: `specs/003-lever-workable-scrapers/spec.md`
+- Plan: `specs/003-lever-workable-scrapers/plan.md`
+- Tasks: `specs/003-lever-workable-scrapers/tasks.md`
 <!-- SPECKIT END -->
