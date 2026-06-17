@@ -129,16 +129,51 @@ def _fetch_page(url: str) -> tuple[str | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# Careers link discovery
+# JS-rendered homepage fallback (Fix 4)
+# ---------------------------------------------------------------------------
+
+CAREERS_URL_GUESSES = [
+    "{base}/careers",
+    "{base}/jobs",
+    "{base}/en/careers",
+    "{base}/en/jobs",
+    "{base}/about/careers",
+    "{base}/company/careers",
+    "{base}/work-with-us",
+    "{base}/join-us",
+]
+
+
+def _try_careers_url_guesses(base_url: str) -> tuple[str | None, str | None]:
+    """Try predictable careers URL patterns. Returns (html, final_url) of first hit."""
+    parsed = urlparse(base_url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    for pattern in CAREERS_URL_GUESSES:
+        candidate = pattern.format(base=base)
+        html, final_url = _fetch_page(candidate)
+        if html and len(html) > 2000:
+            return html, final_url
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Careers link discovery (Fix 2 — scan all, prioritise ATS)
 # ---------------------------------------------------------------------------
 
 def _find_careers_link(html: str, base_url: str) -> str | None:
-    """Scan HTML for a link to a careers/jobs page."""
+    """Scan HTML for careers/jobs links. Collects all, prioritises ATS signatures."""
+    candidates = []
     for m in RE_CAREERS_LINK.finditer(html):
         href = m.group(1)
+        if href.startswith("#") or href.startswith("javascript:"):
+            continue
         full = urljoin(base_url, href)
-        return full
-    return None
+        # Priority: return immediately if URL already contains ATS signature
+        for _, url_regex, _ in ATS_SIGNATURES:
+            if re.search(url_regex, full, re.IGNORECASE):
+                return full
+        candidates.append(full)
+    return candidates[0] if candidates else None
 
 
 def _guess_homepage(name: str) -> str:
@@ -148,12 +183,31 @@ def _guess_homepage(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# ATS detection
+# ATS detection (Fix 3 — scan iframes, scripts, data-* attrs)
 # ---------------------------------------------------------------------------
 
 def _detect_ats(html: str, url: str) -> tuple[str | None, str | None, str | None]:
-    """Scan HTML + URL for ATS signatures. Returns (provider, slug, board_url)."""
+    """Scan HTML + URL for ATS signatures. Also scans iframe srcs, script content,
+    and data-* attributes for embedded job widgets."""
     combined = html + " " + url
+
+    # Extract iframe srcs
+    iframe_srcs = re.findall(
+        r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    # Extract script tag content (first 2000 chars per tag, max 10 scripts)
+    script_contents = re.findall(
+        r'<script[^>]*>(.*?)</script>', html, re.IGNORECASE | re.DOTALL)
+    # Extract data-* attributes that commonly hold ATS URLs
+    data_attrs = re.findall(
+        r'data-(?:greenhouse|lever|workable|ashby|careers|jobs)[^=]*=["\']([^"\']+)["\']',
+        html, re.IGNORECASE)
+
+    extra = " ".join(iframe_srcs) + " "
+    extra += " ".join(c[:2000] for c in script_contents[:10]) + " "
+    extra += " ".join(data_attrs)
+
+    combined = combined + " " + extra
+
     for provider, _, slug_regex in ATS_SIGNATURES:
         m = re.search(slug_regex, combined, re.IGNORECASE)
         if m:
@@ -220,8 +274,31 @@ Return ONLY JSON:
 # Main research function
 # ---------------------------------------------------------------------------
 
-def research_company(name: str, url: str | None = None) -> ResearchResult:
-    """Research a single company. No DB side effects."""
+def research_company(name: str, url: str | None = None,
+                     existing: dict | None = None) -> ResearchResult:
+    """Research a single company. No DB side effects.
+
+    Args:
+        name: Company name.
+        url: Website URL (guessed if omitted).
+        existing: DB company dict (from get_watch_pending_companies()).
+                  If ats_provider + ats_board_slug are already set, skip all
+                  fetching and return a result built from existing data.
+    """
+    # Fix 1: Trust existing DB data
+    if existing and existing.get("ats_provider") and existing.get("ats_board_slug"):
+        return ResearchResult(
+            company_name=name,
+            careers_url=existing.get("careers_url"),
+            ats_provider=existing["ats_provider"],
+            ats_board_slug=existing["ats_board_slug"],
+            ats_board_url=None,
+            scraping_method=existing["ats_provider"],
+            detection_method="existing_data",
+            notes="ATS already configured in DB — skipped fetch",
+            confidence="high",
+        )
+
     if not url:
         url = _guess_homepage(name)
 
@@ -229,10 +306,51 @@ def research_company(name: str, url: str | None = None) -> ResearchResult:
 
     # Step 1-2: Fetch homepage, find careers link
     html, final_url = _fetch_page(url)
+    if html is None or (html and len(html) < 5000):
+        # Fix 4: JS-rendered or unreachable homepage — try guessed careers URLs
+        if html is None:
+            result.notes = f"Homepage unreachable: {url}"
+        else:
+            result.notes = f"Homepage JS-rendered (too small): {url}"
+
+        guess_html, guess_url = _try_careers_url_guesses(url)
+        if guess_html:
+            result.careers_url = guess_url
+            provider, slug, board_url = _detect_ats(guess_html, guess_url or "")
+            if provider:
+                result.ats_provider = provider
+                result.ats_board_slug = slug
+                result.ats_board_url = board_url
+                result.scraping_method = provider
+                result.detection_method = "heuristic"
+                result.confidence = "high"
+                result.notes = f"Detected {provider} board via URL guess ({guess_url})"
+                return result
+            # Guessed URL has content but no ATS detected — try LLM
+            snippet = _extract_text(guess_html, 500)
+            llm_result = _classify_with_llm(name, guess_url or url, snippet)
+            if llm_result:
+                result.ats_provider = llm_result.get("ats_provider")
+                result.ats_board_slug = llm_result.get("ats_board_slug")
+                result.ats_board_url = llm_result.get("ats_board_url")
+                result.scraping_method = llm_result.get("scraping_method", "manual")
+                result.detection_method = "llm"
+                result.notes = llm_result.get("notes", "")
+                result.confidence = llm_result.get("confidence", "low")
+                return result
+        if html is None:
+            result.scraping_method = "none"
+            result.confidence = "high"
+            result.detection_method = "heuristic"
+            return result
+        # JS-rendered with failed guesses — fall through to normal flow
+        # (use the small HTML we have, try to find careers links anyway)
+
+    # If homepage was a failure (None after all attempts)
     if html is None:
         result.scraping_method = "none"
         result.confidence = "high"
-        result.notes = f"Homepage unreachable: {url}"
+        result.notes = result.notes or f"Homepage unreachable: {url}"
         result.detection_method = "heuristic"
         return result
 
@@ -325,7 +443,7 @@ def research_all_pending(db: JobStorage, save: bool = False) -> list[ResearchRes
         name = company["name"]
         url = company.get("website") or company.get("careers_url")
         print(f"  Researching: {name}...")
-        result = research_company(name, url)
+        result = research_company(name, url, existing=company)
         results.append(result)
         if save:
             update_company_from_research(db, company["id"], result)

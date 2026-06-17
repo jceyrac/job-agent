@@ -170,8 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Research Run Output + Filter** (`specs/005b-research-run-output/`)
-- Spec: `specs/005b-research-run-output/spec.md`
-- Plan: `specs/005b-research-run-output/plan.md`
-- Tasks: `specs/005b-research-run-output/tasks.md`
+Current feature: **Researcher Improvements** (`specs/004a-researcher-improvements/`)
+- Spec: `specs/004a-researcher-improvements/spec.md`
+- Plan: `specs/004a-researcher-improvements/plan.md`
+- Tasks: `specs/004a-researcher-improvements/tasks.md`
 <!-- SPECKIT END -->

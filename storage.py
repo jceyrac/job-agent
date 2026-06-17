@@ -1896,8 +1896,19 @@ class JobStorage:
         result is a ResearchResult dataclass with at least:
           scraping_method, ats_provider, ats_board_slug, ats_board_url,
           detection_method, notes, confidence
+
+        If detection_method == 'existing_data', only update researched_at
+        (never overwrite existing ATS config).
         """
         now = _now()
+        if getattr(result, "detection_method", None) == "existing_data":
+            with self._conn() as conn:
+                conn.execute(
+                    "UPDATE companies SET researched_at = ? WHERE id = ?",
+                    (now, company_id),
+                )
+            return
+
         # Determine target status based on scraping_method
         actionable = {"greenhouse", "lever", "workable", "ashby", "custom_html"}
         new_status = "watch_ready" if result.scraping_method in actionable else "watch_pending"

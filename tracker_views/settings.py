@@ -457,6 +457,7 @@ def _render_company_monitoring(db):
                 result = research_company(
                     company["name"],
                     company.get("website") or company.get("careers_url"),
+                    existing=company,
                 )
                 update_company_from_research(db, company["id"], result)
                 results.append((company, result))
