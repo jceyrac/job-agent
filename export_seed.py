@@ -21,7 +21,7 @@ def main():
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """SELECT name, website, careers_url, ats_provider, ats_identifier,
-                  ats_board_url, scraping_method, monitoring_status,
+                  scraping_method, monitoring_status,
                   research_notes, research_confidence, x_handle,
                   industry_sector, company_country, notes
            FROM companies
