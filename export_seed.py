@@ -25,6 +25,9 @@ def main():
                   research_notes, research_confidence, x_handle,
                   industry_sector, company_country, notes
            FROM companies
+           WHERE monitoring_status != 'unmonitored'
+              OR ats_provider IS NOT NULL
+              OR scraper_id IS NOT NULL
            ORDER BY name"""
     ).fetchall()
     conn.close()
