@@ -307,7 +307,26 @@ def research_company(name: str, url: str | None = None,
     # Step 1-2: Fetch homepage, find careers link
     html, final_url = _fetch_page(url)
     if html is None or (html and len(html) < 5000):
-        # Fix 4: JS-rendered or unreachable homepage — try guessed careers URLs
+        # Fix 4: JS-rendered or unreachable homepage
+
+        # First, try the existing careers_url from DB if present (Fix 5)
+        if existing and existing.get("careers_url"):
+            existing_careers = existing["careers_url"]
+            result.careers_url = existing_careers
+            careers_html, careers_final = _fetch_page(existing_careers)
+            if careers_html:
+                result.careers_url = careers_final or existing_careers
+                provider, slug, board_url = _detect_ats(careers_html, result.careers_url)
+                if provider:
+                    result.ats_provider = provider
+                    result.ats_board_slug = slug
+                    result.ats_board_url = board_url
+                    result.scraping_method = provider
+                    result.detection_method = "heuristic"
+                    result.confidence = "high"
+                    result.notes = f"Detected {provider} board from known careers URL"
+                    return result
+
         if html is None:
             result.notes = f"Homepage unreachable: {url}"
         else:
