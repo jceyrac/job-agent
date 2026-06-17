@@ -8,6 +8,9 @@ cd "$DEPLOY_DIR"
 echo "=== Pulling latest code ==="
 git pull origin main
 
+echo "=== Seeding companies ==="
+python seed.py
+
 echo "=== Rebuilding image ==="
 docker compose build
 

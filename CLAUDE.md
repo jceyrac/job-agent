@@ -170,8 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Researcher Improvements** (`specs/004a-researcher-improvements/`)
-- Spec: `specs/004a-researcher-improvements/spec.md`
-- Plan: `specs/004a-researcher-improvements/plan.md`
-- Tasks: `specs/004a-researcher-improvements/tasks.md`
+Current feature: **Monitoring Agent** (`specs/006-monitoring-agent/`)
+- Spec: `specs/006-monitoring-agent/spec.md`
+- Plan: `specs/006-monitoring-agent/plan.md`
+- Tasks: `specs/006-monitoring-agent/tasks.md`
 <!-- SPECKIT END -->

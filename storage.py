@@ -1988,6 +1988,81 @@ class JobStorage:
         )
         return {"imported": imported, "skipped": skipped}
 
+    def upsert_company_from_seed(self, row: dict) -> bool:
+        """Upsert a company from seed data (data/companies.json).
+
+        Match key: name (case-insensitive via name_normalized).
+        Updates all config fields. Preserves id and researched_at.
+        Never touches the jobs, scores, or run_logs tables.
+        Returns True if a row was inserted or any field was changed.
+        """
+        name = (row.get("name") or "").strip()
+        if not name:
+            return False
+        name_norm = _normalize_company_name(name)
+        if not name_norm:
+            return False
+        now = _now()
+        with self._conn() as conn:
+            existing = conn.execute(
+                "SELECT * FROM companies WHERE name_normalized = ?",
+                (name_norm,),
+            ).fetchone()
+
+            seed_fields = {
+                "name": name,
+                "name_normalized": name_norm,
+                "website": row.get("website"),
+                "careers_url": row.get("careers_url"),
+                "ats_provider": row.get("ats_provider"),
+                "ats_identifier": row.get("ats_identifier"),
+                "scraping_method": row.get("scraping_method"),
+                "monitoring_status": row.get("monitoring_status", "watch_pending"),
+                "research_notes": row.get("research_notes"),
+                "research_confidence": row.get("research_confidence"),
+                "x_handle": row.get("x_handle"),
+                "industry_sector": row.get("industry_sector"),
+                "company_country": row.get("company_country"),
+                "notes": row.get("notes"),
+            }
+
+            if existing:
+                changed = False
+                updates = []
+                params = []
+                for col, val in seed_fields.items():
+                    if col in ("name", "name_normalized"):
+                        continue
+                    existing_val = existing[col] if col in existing.keys() else None
+                    if val != existing_val:
+                        updates.append(f"{col} = ?")
+                        params.append(val)
+                        changed = True
+                if changed:
+                    updates.append("last_seen_at = ?")
+                    params.append(now)
+                    params.append(existing["id"])
+                    conn.execute(
+                        f"UPDATE companies SET {', '.join(updates)} WHERE id = ?",
+                        params,
+                    )
+                return changed
+            else:
+                cols = [k for k in seed_fields]
+                placeholders = ", ".join("?" for _ in cols)
+                vals = [seed_fields[k] for k in cols]
+                conn.execute(
+                    f"""INSERT INTO companies
+                        (name, name_normalized, website, careers_url,
+                         ats_provider, ats_identifier, scraping_method,
+                         monitoring_status, research_notes, research_confidence,
+                         x_handle, industry_sector, company_country, notes,
+                         status, first_seen_at, last_seen_at, created_at)
+                        VALUES ({placeholders}, 'prospect', ?, ?, ?, ?)""",
+                    vals + [now, now, now, now],
+                )
+                return True
+
     # ------------------------------------------------------------------
     # Config key-value store
     # ------------------------------------------------------------------
