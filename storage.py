@@ -788,11 +788,12 @@ class JobStorage:
                 """)
                 logger.info("[Storage] Phase 6 migration: created interactions table")
 
+            # ── Company Researcher — migration (must run before Monitored,
+            #   because _seed_greenhouse_boards needs monitoring_status column) ──
+            self._migrate_company_researcher(conn)
+
             # ── Monitored Companies — Phase A: data model ──
             self._migrate_monitored_companies(conn)
-
-            # ── Company Researcher — migration ──
-            self._migrate_company_researcher(conn)
 
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
@@ -879,6 +880,21 @@ class JobStorage:
                 conn.execute(f"ALTER TABLE companies ADD COLUMN {col} {defn}")
                 logger.info(f"[Storage] Company Researcher: added {col} to companies")
 
+        # Backfill: set monitoring_status = 'watching' for legacy monitored companies
+        if ("monitored" in companies_cols
+                and not self._migration_applied(conn, "backfill_monitoring_status_from_monitored")):
+            updated = conn.execute(
+                """UPDATE companies SET monitoring_status = 'watching'
+                   WHERE monitored = TRUE
+                     AND (monitoring_status IS NULL OR monitoring_status = 'unmonitored')"""
+            ).rowcount
+            if updated:
+                logger.info(
+                    f"[Storage] Monitoring: backfilled {updated} companies "
+                    f"from monitored=TRUE to monitoring_status='watching'"
+                )
+            self._record_migration(conn, "backfill_monitoring_status_from_monitored")
+
     def _seed_greenhouse_boards(self, conn) -> None:
         """Seed ~30 Greenhouse boards from the current CRYPTO_WEB3_BOARDS constant."""
         # Import here to avoid circular dependency at module load
@@ -909,6 +925,7 @@ class JobStorage:
                            ats_provider = 'greenhouse',
                            ats_identifier = ?,
                            monitored = TRUE,
+                           monitoring_status = 'watching',
                            last_seen_at = ?
                        WHERE id = ?""",
                     (token, now, existing["id"]))
@@ -917,8 +934,10 @@ class JobStorage:
                     """INSERT INTO companies
                        (name, name_normalized, careers_url,
                         ats_provider, ats_identifier, monitored,
+                        monitoring_status,
                         status, first_seen_at, last_seen_at, created_at, detected_at)
-                       VALUES (?, ?, ?, 'greenhouse', ?, TRUE, 'prospect', ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, 'greenhouse', ?, TRUE, 'watching',
+                               'prospect', ?, ?, ?, ?)""",
                     (name, name_norm,
                      f"https://boards.greenhouse.io/{token}",
                      token, now, now, now, now))
