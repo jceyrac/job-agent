@@ -170,8 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Monitoring Agent** (`specs/006-monitoring-agent/`)
-- Spec: `specs/006-monitoring-agent/spec.md`
-- Plan: `specs/006-monitoring-agent/plan.md`
-- Tasks: `specs/006-monitoring-agent/tasks.md`
+Current feature: **Company Edit Form** (`specs/007-company-edit/`)
+- Spec: `specs/007-company-edit/spec.md`
+- Plan: `specs/007-company-edit/plan.md`
+- Tasks: `specs/007-company-edit/tasks.md`
 <!-- SPECKIT END -->

@@ -1884,6 +1884,28 @@ class JobStorage:
         "unmonitored", "watch_pending", "watch_ready", "watching",
     })
 
+    _ALLOWED_COMPANY_FIELDS = frozenset({
+        "name", "website", "company_country", "industry_sector", "company_size",
+        "x_handle", "careers_url", "ats_provider", "ats_identifier",
+        "scraping_method", "research_notes",
+    })
+
+    def update_company_fields(self, company_id: int, fields: dict) -> None:
+        """Update arbitrary company fields by column name.
+
+        Only columns present in `fields` are updated — others untouched.
+        Raises ValueError if an unknown column name is passed.
+        """
+        invalid = set(fields) - self._ALLOWED_COMPANY_FIELDS
+        if invalid:
+            raise ValueError(f"Unknown company fields: {invalid}")
+        if not fields:
+            return
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [company_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE companies SET {cols} WHERE id = ?", vals)
+
     def set_monitoring_status(self, company_id: int, status: str) -> None:
         if status not in self.VALID_MONITORING_STATUSES:
             raise ValueError(

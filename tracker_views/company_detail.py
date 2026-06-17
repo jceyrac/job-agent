@@ -10,6 +10,21 @@ from tracker_views.shared import (
 )
 from tracker_views.forms import add_contact_dialog, log_interaction_dialog
 
+SIZE_OPTIONS = ["startup", "scaleup", "sme", "large", "unknown"]
+METHOD_OPTIONS = [
+    "greenhouse", "lever", "workable", "ashby", "teamtailor",
+    "recruitee", "bamboohr", "smartrecruiters", "myworkdayjobs",
+    "jobspy", "custom_html", "manual", "none",
+]
+
+
+def _safe_index(options: list, value) -> int:
+    """Return the index of value in options, or 0 if not found."""
+    try:
+        return options.index(value) if value else 0
+    except ValueError:
+        return 0
+
 
 def _render_detail(company_id: int):
     db = get_db()
@@ -44,6 +59,82 @@ def _render_detail(company_id: int):
     if company.get("website"):
         meta.append(f"[🌐 {company['website']}]({company['website']})")
     st.caption(" · ".join(meta) if meta else "")
+
+    # ── Edit button ───────────────────────────────────────────────────────
+    editing = st.session_state.get(f"edit_company_{company_id}", False)
+
+    if not editing:
+        if st.button("✏️ Edit", key=f"edit_btn_{company_id}"):
+            st.session_state[f"edit_company_{company_id}"] = True
+            st.rerun()
+
+    # ── Edit form ─────────────────────────────────────────────────────────
+    if editing:
+        with st.form(key=f"edit_form_{company_id}"):
+            st.subheader("✏️ Edit company")
+
+            st.markdown("**Identity**")
+            c_id1, c_id2 = st.columns(2)
+            with c_id1:
+                name = st.text_input("Name", value=company.get("name") or "")
+                website = st.text_input("Website", value=company.get("website") or "")
+                location = st.text_input(
+                    "Location", value=company.get("company_country") or "")
+            with c_id2:
+                sector = st.text_input(
+                    "Sector / Field", value=company.get("industry_sector") or "")
+                size = st.selectbox(
+                    "Company size", SIZE_OPTIONS,
+                    index=_safe_index(SIZE_OPTIONS, company.get("company_size")))
+                x_handle = st.text_input(
+                    "X account", value=company.get("x_handle") or "")
+
+            st.markdown("**Monitoring config**")
+            c_m1, c_m2 = st.columns(2)
+            with c_m1:
+                careers_url = st.text_input(
+                    "Careers URL", value=company.get("careers_url") or "")
+                ats_provider = st.text_input(
+                    "ATS provider", value=company.get("ats_provider") or "")
+                ats_slug = st.text_input(
+                    "ATS board slug", value=company.get("ats_identifier") or "")
+            with c_m2:
+                ats_board_url = st.text_input(
+                    "ATS board URL", value=company.get("ats_board_url") or "")
+                scraping_method = st.selectbox(
+                    "Scraping method", METHOD_OPTIONS,
+                    index=_safe_index(METHOD_OPTIONS, company.get("scraping_method")))
+            research_notes = st.text_area(
+                "Research notes", value=company.get("research_notes") or "", height=80)
+
+            col_save, col_cancel = st.columns(2)
+            with col_save:
+                submitted = st.form_submit_button("💾 Save", use_container_width=True)
+            with col_cancel:
+                cancelled = st.form_submit_button("✖ Cancel", use_container_width=True)
+
+        if submitted:
+            db.update_company_fields(company_id, {
+                "name": name.strip(),
+                "website": website.strip() or None,
+                "company_country": location.strip() or None,
+                "industry_sector": sector.strip() or None,
+                "company_size": size,
+                "x_handle": x_handle.strip() or None,
+                "careers_url": careers_url.strip() or None,
+                "ats_provider": ats_provider.strip() or None,
+                "ats_identifier": ats_slug.strip() or None,
+                "scraping_method": scraping_method,
+                "research_notes": research_notes.strip() or None,
+            })
+            st.session_state[f"edit_company_{company_id}"] = False
+            st.cache_data.clear()
+            st.success("Company updated.")
+            st.rerun()
+
+        if cancelled:
+            st.session_state[f"edit_company_{company_id}"] = False
+            st.rerun()
 
     # ── Monitoring status section ─────────────────────────────────────────
     st.divider()
