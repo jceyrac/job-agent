@@ -114,6 +114,24 @@ def normalize_url(url: str, source: str) -> str:
     return url
 
 
+def normalize_title(title: str) -> str:
+    """Normalize a job title for dedup: lowercase, strip punctuation, collapse whitespace."""
+    if not title:
+        return ""
+    return " ".join(re.sub(r"[^\w\s]", "", title.lower()).split())
+
+
+def normalize_company(company: str) -> str:
+    """Normalize a company name for dedup: lowercase, collapse whitespace only.
+
+    Does NOT strip legal suffixes (Inc/GmbH/SA/Ltd) — that enters cross-source
+    matching territory, which needs its own false-positive review.
+    """
+    if not company:
+        return ""
+    return " ".join(company.lower().split())
+
+
 # ---------------------------------------------------------------------------
 # Schéma
 # ---------------------------------------------------------------------------
@@ -154,6 +172,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     company_id    INTEGER,
     url           TEXT,
     canonical_url TEXT,
+    norm_title    TEXT,
+    norm_company  TEXT,
     source        TEXT,
     location      TEXT,
     base_location TEXT,
@@ -224,6 +244,7 @@ CREATE TABLE IF NOT EXISTS job_applications (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen  ON jobs (last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company_id ON jobs (company_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_title_company ON jobs (source, norm_company, norm_title);
 CREATE INDEX IF NOT EXISTS idx_scores_profile  ON job_scores (profile_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_job      ON job_scores (job_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_tracking_status ON job_tracking (status);
@@ -366,6 +387,21 @@ class JobStorage:
             if "canonical_url" not in jobs_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN canonical_url TEXT")
                 logger.info("[Storage] Migration: added canonical_url column to jobs")
+
+            # Title + company normalization for intra-source dedup
+            if "norm_title" not in jobs_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN norm_title TEXT")
+                logger.info("[Storage] Migration: added norm_title column to jobs")
+            if "norm_company" not in jobs_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN norm_company TEXT")
+                logger.info("[Storage] Migration: added norm_company column to jobs")
+
+            # Index for title+company dedup lookup — create unconditionally
+            # on upgrade since it's idempotent (IF NOT EXISTS).
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_title_company "
+                "ON jobs (source, norm_company, norm_title)"
+            )
 
             # Phase 1e — move structured fields from job_scores to jobs
             _p1e_cols = [
@@ -1194,10 +1230,16 @@ class JobStorage:
         canonical_url (but a different id — legacy rows from before URL
         normalization was introduced), the existing row's id is reused so
         ON CONFLICT fires correctly and no duplicate is created.
+
+        Also checks (source, norm_company, norm_title) as a fallback — catches
+        duplicates where the same job gets different URLs (LinkedIn issues new
+        numeric IDs on every scrape; Indeed issues different jk per country).
         """
         effective_id = job.id
         canonical = getattr(job, "canonical_url", None)
         source = getattr(job, "source", None)
+        norm_title = getattr(job, "norm_title", None)
+        norm_company = getattr(job, "norm_company", None)
 
         if canonical and source:
             existing = conn.execute(
@@ -1207,17 +1249,31 @@ class JobStorage:
             if existing:
                 effective_id = existing["id"]
 
+        # Fallback: match on (source, norm_company, norm_title) when URLs differ
+        if effective_id == job.id and source and norm_company and norm_title:
+            existing = conn.execute(
+                "SELECT id FROM jobs WHERE source = ? AND norm_company = ? AND norm_title = ?",
+                (source, norm_company, norm_title),
+            ).fetchone()
+            if existing:
+                effective_id = existing["id"]
+
         conn.execute(
             """INSERT INTO jobs (
-                   id, title, company, company_id, url, canonical_url, source, location, base_location,
+                   id, title, company, company_id, url, canonical_url, norm_title, norm_company,
+                   source, location, base_location,
                    posted_date, description, first_seen, last_seen, monitored_company_id
                ) VALUES (
-                   :id, :title, :company, :company_id, :url, :canonical_url, :source, :location, :base_location,
+                   :id, :title, :company, :company_id, :url, :canonical_url, :norm_title, :norm_company,
+                   :source, :location, :base_location,
                    :posted_date, :description, :now, :now, :monitored_company_id
                )
                ON CONFLICT(id) DO UPDATE SET
                    last_seen  = excluded.last_seen,
                    base_location = excluded.base_location,
+                   norm_title = COALESCE(jobs.norm_title, excluded.norm_title),
+                   norm_company = COALESCE(jobs.norm_company, excluded.norm_company),
+                   canonical_url = COALESCE(jobs.canonical_url, excluded.canonical_url),
                    company_id = COALESCE(jobs.company_id, excluded.company_id),
                    monitored_company_id = COALESCE(jobs.monitored_company_id, excluded.monitored_company_id)""",
             {
@@ -1227,6 +1283,8 @@ class JobStorage:
                 "company_id":    company_id,
                 "url":           getattr(job, "url", None),
                 "canonical_url": canonical,
+                "norm_title":    norm_title,
+                "norm_company":  norm_company,
                 "source":        source,
                 "location":      getattr(job, "location", None),
                 "base_location": getattr(job, "base_location", None),

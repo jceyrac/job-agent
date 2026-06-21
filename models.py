@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
-from storage import normalize_url
+from storage import normalize_url, normalize_title, normalize_company
 
 
 @dataclass
@@ -14,6 +14,8 @@ class JobPosting:
     location: str
     url: str
     canonical_url: Optional[str] = None  # computed in __post_init__ via normalize_url()
+    norm_title: Optional[str] = None      # computed in __post_init__ via normalize_title()
+    norm_company: Optional[str] = None    # computed in __post_init__ via normalize_company()
     posted_date: Optional[date] = None
     description: Optional[str] = None  # max 200 chars
     tags: list[str] = field(default_factory=list)
@@ -48,6 +50,10 @@ class JobPosting:
             self.description = self.description[:3000]
         if self.url and self.source:
             self.canonical_url = normalize_url(self.url, self.source)
+        if self.title:
+            self.norm_title = normalize_title(self.title)
+        if self.company:
+            self.norm_company = normalize_company(self.company)
 
     @property
     def id(self) -> str:
@@ -64,6 +70,8 @@ class JobPosting:
             "location": self.location,
             "url": self.url,
             "canonical_url": self.canonical_url,
+            "norm_title": self.norm_title,
+            "norm_company": self.norm_company,
             "posted_date": self.posted_date.isoformat() if self.posted_date else None,
             "description": self.description,
             "tags": self.tags,
