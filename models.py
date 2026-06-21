@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
+from storage import normalize_url
+
 
 @dataclass
 class JobPosting:
@@ -11,6 +13,7 @@ class JobPosting:
     company: str
     location: str
     url: str
+    canonical_url: Optional[str] = None  # computed in __post_init__ via normalize_url()
     posted_date: Optional[date] = None
     description: Optional[str] = None  # max 200 chars
     tags: list[str] = field(default_factory=list)
@@ -43,11 +46,13 @@ class JobPosting:
     def __post_init__(self):
         if self.description and len(self.description) > 3000:
             self.description = self.description[:3000]
+        if self.url and self.source:
+            self.canonical_url = normalize_url(self.url, self.source)
 
     @property
     def id(self) -> str:
-        """Deterministic ID derived from URL (or title+company+source as fallback)."""
-        key = self.url or f"{self.title}::{self.company}::{self.source}"
+        """Deterministic ID derived from canonical URL (or raw URL, or title+company+source as fallback)."""
+        key = self.canonical_url or self.url or f"{self.title}::{self.company}::{self.source}"
         return hashlib.sha256(key.encode()).hexdigest()[:20]
 
     def to_json(self) -> dict:
@@ -58,6 +63,7 @@ class JobPosting:
             "company": self.company,
             "location": self.location,
             "url": self.url,
+            "canonical_url": self.canonical_url,
             "posted_date": self.posted_date.isoformat() if self.posted_date else None,
             "description": self.description,
             "tags": self.tags,

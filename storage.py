@@ -22,6 +22,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 from paths import DB_PATH
 
@@ -87,6 +88,33 @@ def _normalize_company_name(name: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# URL normalization for intra-source dedup
+# ---------------------------------------------------------------------------
+
+def normalize_url(url: str, source: str) -> str:
+    """Derive a canonical URL for dedup purposes.
+
+    LinkedIn:  Extract numeric id from /jobs/view/XXXXXXX, strip tracking params.
+    Indeed:    Extract jk param regardless of country TLD.
+    All other: Passthrough — returned unchanged.
+    """
+    if not url:
+        return url
+    source_lower = source.lower() if source else ""
+    if source_lower == "linkedin":
+        match = re.search(r"/jobs/view/(\d+)", url)
+        if match:
+            return f"https://www.linkedin.com/jobs/view/{match.group(1)}"
+    elif source_lower == "indeed":
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        jk = qs.get("jk", [None])[0]
+        if jk:
+            return f"https://www.indeed.com/viewjob?jk={jk}"
+    return url
+
+
+# ---------------------------------------------------------------------------
 # Schéma
 # ---------------------------------------------------------------------------
 
@@ -125,6 +153,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     company       TEXT,
     company_id    INTEGER,
     url           TEXT,
+    canonical_url TEXT,
     source        TEXT,
     location      TEXT,
     base_location TEXT,
@@ -332,6 +361,11 @@ class JobStorage:
             if "base_location" not in jobs_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN base_location TEXT")
                 logger.info("[Storage] Migration: added base_location column to jobs")
+
+            # URL canonicalization for intra-source dedup (LinkedIn/Indeed)
+            if "canonical_url" not in jobs_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN canonical_url TEXT")
+                logger.info("[Storage] Migration: added canonical_url column to jobs")
 
             # Phase 1e — move structured fields from job_scores to jobs
             _p1e_cols = [
@@ -1154,13 +1188,31 @@ class JobStorage:
 
     def _upsert_job_raw(self, job, conn, now: str, company_id: int | None = None,
                          monitored_company_id: int | None = None) -> None:
-        """Insère ou met à jour la table jobs (données brutes uniquement)."""
+        """Insère ou met à jour la table jobs (données brutes uniquement).
+
+        Uses canonical_url for dedup: if an existing row has the same
+        canonical_url (but a different id — legacy rows from before URL
+        normalization was introduced), the existing row's id is reused so
+        ON CONFLICT fires correctly and no duplicate is created.
+        """
+        effective_id = job.id
+        canonical = getattr(job, "canonical_url", None)
+        source = getattr(job, "source", None)
+
+        if canonical and source:
+            existing = conn.execute(
+                "SELECT id FROM jobs WHERE canonical_url = ? AND source = ?",
+                (canonical, source),
+            ).fetchone()
+            if existing:
+                effective_id = existing["id"]
+
         conn.execute(
             """INSERT INTO jobs (
-                   id, title, company, company_id, url, source, location, base_location,
+                   id, title, company, company_id, url, canonical_url, source, location, base_location,
                    posted_date, description, first_seen, last_seen, monitored_company_id
                ) VALUES (
-                   :id, :title, :company, :company_id, :url, :source, :location, :base_location,
+                   :id, :title, :company, :company_id, :url, :canonical_url, :source, :location, :base_location,
                    :posted_date, :description, :now, :now, :monitored_company_id
                )
                ON CONFLICT(id) DO UPDATE SET
@@ -1169,12 +1221,13 @@ class JobStorage:
                    company_id = COALESCE(jobs.company_id, excluded.company_id),
                    monitored_company_id = COALESCE(jobs.monitored_company_id, excluded.monitored_company_id)""",
             {
-                "id":            job.id,
+                "id":            effective_id,
                 "title":         job.title,
                 "company":       getattr(job, "company", None),
                 "company_id":    company_id,
                 "url":           getattr(job, "url", None),
-                "source":        getattr(job, "source", None),
+                "canonical_url": canonical,
+                "source":        source,
                 "location":      getattr(job, "location", None),
                 "base_location": getattr(job, "base_location", None),
                 "posted_date":   str(getattr(job, "posted_date", "") or ""),
