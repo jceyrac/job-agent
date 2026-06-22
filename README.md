@@ -253,6 +253,38 @@ docker compose up -d tracker
 
 ---
 
+## ORP Export — formulaire suisse 716.007
+
+Le script `export_orp.py` génère un CSV compatible avec le formulaire mensuel
+de recherches d'emploi exigé par l'ORP (Office Régional de Placement).
+
+```bash
+python export_orp.py                          # mois courant, statut=applied
+python export_orp.py --month 2026-05          # mois spécifique
+python export_orp.py --from 2026-05-01 --to 2026-05-31
+python export_orp.py --statuses applied rejected archived
+```
+
+**Output** : `data/orp_YYYY-MM.csv` encodé en `utf-8-sig` (BOM) — ouvrable
+tel quel dans Excel et LibreOffice Calc.
+
+**Colonnes** (10) : Jour | Mois | Entreprise / Adresse | Personne contactée /
+Tél. | Description du poste | Assignation ORP | Activité | Résultat | Motif
+si négatif | URL
+
+Le script affiche un résumé par statut et un aperçu dans le terminal après
+chaque export. Aucune dépendance hors stdlib — il s'exécute directement sur
+le serveur Live (`ssh` → `cd /opt/job-agent && python export_orp.py`).
+
+**Mapping statut → résultat** :
+
+| Statut DB | Résultat ORP |
+|-----------|-------------|
+| `applied`, `queued`, `ready`, `saved`, `new` | en suspens |
+| `rejected`, `archived`, `expired` | négatif |
+
+---
+
 ## Development
 
 - `prompts/` — `BUILD_*.md` / `SPEC_*.md` implementation specs (canonical

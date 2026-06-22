@@ -16,6 +16,7 @@ claude-deepseek.sh
 .claude_backup/
 data/jobs.db.pre-*
 outputs/
+data/orp_*.csv
 
 # Alternate data directories for testing (JOB_AGENT_DATA_DIR=data_test)
 /data_*/
