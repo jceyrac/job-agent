@@ -44,18 +44,18 @@ def _parse_model_list(env_var: str, fallback: str) -> list[str]:
 # as comma-separated lists in .env.
 
 FALLBACK_MODELS = _parse_model_list("GROQ_FALLBACK_MODELS",
-    "llama-3.3-70b-versatile,"
-    "meta-llama/llama-4-scout-17b-16e-instruct,"
+    "openai/gpt-oss-120b,"
+    "qwen/qwen3.6-27b,"
     "groq/compound,"
-    "llama-3.1-8b-instant")
+    "openai/gpt-oss-20b")
 
 EXTRACTION_MODELS = _parse_model_list("GROQ_EXTRACTION_MODELS",
-    "llama-3.3-70b-versatile,"
-    "meta-llama/llama-4-scout-17b-16e-instruct")
+    "openai/gpt-oss-120b,"
+    "qwen/qwen3.6-27b")
 
 EVALUATION_MODELS = _parse_model_list("GROQ_EVALUATION_MODELS",
-    "llama-3.1-8b-instant,"
-    "meta-llama/llama-4-scout-17b-16e-instruct")
+    "openai/gpt-oss-20b,"
+    "qwen/qwen3.6-27b")
 
 # DeepSeek model — also env-overridable
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")

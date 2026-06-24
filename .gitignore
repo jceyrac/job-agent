@@ -20,3 +20,6 @@ data/orp_*.csv
 
 # Alternate data directories for testing (JOB_AGENT_DATA_DIR=data_test)
 /data_*/
+
+# ORP form filler (données personnelles — ne pas publier)
+fill_orp_pdf.py
