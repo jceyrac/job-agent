@@ -6,13 +6,14 @@ import httpx
 
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
+from storage import JobStorage
 
 BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
 }
 
-CRYPTO_WEB3_BOARDS = [
+GREENHOUSE_BOARDS_SEED = [
     "coinbase",
     "chainalysis",
     "paxos",
@@ -46,6 +47,22 @@ CRYPTO_WEB3_BOARDS = [
     "dfinity",       # Dfinity / ICP — Zug
     "amun",          # 21.co / 21Shares — Zurich
 ]
+
+
+def get_greenhouse_boards(db: JobStorage | None) -> list[str]:
+    """Return Greenhouse board slugs from DB (watching + greenhouse) merged with seed.
+
+    Falls back to GREENHOUSE_BOARDS_SEED if DB is None or returns zero rows.
+    Legacy watching companies have scraping_method=NULL and are not returned
+    by the DB query — they remain covered by the seed list.
+    """
+    if db is None:
+        return list(GREENHOUSE_BOARDS_SEED)
+    rows = db.get_watching_companies_by_method("greenhouse")
+    slugs = [r["ats_identifier"] for r in rows if r.get("ats_identifier")]
+    # Seed first so legacy companies are always covered; DB slugs appended
+    return list(dict.fromkeys(list(GREENHOUSE_BOARDS_SEED) + slugs))
+
 
 PM_TITLE_KEYWORDS = [
     "product manager",
@@ -135,13 +152,16 @@ class GreenhouseScraper(BaseScraper):
             return []
 
         # Use DB-driven targets when provided (monitoring path),
-        # otherwise fall back to profile boards / hardcoded constant (broad scrape)
+        # otherwise fall back to profile boards / DB+seed list (broad scrape)
         if self._targets is not None:
             board_tokens = [t["ats_identifier"] for t in self._targets]
         else:
             from profiles import get_active_profile
-            boards = get_active_profile().greenhouse_boards or CRYPTO_WEB3_BOARDS
-            board_tokens = boards
+            boards = get_active_profile().greenhouse_boards
+            if boards:
+                board_tokens = boards
+            else:
+                board_tokens = get_greenhouse_boards(self._storage)
 
         jobs: list[JobPosting] = []
         board_summary: list[str] = []

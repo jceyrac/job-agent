@@ -1921,6 +1921,21 @@ class JobStorage:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_watching_companies_by_method(self, scraping_method: str) -> list[dict]:
+        """Return companies with monitoring_status='watching' and given scraping_method.
+        Does NOT return legacy companies with scraping_method=NULL.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, name, ats_identifier, ats_provider, careers_url
+                   FROM companies
+                   WHERE monitoring_status = 'watching'
+                     AND scraping_method = ?
+                     AND ats_identifier IS NOT NULL""",
+                (scraping_method,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def set_job_monitored_company(self, job_id: str, company_id: int) -> None:
         """Record that a job came from a monitored company (set at scrape time)."""
         with self._conn() as conn:
