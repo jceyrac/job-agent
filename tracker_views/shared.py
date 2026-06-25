@@ -481,10 +481,10 @@ def monitoring_status_badge(company: dict) -> str:
     """Return an HTML badge for the monitoring_status column."""
     status = company.get("monitoring_status", "unmonitored")
     badges = {
-        "unmonitored":   ('<span style="color:#999">⬜ Not watched</span>'),
-        "watch_pending": ('<span style="color:#1976d2">🔍 To research</span>'),
-        "watch_ready":   ('<span style="color:#f57c00">⏸ Ready</span>'),
-        "watching":      ('<span style="color:#2e7d32">✅ Active</span>'),
+        "unmonitored":   ('<span style="color:#999">⬜ unmonitored</span>'),
+        "watch_pending": ('<span style="color:#1976d2">🔍 watch_pending</span>'),
+        "watch_ready":   ('<span style="color:#f57c00">⏸ watch_ready</span>'),
+        "watching":      ('<span style="color:#2e7d32">✅ watching</span>'),
     }
     return badges.get(status, badges["unmonitored"])
 

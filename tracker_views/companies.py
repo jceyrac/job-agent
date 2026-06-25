@@ -83,7 +83,7 @@ def _render_list():
     st.markdown("**Monitoring**")
     mon_status = st.radio(
         "Monitoring status",
-        ["📡 Any monitored", "All", "🔍 To research", "⏸ Ready", "✅ Watching"],
+        ["📡 Any monitored", "All", "🔍 watch_pending", "⏸ watch_ready", "✅ watching"],
         key="co_mon_status",
     )
 
@@ -103,9 +103,9 @@ def _render_list():
 
     # Filter by monitoring_status in-memory
     mon_status_map = {
-        "🔍 To research": "watch_pending",
-        "⏸ Ready":      "watch_ready",
-        "✅ Watching":   "watching",
+        "🔍 watch_pending": "watch_pending",
+        "⏸ watch_ready":   "watch_ready",
+        "✅ watching":      "watching",
     }
     if mon_status in mon_status_map:
         companies = [c for c in companies
