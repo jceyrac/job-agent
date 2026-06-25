@@ -192,32 +192,31 @@ def _render_detail(company_id: int):
             st.cache_data.clear()
             st.rerun()
 
-    # Contextual action buttons
+    # Contextual action buttons — only for watch_pending
     if mon_status == "watch_pending":
         if company.get("research_notes"):
             st.caption(f"Research notes: {company['research_notes']}")
-        # Only show Research button if ATS not yet identified
         _already_researched = bool(company.get("scraping_method") and company.get("scraping_method") != "none")
-        if not _already_researched and st.button("🔍 Research now", use_container_width=True, key=f"research_{company_id}"):
-            with st.spinner(f"Researching {company['name']}..."):
-                from company_researcher import research_company, update_company_from_research
-                result = research_company(
-                    company["name"],
-                    company.get("website") or company.get("careers_url"))
-                update_company_from_research(db, company_id, result)
-                st.cache_data.clear()
-                st.rerun()
-
-    elif mon_status == "watching":
-        if st.button("🔍 Re-research", use_container_width=True, key=f"reresearch_{company_id}"):
-            with st.spinner(f"Re-researching {company['name']}..."):
-                from company_researcher import research_company, update_company_from_research
-                result = research_company(
-                    company["name"],
-                    company.get("website") or company.get("careers_url"))
-                update_company_from_research(db, company_id, result)
-                st.cache_data.clear()
-                st.rerun()
+        if not _already_researched:
+            if st.button("🔍 Research now", use_container_width=True, key=f"research_{company_id}"):
+                with st.spinner(f"Researching {company['name']}..."):
+                    from company_researcher import research_company, update_company_from_research
+                    result = research_company(
+                        company["name"],
+                        company.get("website") or company.get("careers_url"))
+                    update_company_from_research(db, company_id, result)
+                    st.cache_data.clear()
+                    st.rerun()
+        else:
+            if st.button("🔍 Re-research", use_container_width=True, key=f"reresearch_{company_id}"):
+                with st.spinner(f"Re-researching {company['name']}..."):
+                    from company_researcher import research_company, update_company_from_research
+                    result = research_company(
+                        company["name"],
+                        company.get("website") or company.get("careers_url"))
+                    update_company_from_research(db, company_id, result)
+                    st.cache_data.clear()
+                    st.rerun()
 
     st.divider()
 
