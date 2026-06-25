@@ -58,7 +58,7 @@ def _decide_action(company: dict) -> str:
         "gem":        "B",
         "ashby":      "B",
         "teamtailor": "C",
-        "recruitee":  "C",
+        "recruitee":  "B",
         "bamboohr":   "C",
         "smartrecruiters": "C",
         "custom_html": "D",
