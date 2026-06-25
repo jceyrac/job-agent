@@ -513,7 +513,7 @@ def monitoring_info_line(company: dict) -> str:
                 if len(notes) > 150:
                     first = notes.split(". ")[0]
                     notes = first[:150] + ("…" if len(first) > 150 else ".")
-                return f'<span style="color:#999;font-size:12px">⛔ {notes}</span>'
+                return f'<span style="color:#999;font-size:12px">{notes}</span>'
         if careers:
             return (f'<span style="color:#888;font-size:12px">⚠️ No ATS detected · '
                     f'<a href="{careers}" target="_blank" style="color:#888">careers page</a></span>')
