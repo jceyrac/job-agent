@@ -55,6 +55,7 @@ def _decide_action(company: dict) -> str:
         "greenhouse": "A",
         "lever":      "B",
         "workable":   "B",
+        "gem":        "B",
         "ashby":      "C",
         "teamtailor": "C",
         "recruitee":  "C",
