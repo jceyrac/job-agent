@@ -502,16 +502,18 @@ def monitoring_info_line(company: dict) -> str:
     careers = company.get("careers_url")
 
     if not method or method in ("none", "manual"):
-        # For unsuitable companies, show the research reason
+        # For unsuitable companies, show the research reason in same style as other info lines
         if company.get("monitoring_status") == "watch_unsuitable":
-            notes = company.get("research_notes") or ""
+            notes = (company.get("research_notes") or "").strip()
             if notes:
-                # Take first sentence or ~100 chars
-                short = notes.split(".")[0][:100]
-                if len(notes.split(".")[0]) > 100:
-                    short += "…"
-                return (f'<span style="color:#999;font-size:11px" '
-                        f'title="{notes}">⛔ {short}</span>')
+                # Clean up: remove trailing date stamps like "| 2026-06-25: investigate → unsuitable"
+                import re
+                notes = re.sub(r'\s*\|\s*\d{4}-\d{2}-\d{2}.*$', '', notes).strip()
+                # Truncate to first sentence if it's long, otherwise show up to 150 chars
+                if len(notes) > 150:
+                    first = notes.split(". ")[0]
+                    notes = first[:150] + ("…" if len(first) > 150 else ".")
+                return f'<span style="color:#999;font-size:12px">⛔ {notes}</span>'
         if careers:
             return (f'<span style="color:#888;font-size:12px">⚠️ No ATS detected · '
                     f'<a href="{careers}" target="_blank" style="color:#888">careers page</a></span>')
