@@ -2415,6 +2415,181 @@ def test_country_code_null_when_missing():
     assert rows[0]["country_code"] is None
 
 
+# ── Spec 006-pre — scraper config from DB ────────────────────────────────────
+
+def _seed_company(name: str, ats_identifier: str, scraping_method: str,
+                  monitoring_status: str = "watching") -> dict:
+    """Return a company dict matching the get_watching_companies_by_method shape."""
+    return dict(name=name, ats_identifier=ats_identifier, ats_provider=scraping_method,
+                careers_url=None)
+
+
+def test_get_watching_companies_by_method_returns_matching():
+    """Only companies with monitoring_status='watching' + matching scraping_method +
+    non-NULL ats_identifier are returned."""
+    db = JobStorage(":memory:")
+    # Insert two watching greenhouse companies and one lever (should be excluded)
+    _setup_test_companies(db)
+
+    rows = db.get_watching_companies_by_method("greenhouse")
+    slugs = {r["ats_identifier"] for r in rows}
+    assert "dfinity" in slugs, "dfinity should be returned (watching + greenhouse + has slug)"
+    assert "iohk-cardano" in slugs, "iohk-cardano should be returned"
+    assert "impossiblecloud" not in slugs, "lever company should not appear in greenhouse query"
+
+
+def test_get_watching_companies_by_method_excludes_watch_ready():
+    """Companies at watch_ready are NOT returned — only watching."""
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+    # Move one to watch_ready
+    with db._conn() as conn:
+        conn.execute("UPDATE companies SET monitoring_status='watch_ready' WHERE ats_identifier='dfinity'")
+        conn.commit()
+
+    rows = db.get_watching_companies_by_method("greenhouse")
+    slugs = {r["ats_identifier"] for r in rows}
+    assert "dfinity" not in slugs, "watch_ready should be excluded"
+    assert "iohk-cardano" in slugs, "watching should still be returned"
+
+
+def test_get_watching_companies_by_method_excludes_watch_pending():
+    """Companies at watch_pending are NOT returned — only watching."""
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+    with db._conn() as conn:
+        conn.execute("UPDATE companies SET monitoring_status='watch_pending' WHERE ats_identifier='dfinity'")
+        conn.commit()
+
+    rows = db.get_watching_companies_by_method("greenhouse")
+    slugs = {r["ats_identifier"] for r in rows}
+    assert "dfinity" not in slugs, "watch_pending should be excluded"
+
+
+def test_get_watching_companies_by_method_excludes_null_ats_identifier():
+    """Companies with NULL ats_identifier are excluded (and logged as warning)."""
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+    # Give iohk-cardano NULL ats_identifier
+    with db._conn() as conn:
+        conn.execute("UPDATE companies SET ats_identifier=NULL WHERE ats_identifier='iohk-cardano'")
+        conn.commit()
+
+    rows = db.get_watching_companies_by_method("greenhouse")
+    slugs = {r["ats_identifier"] for r in rows}
+    assert "iohk-cardano" not in slugs, "NULL ats_identifier should be excluded"
+    assert "dfinity" in slugs, "valid slug should still be returned"
+
+
+def test_get_watching_companies_by_method_excludes_legacy_null_method():
+    """Legacy companies with scraping_method=NULL are excluded (covered by seed)."""
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+    # Give one company scraping_method=NULL (legacy)
+    with db._conn() as conn:
+        conn.execute("UPDATE companies SET scraping_method=NULL WHERE ats_identifier='dfinity'")
+        conn.commit()
+
+    rows = db.get_watching_companies_by_method("greenhouse")
+    slugs = {r["ats_identifier"] for r in rows}
+    assert "dfinity" not in slugs, "scraping_method=NULL should be excluded"
+
+
+def test_scraper_helper_seed_merge_greenhouse():
+    """get_greenhouse_boards merges seed + DB slugs, seed first for legacy coverage."""
+    from scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
+
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+
+    boards = get_greenhouse_boards(db)
+    # Seed slugs must come first
+    seed_count = len(GREENHOUSE_BOARDS_SEED)
+    assert boards[:seed_count] == list(GREENHOUSE_BOARDS_SEED), \
+        "Seed list must come first in merged result"
+    # dfinity is in the seed — deduplicated, appears only once
+    assert boards.count("dfinity") == 1, "dfinity in both seed and DB → count=1"
+    # iohk-cardano is DB-only — appears after seed
+    assert "iohk-cardano" in boards[seed_count:], \
+        "iohk-cardano (DB-only) should appear after seed"
+
+
+def test_scraper_helper_seed_merge_lever():
+    """get_lever_slugs merges seed + DB slugs, deduplicating overlaps."""
+    from scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
+
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+
+    slugs = get_lever_slugs(db)
+    seed_count = len(LEVER_SLUGS_SEED)
+    assert slugs[:seed_count] == list(LEVER_SLUGS_SEED), \
+        "Seed list must come first"
+    # impossiblecloud is in seed AND DB → deduplicated, appears only once
+    assert slugs.count("impossiblecloud") == 1, \
+        "impossiblecloud in both seed and DB → count=1"
+
+
+def test_scraper_helper_seed_merge_workable():
+    """get_workable_slugs merges seed + DB slugs."""
+    from scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
+
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+    # Make Impossible Cloud a workable company (not in seed) so it appears as DB-only
+    with db._conn() as conn:
+        conn.execute("""UPDATE companies SET scraping_method='workable',
+                        monitoring_status='watching' WHERE ats_identifier='impossiblecloud'""")
+        conn.commit()
+
+    slugs = get_workable_slugs(db)
+    seed_count = len(WORKABLE_SLUGS_SEED)
+    assert slugs[:seed_count] == list(WORKABLE_SLUGS_SEED), \
+        "Seed list must come first"
+    # impossiblecloud is not in workable seed → appears as DB-only addition
+    assert "impossiblecloud" in slugs[seed_count:], \
+        "impossiblecloud (DB-only for workable) should appear after seed"
+
+
+def test_scraper_helper_graceful_with_none_db():
+    """Scraper helpers return seed only when db is None."""
+    from scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
+    from scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
+    from scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
+
+    assert get_greenhouse_boards(None) == list(GREENHOUSE_BOARDS_SEED)
+    assert get_lever_slugs(None) == list(LEVER_SLUGS_SEED)
+    assert get_workable_slugs(None) == list(WORKABLE_SLUGS_SEED)
+
+
+def _setup_test_companies(db: JobStorage) -> None:
+    """Insert test company rows for spec 006-pre tests."""
+    with db._conn() as conn:
+        conn.executescript("""
+            INSERT INTO companies (id, name, name_normalized, ats_identifier, ats_provider,
+                                   scraping_method, monitoring_status,
+                                   first_seen_at, last_seen_at, created_at)
+            VALUES (101, 'Dfinity / ICP', 'dfinity', 'dfinity', 'greenhouse',
+                    'greenhouse', 'watching',
+                    datetime('now'), datetime('now'), datetime('now'));
+
+            INSERT INTO companies (id, name, name_normalized, ats_identifier, ats_provider,
+                                   scraping_method, monitoring_status,
+                                   first_seen_at, last_seen_at, created_at)
+            VALUES (102, 'IOHK / Cardano', 'iohk', 'iohk-cardano', 'greenhouse',
+                    'greenhouse', 'watching',
+                    datetime('now'), datetime('now'), datetime('now'));
+
+            INSERT INTO companies (id, name, name_normalized, ats_identifier, ats_provider,
+                                   scraping_method, monitoring_status,
+                                   first_seen_at, last_seen_at, created_at)
+            VALUES (103, 'Impossible Cloud', 'impossiblecloud', 'impossiblecloud', 'lever',
+                    'lever', 'watching',
+                    datetime('now'), datetime('now'), datetime('now'));
+        """)
+        conn.commit()
+
+
 if __name__ == "__main__":
     print("Storage tests (in-memory DB)\n")
     results = run_storage_tests()
