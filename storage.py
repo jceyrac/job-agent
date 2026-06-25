@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS job_applications (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen  ON jobs (last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company_id ON jobs (company_id);
-CREATE INDEX IF NOT EXISTS idx_jobs_title_company ON jobs (source, norm_company, norm_title);
+-- idx_jobs_title_company created in migration below (depends on norm_company/norm_title columns)
 CREATE INDEX IF NOT EXISTS idx_scores_profile  ON job_scores (profile_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_job      ON job_scores (job_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_tracking_status ON job_tracking (status);
