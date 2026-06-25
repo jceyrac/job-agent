@@ -194,7 +194,7 @@ def test_no_rescore_on_second_run():
     db = JobStorage(":memory:")
     db.upsert_profile(_FakeProfile())
 
-    jobs = [_job(f"https://example.com/jobs/{i}") for i in range(5)]
+    jobs = [_job(f"https://example.com/jobs/{i}", company=f"Corp {i}") for i in range(5)]
 
     new1, cached1 = db.split_new_cached(jobs, PROFILE_ID)
     assert len(new1) == 5 and len(cached1) == 0, "First run: all should be new"
@@ -364,8 +364,8 @@ def test_rejected_excluded_from_scoring():
     db = JobStorage(":memory:")
     db.upsert_profile(_FakeProfile())
 
-    job_a = _job("https://example.com/a", posted_date=date.today())
-    job_b = _job("https://example.com/b", posted_date=date.today())
+    job_a = _job("https://example.com/a", posted_date=date.today(), company="Startup A")
+    job_b = _job("https://example.com/b", posted_date=date.today(), company="Startup B")
 
     db.save_unscored(job_a)
     db.save_unscored(job_b)
@@ -1815,9 +1815,9 @@ def test_get_stats_none_returns_all_job_counts():
     db = JobStorage(":memory:")
     db.upsert_profile(_FakeProfile())
 
-    j1 = _job(url="https://ex.com/1")
-    j2 = _job(url="https://ex.com/2")
-    j3 = _job(url="https://ex.com/3")
+    j1 = _job(url="https://ex.com/1", company="Alpha Inc")
+    j2 = _job(url="https://ex.com/2", company="Beta LLC")
+    j3 = _job(url="https://ex.com/3", company="Gamma SA")
 
     db.save_scored(j1, _score(score=9), PROFILE_ID)
     db.save_scored(j2, _score(score=7), PROFILE_ID)
@@ -1848,8 +1848,8 @@ def test_get_stats_profile_id_filters_by_profile():
     db.upsert_profile(_FakeProfile())
     db.upsert_profile(_FakeProfile2())
 
-    db.save_scored(_job(url="https://ex.com/1"), _score(score=9), PROFILE_ID)
-    db.save_scored(_job(url="https://ex.com/2"), _score(score=5), PROFILE_ID2)
+    db.save_scored(_job(url="https://ex.com/1", company="Delta AG"), _score(score=9), PROFILE_ID)
+    db.save_scored(_job(url="https://ex.com/2", company="Epsilon GmbH"), _score(score=5), PROFILE_ID2)
 
     # Profile A only sees job 1
     stats_a = db.get_stats(PROFILE_ID)

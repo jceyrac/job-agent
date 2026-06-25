@@ -1223,7 +1223,7 @@ class JobStorage:
                 (company_id, status, note, now))
 
     def _upsert_job_raw(self, job, conn, now: str, company_id: int | None = None,
-                         monitored_company_id: int | None = None) -> None:
+                         monitored_company_id: int | None = None) -> str:
         """Insère ou met à jour la table jobs (données brutes uniquement).
 
         Uses canonical_url for dedup: if an existing row has the same
@@ -1234,6 +1234,9 @@ class JobStorage:
         Also checks (source, norm_company, norm_title) as a fallback — catches
         duplicates where the same job gets different URLs (LinkedIn issues new
         numeric IDs on every scrape; Indeed issues different jk per country).
+
+        Returns the effective job id used for the upsert (may differ from
+        job.id when dedup maps to an existing row).
         """
         effective_id = job.id
         canonical = getattr(job, "canonical_url", None)
@@ -1294,6 +1297,7 @@ class JobStorage:
                 "monitored_company_id": monitored_company_id,
             },
         )
+        return effective_id
 
     def get_jobs_for_scoring(self, profile_id: str,
                              pre_filter: dict | None = None,
@@ -1476,10 +1480,10 @@ class JobStorage:
                     row["company_id"], fields,
                     enriched_by=fields.get("extracted_by"), _conn=conn)
 
-    def _update_job_extraction_fields(self, job, score_result: dict, conn, now: str,
+    def _update_job_extraction_fields(self, job_id: str, score_result: dict, conn, now: str,
                                        company_id: int | None = None) -> None:
         """Write job-level structured fields to jobs table, company fields to companies."""
-        extracted_by = getattr(job, "extracted_by", None) or score_result.get("scored_by")
+        extracted_by = score_result.get("scored_by")
         conn.execute(
             """UPDATE jobs SET
                    summary = ?, work_mode = ?, geo_zone = ?,
@@ -1495,13 +1499,13 @@ class JobStorage:
                 score_result.get("language_required", "unknown"),
                 now,
                 extracted_by,
-                job.id,
+                job_id,
             ),
         )
         # Write company-level fields to companies table (reuse conn)
         if not company_id:
             row = conn.execute(
-                "SELECT company_id FROM jobs WHERE id = ?", (job.id,)
+                "SELECT company_id FROM jobs WHERE id = ?", (job_id,)
             ).fetchone()
             if row:
                 company_id = row["company_id"]
@@ -1519,8 +1523,8 @@ class JobStorage:
         """
         now = _now()
         with self._conn() as conn:
-            self._upsert_job_raw(job, conn, now, company_id=company_id,
-                                monitored_company_id=monitored_company_id)
+            effective_id = self._upsert_job_raw(job, conn, now, company_id=company_id,
+                                                monitored_company_id=monitored_company_id)
             conn.execute(
                 """INSERT INTO job_scores (
                        job_id, profile_id,
@@ -1535,13 +1539,13 @@ class JobStorage:
                        scored_at    = excluded.scored_at,
                        country_code = excluded.country_code,
                        comp_flag    = excluded.comp_flag""",
-                (job.id, profile_id, score_result.get("score"),
+                (effective_id, profile_id, score_result.get("score"),
                  score_result.get("reason"), score_result.get("scored_by", "unknown"),
                  now, score_result.get("country_code"),
                  score_result.get("comp_flag", 0)),
             )
             # Also write structured fields to jobs table (Phase 1e)
-            self._update_job_extraction_fields(job, score_result, conn, now,
+            self._update_job_extraction_fields(effective_id, score_result, conn, now,
                                                company_id=company_id)
 
     def save_unscored(self, job, company_id: int | None = None,
