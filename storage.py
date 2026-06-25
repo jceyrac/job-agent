@@ -2217,8 +2217,13 @@ class JobStorage:
                 updates = []
                 params = []
                 for col, val in seed_fields.items():
-                    if col in ("name", "name_normalized", "monitoring_status"):
-                        continue  # name/normalized are keys; status is owned by UI/agent
+                    if col in ("name", "name_normalized"):
+                        continue  # keys — never update
+                    if col == "monitoring_status":
+                        # Only skip if DB already has 'watching' (user-activated in Live UI).
+                        # Other statuses (watch_ready, watch_unsuitable) flow from dev research.
+                        if existing["monitoring_status"] == "watching":
+                            continue
                     existing_val = existing[col] if col in existing.keys() else None
                     if val != existing_val:
                         updates.append(f"{col} = ?")
