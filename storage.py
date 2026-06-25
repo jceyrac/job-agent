@@ -2026,6 +2026,7 @@ class JobStorage:
 
     VALID_MONITORING_STATUSES = frozenset({
         "unmonitored", "watch_pending", "watch_ready", "watching",
+        "watch_unsuitable",  # investigated, no viable monitoring path
     })
 
     _ALLOWED_COMPANY_FIELDS = frozenset({

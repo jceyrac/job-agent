@@ -161,16 +161,18 @@ def _render_detail(company_id: int):
 
     # Monitoring status selectbox — only shows valid transitions
     _MON_TRANSITIONS = {
-        "unmonitored":   ["unmonitored", "watch_pending"],
-        "watch_pending":  ["watch_pending", "watch_ready", "unmonitored"],
-        "watch_ready":   ["watch_ready", "watching", "watch_pending", "unmonitored"],
-        "watching":      ["watching", "watch_ready", "unmonitored"],
+        "unmonitored":      ["unmonitored", "watch_pending"],
+        "watch_pending":    ["watch_pending", "watch_ready", "watch_unsuitable", "unmonitored"],
+        "watch_ready":     ["watch_ready", "watching", "watch_pending", "unmonitored"],
+        "watching":        ["watching", "watch_ready", "unmonitored"],
+        "watch_unsuitable": ["watch_unsuitable", "watch_pending", "unmonitored"],
     }
     _MON_LABELS = {
-        "unmonitored":   "⬜ unmonitored",
-        "watch_pending":  "🔍 watch_pending",
-        "watch_ready":   "⏸ watch_ready",
-        "watching":      "✅ watching",
+        "unmonitored":      "⬜ unmonitored",
+        "watch_pending":    "🔍 watch_pending",
+        "watch_ready":     "⏸ watch_ready",
+        "watching":        "✅ watching",
+        "watch_unsuitable": "⛔ unsuitable",
     }
     valid_transitions = _MON_TRANSITIONS.get(mon_status, [mon_status])
     mon_options = [_MON_LABELS[s] for s in valid_transitions]

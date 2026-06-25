@@ -291,13 +291,16 @@ def _action_e_jobspy(company: dict, db: JobStorage, dry_run: bool) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Action F — No solution
+# Action F — No viable monitoring path
 # ---------------------------------------------------------------------------
 
 def _action_f_manual(company: dict, db: JobStorage, dry_run: bool) -> str:
+    """No viable monitoring path — mark as watch_unsuitable so it doesn't
+    clutter the watch_pending queue on future runs."""
     if dry_run:
-        return "⚠️ no automated solution — stays watch_pending"
-    return "⚠️ stays watch_pending"
+        return "⚠️ no solution → watch_unsuitable"
+    db.set_monitoring_status(company["id"], "watch_unsuitable")
+    return "⚠️ watch_unsuitable"
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +313,7 @@ ACTION_LABELS = {
     "C": "C — new ATS scraper",
     "D": "D — custom scraper",
     "E": "E — JobSpy coverage",
-    "F": "F — manual (no solution)",
+    "F": "F — watch_unsuitable",
 }
 
 

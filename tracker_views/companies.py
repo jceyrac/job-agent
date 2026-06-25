@@ -83,7 +83,7 @@ def _render_list():
     st.markdown("**Monitoring**")
     mon_status = st.radio(
         "Monitoring status",
-        ["📡 Any monitored", "All", "🔍 watch_pending", "⏸ watch_ready", "✅ watching"],
+        ["📡 Any monitored", "All", "🔍 watch_pending", "⏸ watch_ready", "✅ watching", "⛔ unsuitable"],
         key="co_mon_status",
     )
 
@@ -106,13 +106,14 @@ def _render_list():
         "🔍 watch_pending": "watch_pending",
         "⏸ watch_ready":   "watch_ready",
         "✅ watching":      "watching",
+        "⛔ unsuitable":    "watch_unsuitable",
     }
     if mon_status in mon_status_map:
         companies = [c for c in companies
                      if c.get("monitoring_status") == mon_status_map[mon_status]]
     elif mon_status == "📡 Any monitored":
         companies = [c for c in companies
-                     if c.get("monitoring_status") in ("watch_pending", "watch_ready", "watching")]
+                     if c.get("monitoring_status") in ("watch_pending", "watch_ready", "watching", "watch_unsuitable")]
 
     if only_never:
         companies = [c for c in companies if not c.get("last_interaction_at")]
