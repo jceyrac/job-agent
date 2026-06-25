@@ -159,9 +159,10 @@ def _render_list():
                                     f"/company_detail?id={c['id']}"))
                 mon_badge = monitoring_status_badge(c)
                 st.markdown(mon_badge, unsafe_allow_html=True)
-                info = monitoring_info_line(c)
-                if info:
-                    st.markdown(info, unsafe_allow_html=True)
+                if c.get("monitoring_status") != "watch_unsuitable":
+                    info = monitoring_info_line(c)
+                    if info:
+                        st.markdown(info, unsafe_allow_html=True)
                 st.caption(
                     f"{company_status_badge(c['status'])} | "
                     f"💼 {c['job_count']} jobs | 👥 {c['contact_count']} contacts"
