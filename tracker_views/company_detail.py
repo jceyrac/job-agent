@@ -194,7 +194,9 @@ def _render_detail(company_id: int):
     if mon_status == "watch_pending":
         if company.get("research_notes"):
             st.caption(f"Research notes: {company['research_notes']}")
-        if st.button("🔍 Research now", use_container_width=True, key=f"research_{company_id}"):
+        # Only show Research button if ATS not yet identified
+        _already_researched = bool(company.get("scraping_method") and company.get("scraping_method") != "none")
+        if not _already_researched and st.button("🔍 Research now", use_container_width=True, key=f"research_{company_id}"):
             with st.spinner(f"Researching {company['name']}..."):
                 from company_researcher import research_company, update_company_from_research
                 result = research_company(
