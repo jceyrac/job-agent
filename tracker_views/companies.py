@@ -160,9 +160,9 @@ def _render_list():
                 if badge:
                     st.html(badge)
                 mon_badge = monitoring_status_badge(c)
+                st.markdown(mon_badge, unsafe_allow_html=True)
                 st.caption(
                     f"{company_status_badge(c['status'])} | "
-                    f"{mon_badge} | "
                     f"💼 {c['job_count']} jobs | 👥 {c['contact_count']} contacts"
                 )
             with c2:
