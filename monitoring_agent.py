@@ -56,7 +56,7 @@ def _decide_action(company: dict) -> str:
         "lever":      "B",
         "workable":   "B",
         "gem":        "B",
-        "ashby":      "C",  # API requires auth — scraper broken, needs spec
+        "ashby":      "B",
         "teamtailor": "C",
         "recruitee":  "C",
         "bamboohr":   "C",

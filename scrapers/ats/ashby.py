@@ -1,6 +1,9 @@
 """Ashby ATS adapter — company-keyed scraper driven by DB targets.
 
-API: api.ashbyhq.com/posting-api/v1/boards/{board}/jobs
+API: api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true
+
+Public endpoint, no auth required. Returns JSON with top-level "jobs" array.
+No pagination — all listed jobs in a single call.
 """
 
 import time
@@ -11,7 +14,7 @@ import httpx
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
 
-BASE_URL = "https://api.ashbyhq.com/posting-api/v1/boards"
+BASE_URL = "https://api.ashbyhq.com/posting-api/job-board"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; job_agent/1.0)"}
 
 
@@ -31,25 +34,31 @@ class AshbyScraper(BaseScraper):
                 continue
             try:
                 with httpx.Client(headers=HEADERS, timeout=15, follow_redirects=True) as client:
-                    r = client.get(f"{BASE_URL}/{board}/jobs")
+                    r = client.get(f"{BASE_URL}/{board}",
+                                   params={"includeCompensation": "true"})
                     if r.status_code != 200:
                         print(f"  [{self.SOURCE_NAME}] {board}: HTTP {r.status_code}")
                         continue
                     data = r.json()
-                    postings = data.get("jobs", []) or data.get("postings", []) or data
-                    if isinstance(postings, dict):
-                        postings = postings.get("results", []) or []
+                    postings = data.get("jobs", [])
+
+                    if not postings:
+                        print(f"  [{self.SOURCE_NAME}] {board}: 0 jobs")
 
                     for item in postings:
-                        title = item.get("title", "") or item.get("name", "")
-                        location = item.get("location", "") or ""
-                        if isinstance(location, dict):
-                            location = location.get("name", "")
-                        url = item.get("applyUrl", "") or item.get("externalUrl", "") or \
-                              item.get("jobUrl", "") or ""
+                        # Skip unlisted jobs
+                        if not item.get("isListed", True):
+                            continue
 
+                        title = item.get("title", "")
+                        location = item.get("location", "") or "Unknown"
+
+                        # URL: prefer jobUrl, fallback to applyUrl
+                        url = item.get("jobUrl", "") or item.get("applyUrl", "") or ""
+
+                        # Date: publishedAt
                         posted_date = None
-                        raw_date = item.get("publishedAt", "") or item.get("createdAt", "")
+                        raw_date = item.get("publishedAt", "")
                         if raw_date:
                             try:
                                 posted_date = datetime.fromisoformat(
@@ -57,21 +66,22 @@ class AshbyScraper(BaseScraper):
                             except (ValueError, TypeError):
                                 pass
 
-                        desc = (item.get("description", "") or
-                                item.get("descriptionPlain", "") or "")[:500]
+                        # Description: descriptionHtml
+                        desc = (item.get("descriptionHtml", "") or
+                                item.get("description", "") or "")[:500]
 
                         jobs.append(JobPosting(
                             source=self.SOURCE_NAME,
                             title=title,
                             company=company.get("name", board.title()),
-                            location=location or "Unknown",
+                            location=location,
                             url=url,
                             posted_date=posted_date,
                             description=desc or None,
                             work_mode=None,
-                            base_location=location or None,
+                            base_location=location,
                         ))
-                time.sleep(0.5)
+                time.sleep(1.0)
             except Exception as e:
                 print(f"  [{self.SOURCE_NAME}] {board}: {e}")
                 continue
