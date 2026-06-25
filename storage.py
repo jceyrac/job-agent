@@ -1924,8 +1924,22 @@ class JobStorage:
     def get_watching_companies_by_method(self, scraping_method: str) -> list[dict]:
         """Return companies with monitoring_status='watching' and given scraping_method.
         Does NOT return legacy companies with scraping_method=NULL.
+        Logs a warning for watching companies that have a NULL ats_identifier.
         """
         with self._conn() as conn:
+            # Warn about watching companies with NULL ats_identifier
+            null_ids = conn.execute(
+                """SELECT name FROM companies
+                   WHERE monitoring_status = 'watching'
+                     AND scraping_method = ?
+                     AND ats_identifier IS NULL""",
+                (scraping_method,),
+            ).fetchall()
+            for row in null_ids:
+                logger.warning(
+                    "[%s] watching company '%s' has NULL ats_identifier — skipped",
+                    scraping_method, row["name"])
+
             rows = conn.execute(
                 """SELECT id, name, ats_identifier, ats_provider, careers_url
                    FROM companies

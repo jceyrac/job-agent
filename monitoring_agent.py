@@ -6,6 +6,10 @@ decision model driven by scraping_method.  Applies simple config changes directl
 to main; generates SpecKit specs + git branches for cases requiring new code.
 
 See spec 006 for the full decision model.
+
+Updated for spec 006-pre: Actions A and B no longer edit scraper config files.
+The scrapers now read target slugs from the DB via get_watching_companies_by_method().
+The agent just transitions companies to watch_ready.
 """
 
 import argparse
@@ -24,11 +28,11 @@ from storage import JobStorage
 # ---------------------------------------------------------------------------
 
 GREENHOUSE_CONFIG_PATH = "scrapers/greenhouse.py"
-GREENHOUSE_LIST_NAME = "CRYPTO_WEB3_BOARDS"
+GREENHOUSE_LIST_NAME = "GREENHOUSE_BOARDS_SEED"
 
 ATS_CONFIG_PATHS = {
-    "lever":    ("scrapers/ats/lever.py",    "DEFAULT_SLUGS"),
-    "workable": ("scrapers/ats/workable.py", "DEFAULT_SLUGS"),
+    "lever":    ("scrapers/ats/lever.py",    "LEVER_SLUGS_SEED"),
+    "workable": ("scrapers/ats/workable.py", "WORKABLE_SLUGS_SEED"),
 }
 
 ROOT = Path(__file__).resolve().parent
@@ -78,38 +82,21 @@ def _run_export_seed(dry_run: bool) -> None:
     subprocess.run([sys.executable, "export_seed.py"], check=True, cwd=ROOT)
 
 
-PENDING_ADD_MARKER = "# PENDING_ADD_BY_AGENT"
-
-
 # ---------------------------------------------------------------------------
 # Action A — Greenhouse
 # ---------------------------------------------------------------------------
 
 def _action_a_greenhouse(company: dict, db: JobStorage, dry_run: bool) -> str:
+    """After spec 006-pre: scrapers read from DB via get_greenhouse_boards().
+    No file editing needed — just transition to watch_ready."""
     slug = _slug_from_company(company)
     name = company["name"]
-    path = ROOT / GREENHOUSE_CONFIG_PATH
-    content = path.read_text()
-
-    if f'"{slug}"' in content:
-        return f"✅ already present — skipped"
 
     if dry_run:
-        return f"✅ would add '{slug}' to Greenhouse boards"
+        return f"✅ would set watch_ready ({slug})"
 
-    # Insert before the closing bracket of the list
-    new_line = f'    "{slug}",{PENDING_ADD_MARKER}'
-    content = content.replace("]", f"{new_line}\n]", 1)
-    path.write_text(content)
-
-    subprocess.run(["git", "add", GREENHOUSE_CONFIG_PATH], check=True, cwd=ROOT)
-    subprocess.run(
-        ["git", "commit", "-m",
-         f"monitor: add {name} ({slug}) to Greenhouse boards"],
-        check=True, cwd=ROOT,
-    )
     db.set_monitoring_status(company["id"], "watch_ready")
-    return f"✅ committed to main"
+    return f"✅ watch_ready ({slug})"
 
 
 # ---------------------------------------------------------------------------
@@ -118,31 +105,16 @@ def _action_a_greenhouse(company: dict, db: JobStorage, dry_run: bool) -> str:
 
 def _action_b_ats(company: dict, provider: str, db: JobStorage,
                    dry_run: bool) -> str:
+    """After spec 006-pre: scrapers read from DB via get_lever_slugs() /
+    get_workable_slugs(). No file editing needed — just transition to watch_ready."""
     slug = _slug_from_company(company)
     name = company["name"]
-    file_rel, list_name = ATS_CONFIG_PATHS[provider]
-    path = ROOT / file_rel
-    content = path.read_text()
-
-    if f'"{slug}"' in content:
-        return f"✅ already present — skipped"
 
     if dry_run:
-        return f"✅ would add '{slug}' to {provider} config"
+        return f"✅ would set watch_ready ({slug})"
 
-    new_line = f'    "{slug}",{PENDING_ADD_MARKER}'
-    # Insert at end of the DEFAULT_SLUGS list
-    content = content.replace("]", f"{new_line}\n]", 1)
-    path.write_text(content)
-
-    subprocess.run(["git", "add", file_rel], check=True, cwd=ROOT)
-    subprocess.run(
-        ["git", "commit", "-m",
-         f"monitor: add {name} ({slug}) to {provider} boards"],
-        check=True, cwd=ROOT,
-    )
     db.set_monitoring_status(company["id"], "watch_ready")
-    return f"✅ committed to main"
+    return f"✅ watch_ready ({slug})"
 
 
 # ---------------------------------------------------------------------------
