@@ -375,16 +375,9 @@ def render():
 
 
 def _render_company_monitoring(db):
-    """Consolidated company monitoring section — management + import + research."""
-    import csv
-    import io
-
+    """Pipeline toggle for monitored-company scraping."""
     st.subheader("📡 Company Monitoring")
 
-    # ── Subsection 1: Monitored companies ──────────────────────────────────
-    st.markdown("#### Monitored companies")
-
-    # Pipeline toggle
     mon_cfg = db.get_config("monitoring.enabled_in_pipeline")
     mon_enabled = mon_cfg is None or mon_cfg.lower() == "true"
     scrape_cfg = db.get_config("scrape.enabled_in_pipeline")
@@ -406,165 +399,12 @@ def _render_company_monitoring(db):
                           "true" if new_mon else "false")
             st.rerun()
 
-    # Company list (paused companies remain visible)
-    from tracker_views.shared import (
-        load_all_monitorable_companies,
-        is_monitoring_source_enabled,
-        monitoring_badge,
-    )
+    # Summary stats only — full management is on the Companies page
+    from tracker_views.shared import load_all_monitorable_companies
     all_monitorable = load_all_monitorable_companies(db)
     if all_monitorable:
         active_count = sum(1 for c in all_monitorable if c.get("monitored"))
         st.caption(f"{len(all_monitorable)} monitorable companies ({active_count} active)")
-
-        for company in all_monitorable:
-            cid = company["id"]
-            name = company["name"]
-            provider = company.get("ats_provider", "—")
-            identifier = company.get("ats_identifier", "")
-            is_monitored = bool(company.get("monitored"))
-            source_enabled = is_monitoring_source_enabled(db, company)
-
-            cols = st.columns([4, 2, 1])
-            with cols[0]:
-                badge_html = monitoring_badge(company)
-                if badge_html:
-                    st.html(badge_html)
-                st.markdown(f"**{name}**  \n`{provider}` → `{identifier}`")
-            with cols[1]:
-                if not source_enabled:
-                    st.caption("⚪ Scraper disabled")
-                else:
-                    st.caption("Active" if is_monitored else "Paused")
-            with cols[2]:
-                if not source_enabled:
-                    st.toggle("Monitor", value=False, disabled=True,
-                              key=f"mon_toggle_{cid}",
-                              help=f"Enable the {provider} scraper in Settings to monitor this company.")
-                else:
-                    new_val = st.toggle("Monitor", value=is_monitored,
-                                        key=f"mon_toggle_{cid}")
-                    if new_val != is_monitored:
-                        db.set_company_monitored(cid, new_val)
-                        st.cache_data.clear()
-                        st.rerun()
-    else:
-        st.info("No monitorable companies yet. Add companies via the Companies page, "
-                "or import a CSV below.")
-
-    st.divider()
-
-    # ── Subsection 2: Import companies to watch ────────────────────────────
-    st.markdown("#### Import companies to watch")
-    csv_file = st.file_uploader(
-        "Upload a CSV with company names",
-        type=["csv"],
-        key="mon_csv_upload",
-        help="CSV must have a 'Name' column. Other columns (Website, Career website, "
-             "ATS, X account, Comment, etc.) are optional. All imported companies "
-             "start at 'To research' status.",
-    )
-    if csv_file is not None:
-        content = csv_file.read().decode("utf-8", errors="replace")
-        reader = csv.DictReader(io.StringIO(content))
-        rows = list(reader)
-        if not rows:
-            st.warning("CSV is empty or has no header row.")
-        else:
-            if st.button(f"Import {len(rows)} companies", use_container_width=True):
-                result = db.import_companies_from_csv(rows)
-                imported = result["imported"]
-                skipped = result["skipped"]
-                msg = f"✅ {imported} companies imported"
-                if skipped:
-                    msg += f"\n\n⚠️ {len(skipped)} already existed — skipped"
-                    if len(skipped) <= 10:
-                        msg += f": {', '.join(skipped)}"
-                st.success(msg)
-                if imported > 0:
-                    st.info(
-                        f"{imported} companies ready for research. "
-                        f"Click the button below to run the researcher."
-                    )
-                st.cache_data.clear()
-
-    # ── Research all pending ───────────────────────────────────────────────
-    pending = db.get_watch_pending_companies()
-    st.caption(f"{len(pending)} companies waiting for research")
-
-    if pending and st.button(
-        f"🔍 Research all ({len(pending)} companies)",
-        use_container_width=True,
-    ):
-        from company_researcher import research_company, update_company_from_research
-        results = []
-        total = len(pending)
-
-        with st.status("🔍 Researching companies...", expanded=True) as status_block:
-            progress = st.progress(0)
-            for i, company in enumerate(pending):
-                st.write(f"**{company['name']}** — researching...")
-                result = research_company(
-                    company["name"],
-                    company.get("website") or company.get("careers_url"),
-                    existing=company,
-                )
-                update_company_from_research(db, company["id"], result)
-                results.append((company, result))
-
-                icon = _research_outcome_icon(result)
-                st.write(
-                    f"{icon} **{company['name']}** → "
-                    f"`{result.ats_provider or 'none'}` / "
-                    f"`{result.scraping_method}` ({result.confidence})"
-                    + (f" — {result.notes}" if result.notes else "")
-                )
-                progress.progress((i + 1) / total)
-                import time
-                time.sleep(0.5)
-
-            status_block.update(label="✅ Research complete", state="complete")
-
-        _render_research_summary([(c, r) for c, r in results])
-        st.cache_data.clear()
-
-
-def _research_outcome_icon(result) -> str:
-    if result.scraping_method in ("greenhouse", "lever", "workable", "ashby"):
-        return "✅"
-    if result.scraping_method == "custom_html":
-        return "🟡"
-    if result.scraping_method == "jobspy":
-        return "🔵"
-    if result.scraping_method == "none":
-        return "❌"
-    return "⚠️"  # manual / unknown
-
-
-def _render_research_summary(results: list) -> None:
-    """Render a dataframe + aggregate counts for a research run."""
-    import pandas as pd
-    rows = []
-    counts: dict[str, int] = {"✅": 0, "🟡": 0, "🔵": 0, "❌": 0, "⚠️": 0}
-    for company, result in results:
-        icon = _research_outcome_icon(result)
-        counts[icon] = counts.get(icon, 0) + 1
-        rows.append({
-            "Company": company["name"],
-            "ATS": result.ats_provider or "—",
-            "Method": result.scraping_method,
-            "Confidence": result.confidence,
-            "Notes": (result.notes or "")[:80],
-        })
-    if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        st.caption(
-            f"✅ {counts['✅']} resolved  "
-            f"🟡 {counts['🟡']} custom HTML  "
-            f"🔵 {counts['🔵']} JobSpy  "
-            f"❌ {counts['❌']} no page  "
-            f"⚠️ {counts['⚠️']} manual"
-        )
 
 
 def _render_reonboard(db):
