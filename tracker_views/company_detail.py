@@ -137,92 +137,83 @@ def _render_detail(company_id: int):
             st.session_state[f"edit_company_{company_id}"] = False
             st.rerun()
 
-    # ── Monitoring status section ─────────────────────────────────────────
+    # ── Company status ───────────────────────────────────────────────────────
+    new_status = st.selectbox(
+        "Status", COMPANY_STATUSES,
+        index=COMPANY_STATUSES.index(company["status"]) if company["status"] in COMPANY_STATUSES else 0,
+        key="co_status_select",
+    )
+    if new_status != company["status"]:
+        if st.button("Update status", key="co_update_status"):
+            db.set_company_status(company_id, new_status)
+            st.cache_data.clear()
+            st.rerun()
+
+    # ── Monitoring section ────────────────────────────────────────────────
     st.divider()
     st.subheader("📡 Monitoring")
     mon_status = company.get("monitoring_status", "unmonitored")
-    st.markdown(monitoring_status_badge(company), unsafe_allow_html=True)
+
+    # ATS / method / confidence info line
     info = monitoring_info_line(company)
     if info:
         st.markdown(info, unsafe_allow_html=True)
 
-    if mon_status == "unmonitored":
-        if st.button("👁 Watch this company", use_container_width=True):
-            db.set_monitoring_status(company_id, "watch_pending")
+    # Monitoring status selectbox — only shows valid transitions
+    _MON_TRANSITIONS = {
+        "unmonitored":   ["unmonitored", "watch_pending"],
+        "watch_pending":  ["watch_pending", "watch_ready", "unmonitored"],
+        "watch_ready":   ["watch_ready", "watching", "watch_pending", "unmonitored"],
+        "watching":      ["watching", "watch_ready", "unmonitored"],
+    }
+    _MON_LABELS = {
+        "unmonitored":   "⬜ unmonitored",
+        "watch_pending":  "🔍 watch_pending",
+        "watch_ready":   "⏸ watch_ready",
+        "watching":      "✅ watching",
+    }
+    valid_transitions = _MON_TRANSITIONS.get(mon_status, [mon_status])
+    mon_options = [_MON_LABELS[s] for s in valid_transitions]
+    current_label = _MON_LABELS.get(mon_status, mon_status)
+    current_idx = mon_options.index(current_label) if current_label in mon_options else 0
+
+    selected_label = st.selectbox(
+        "Monitoring status", mon_options,
+        index=current_idx,
+        key=f"mon_status_select_{company_id}",
+    )
+    selected_status = valid_transitions[mon_options.index(selected_label)]
+    if selected_status != mon_status:
+        if st.button("Apply", key=f"mon_apply_{company_id}"):
+            db.set_monitoring_status(company_id, selected_status)
+            db.set_company_monitored(company_id, selected_status == "watching")
             st.cache_data.clear()
             st.rerun()
 
-    elif mon_status == "watch_pending":
+    # Contextual action buttons
+    if mon_status == "watch_pending":
         if company.get("research_notes"):
-            st.caption(f"Notes: {company['research_notes']}")
-        c_r1, c_r2 = st.columns(2)
-        with c_r1:
-            if st.button("🔍 Research now", use_container_width=True):
-                with st.spinner(f"Researching {company['name']}..."):
-                    from company_researcher import research_company, update_company_from_research
-                    result = research_company(
-                        company["name"],
-                        company.get("website") or company.get("careers_url"))
-                    update_company_from_research(db, company_id, result)
-                    st.cache_data.clear()
-                    st.rerun()
-        with c_r2:
-            if st.button("✖ Stop watching", use_container_width=True):
-                db.set_monitoring_status(company_id, "unmonitored")
-                st.cache_data.clear()
-                st.rerun()
-
-    elif mon_status == "watch_ready":
-        ats = company.get("ats_provider", "—")
-        method = company.get("scraping_method", "—")
-        confidence = company.get("research_confidence", "—")
-        board = company.get("ats_identifier", "—")
-        st.caption(f"ATS: **{ats}** | Method: **{method}** | "
-                   f"Board: `{board}` | Confidence: **{confidence}**")
-        c_r1, c_r2 = st.columns(2)
-        with c_r1:
-            if st.button("▶ Activate monitoring", use_container_width=True):
-                db.set_monitoring_status(company_id, "watching")
-                db.set_company_monitored(company_id, True)
-                st.cache_data.clear()
-                st.rerun()
-        with c_r2:
-            if st.button("✖ Stop watching", use_container_width=True):
-                db.set_monitoring_status(company_id, "unmonitored")
+            st.caption(f"Research notes: {company['research_notes']}")
+        if st.button("🔍 Research now", use_container_width=True, key=f"research_{company_id}"):
+            with st.spinner(f"Researching {company['name']}..."):
+                from company_researcher import research_company, update_company_from_research
+                result = research_company(
+                    company["name"],
+                    company.get("website") or company.get("careers_url"))
+                update_company_from_research(db, company_id, result)
                 st.cache_data.clear()
                 st.rerun()
 
     elif mon_status == "watching":
-        ats = company.get("ats_provider", "—")
-        careers = company.get("careers_url", "—")
-        st.caption(f"ATS: **{ats}** | Careers: {careers}")
-        c_r1, c_r2 = st.columns(2)
-        with c_r1:
-            if st.button("⏸ Pause monitoring", use_container_width=True):
-                db.set_monitoring_status(company_id, "watch_ready")
+        if st.button("🔍 Re-research", use_container_width=True, key=f"reresearch_{company_id}"):
+            with st.spinner(f"Re-researching {company['name']}..."):
+                from company_researcher import research_company, update_company_from_research
+                result = research_company(
+                    company["name"],
+                    company.get("website") or company.get("careers_url"))
+                update_company_from_research(db, company_id, result)
                 st.cache_data.clear()
                 st.rerun()
-        with c_r2:
-            if st.button("🔍 Re-research", use_container_width=True):
-                with st.spinner(f"Re-researching {company['name']}..."):
-                    from company_researcher import research_company, update_company_from_research
-                    result = research_company(
-                        company["name"],
-                        company.get("website") or company.get("careers_url"))
-                    update_company_from_research(db, company_id, result)
-                    st.cache_data.clear()
-                    st.rerun()
-
-    # Status change
-    new_status = st.selectbox(
-        "Status", COMPANY_STATUSES,
-        index=COMPANY_STATUSES.index(company["status"]) if company["status"] in COMPANY_STATUSES else 0,
-    )
-    if new_status != company["status"]:
-        if st.button("Update Status"):
-            db.set_company_status(company_id, new_status)
-            st.cache_data.clear()
-            st.rerun()
 
     st.divider()
 
