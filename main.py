@@ -33,6 +33,15 @@ def main():
         sys.exit(1)
 
     db = JobStorage(DB_PATH)
+
+    # ── Purge stale jobs (untouched, >N days old) ────────────────────────────
+    retention_days = int(db.get_config("purge_retention_days", default="30"))
+    purged = db.purge_stale_jobs(retention_days)
+    if purged > 0:
+        print(f"[purge] {purged} stale jobs removed (>{retention_days}d, untouched)")
+    else:
+        print(f"[purge] No stale jobs to remove")
+
     active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
     t0 = time.monotonic()
 

@@ -1,6 +1,6 @@
 """tracker_views/settings.py — Profile management, stats, and actions."""
 import os
-import select
+import platform
 import subprocess
 import sys
 import time
@@ -41,22 +41,46 @@ def _textarea_to_list(value: str) -> list[str]:
 
 
 def _read_available(pipe) -> str:
-    """Read all currently available data from a subprocess pipe without blocking."""
-    import os as _os
-    chunks = []
-    fd = pipe.fileno()
-    while True:
-        ready, _, _ = select.select([pipe], [], [], 0)
-        if not ready:
-            break
-        try:
-            chunk = _os.read(fd, 65536)
-        except (ValueError, OSError):
-            break
-        if not chunk:
-            break
-        chunks.append(chunk)
-    return b"".join(chunks).decode("utf-8", errors="replace")
+    """Read all currently available data from a subprocess pipe without blocking.
+
+    Uses select() on Unix/macOS (supports arbitrary file descriptors).
+    Falls back to a non-blocking thread-based read on Windows, where
+    select() only works with sockets.
+    """
+    if platform.system() == "Windows":
+        # Windows: read with a short timeout via a thread so we don't block
+        import threading
+        chunks = []
+
+        def _reader():
+            try:
+                chunk = pipe.read(65536)
+                if chunk:
+                    chunks.append(chunk)
+            except (ValueError, OSError):
+                pass
+
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+        t.join(timeout=0.05)   # 50 ms — fast enough for live output polling
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    else:
+        import select as _select
+        import os as _os
+        chunks = []
+        fd = pipe.fileno()
+        while True:
+            ready, _, _ = _select.select([pipe], [], [], 0)
+            if not ready:
+                break
+            try:
+                chunk = _os.read(fd, 65536)
+            except (ValueError, OSError):
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def _render_run_controls(db):
@@ -308,6 +332,30 @@ def _render_setup(db):
                 st.caption(f"⚠️ File not found: {cv_path}")
 
 
+def _render_purge(db):
+    """Retention period widget + live preview of purgeable job count."""
+    st.subheader("🧹 DB Purge")
+
+    retention = int(db.get_config("purge_retention_days", default="30"))
+    new_retention = st.number_input(
+        "Retention period (days)",
+        min_value=7, max_value=180, value=retention,
+        help="Jobs older than this many days with status 'new' and no notes "
+             "are automatically purged at the start of each pipeline run.",
+    )
+    if new_retention != retention:
+        if st.button("Save retention", key="save_retention"):
+            db.set_config("purge_retention_days", str(new_retention))
+            st.success(f"Retention set to {new_retention} days.")
+            st.rerun()
+
+    purgeable = db.count_purgeable_jobs(new_retention)
+    st.caption(
+        f"ℹ️ With this setting, {purgeable} job(s) would be purged "
+        f"on next run (stale, untouched)."
+    )
+
+
 def render():
     ensure_db()
     db = get_db()
@@ -318,6 +366,8 @@ def render():
     _render_profile_editor(db)
     st.divider()
     _render_scraper_toggles(db)
+    st.divider()
+    _render_purge(db)
     st.divider()
     _render_company_monitoring(db)
     st.divider()

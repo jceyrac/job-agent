@@ -2590,6 +2590,101 @@ def _setup_test_companies(db: JobStorage) -> None:
         conn.commit()
 
 
+# ── Spec 009 — DB purge ──────────────────────────────────────────────────────
+
+def _old_job(db: JobStorage, url: str, first_seen_days_ago: int = 40) -> str:
+    """Save a job then backdate its first_seen. Returns the effective job_id."""
+    from datetime import timedelta
+    j = _job(url=url, company=f"Purge Corp {url[-8:]}")
+    db.save_scored(j, _score(6), PROFILE_ID)
+    # _upsert_job_raw sets first_seen to now() — backdate it manually
+    old_date = (date.today() - timedelta(days=first_seen_days_ago)).isoformat()
+    with db._conn() as conn:
+        conn.execute("UPDATE jobs SET first_seen = ? WHERE id = ?", (old_date, j.id))
+        conn.commit()
+    return j.id
+
+
+def test_purge_stale_jobs_removes_untouched_old_jobs():
+    """Old jobs with status='new' and no notes are purged."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    jid = _old_job(db, "https://example.com/old", first_seen_days_ago=40)
+    db.set_status(jid, "new")
+
+    count = db.purge_stale_jobs(retention_days=30)
+    assert count == 1, f"Expected 1 purged, got {count}"
+
+    # Verify cleanup across all tables
+    with db._conn() as conn:
+        jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        assert jobs == 0, "jobs table should be empty after purge"
+        scores = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
+        assert scores == 0, "job_scores should be cleaned up"
+        tracking = conn.execute("SELECT COUNT(*) FROM job_tracking").fetchone()[0]
+        assert tracking == 0, "job_tracking should be cleaned up"
+
+
+def test_purge_stale_jobs_preserves_recent_jobs():
+    """Jobs newer than retention period are NOT purged."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    jid = _old_job(db, "https://example.com/recent", first_seen_days_ago=10)
+    db.set_status(jid, "new")
+
+    count = db.purge_stale_jobs(retention_days=30)
+    assert count == 0, "Recent job should not be purged"
+
+
+def test_purge_stale_jobs_preserves_jobs_with_notes():
+    """Old jobs with non-empty notes are protected from purge."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    jid = _old_job(db, "https://example.com/old-noted", first_seen_days_ago=40)
+    db.set_status(jid, "new", notes="Interesting candidate, check back later")
+
+    count = db.purge_stale_jobs(retention_days=30)
+    assert count == 0, "Job with notes should be protected"
+
+
+def test_purge_stale_jobs_preserves_applied_and_rejected():
+    """Jobs with status != 'new' are protected regardless of age."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    for i, status in enumerate(["applied", "rejected", "archived", "queued"]):
+        jid = _old_job(db, f"https://example.com/{status}", first_seen_days_ago=60)
+        db.set_status(jid, status)
+
+    count = db.purge_stale_jobs(retention_days=30)
+    assert count == 0, f"Jobs with status != 'new' should be protected"
+
+
+def test_count_purgeable_jobs_matches_purge_count():
+    """count_purgeable_jobs returns the same number that purge_stale_jobs deletes."""
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    # Mix: 2 old/untouched + 1 recent + 1 applied
+    for url, days, status in [
+        ("https://example.com/old1", 40, "new"),
+        ("https://example.com/old2", 50, "new"),
+        ("https://example.com/recent", 10, "new"),
+        ("https://example.com/applied", 60, "applied"),
+    ]:
+        jid = _old_job(db, url, first_seen_days_ago=days)
+        db.set_status(jid, status)
+
+    expected = db.count_purgeable_jobs(retention_days=30)
+    assert expected == 2, f"Expected 2 purgeable, got {expected}"
+
+    purged = db.purge_stale_jobs(retention_days=30)
+    assert purged == expected, f"count={expected} but purged={purged}"
+
+
 if __name__ == "__main__":
     print("Storage tests (in-memory DB)\n")
     results = run_storage_tests()

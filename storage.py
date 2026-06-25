@@ -2249,6 +2249,101 @@ class JobStorage:
                 return True
 
     # ------------------------------------------------------------------
+    # Purge — stale job cleanup
+    # ------------------------------------------------------------------
+
+    def count_purgeable_jobs(self, retention_days: int = 30) -> int:
+        """Return how many jobs would be purged with the given retention (no side-effects)."""
+        with self._conn() as conn:
+            count = conn.execute(
+                """SELECT COUNT(*) FROM jobs j
+                   LEFT JOIN job_tracking jt ON j.id = jt.job_id
+                   WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                     AND (
+                         jt.job_id IS NULL
+                         OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
+                     )""",
+                (retention_days,),
+            ).fetchone()[0]
+            return count
+
+    def purge_stale_jobs(self, retention_days: int = 30) -> int:
+        """Delete stale jobs (>retention_days old, untouched, no notes).
+        Cleans up status_history, job_scores, job_tracking, interactions,
+        and jobs in a transaction. Returns the number of job rows deleted.
+        """
+        with self._conn() as conn:
+            conn.execute("BEGIN")
+            try:
+                # Delete from child tables first (no CASCADE in schema)
+                conn.execute(
+                    """DELETE FROM interactions WHERE job_id IN (
+                        SELECT j.id FROM jobs j
+                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
+                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                          AND (
+                              jt.job_id IS NULL
+                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
+                          )
+                    )""",
+                    (retention_days,),
+                )
+                conn.execute(
+                    """DELETE FROM status_history WHERE job_id IN (
+                        SELECT j.id FROM jobs j
+                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
+                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                          AND (
+                              jt.job_id IS NULL
+                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
+                          )
+                    )""",
+                    (retention_days,),
+                )
+                conn.execute(
+                    """DELETE FROM job_scores WHERE job_id IN (
+                        SELECT j.id FROM jobs j
+                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
+                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                          AND (
+                              jt.job_id IS NULL
+                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
+                          )
+                    )""",
+                    (retention_days,),
+                )
+                conn.execute(
+                    """DELETE FROM job_tracking WHERE job_id IN (
+                        SELECT j.id FROM jobs j
+                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
+                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                          AND (
+                              jt.job_id IS NULL
+                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
+                          )
+                    )""",
+                    (retention_days,),
+                )
+                cursor = conn.execute(
+                    """DELETE FROM jobs WHERE id IN (
+                        SELECT j.id FROM jobs j
+                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
+                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                          AND (
+                              jt.job_id IS NULL
+                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
+                          )
+                    )""",
+                    (retention_days,),
+                )
+                count = cursor.rowcount
+                conn.execute("COMMIT")
+                return count
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    # ------------------------------------------------------------------
     # Config key-value store
     # ------------------------------------------------------------------
 
