@@ -485,7 +485,7 @@ def monitoring_status_badge(company: dict) -> str:
         "watch_pending":    ('<span style="color:#1976d2">🔍 watch_pending</span>'),
         "watch_ready":     ('<span style="color:#f57c00">⏸ watch_ready</span>'),
         "watching":        ('<span style="color:#2e7d32">✅ watching</span>'),
-        "watch_unsuitable": ('<span style="color:#999">⛔ unsuitable</span>'),
+        "watch_unsuitable": ('<span style="color:#999" title="No viable monitoring path — see research notes">⛔ unsuitable</span>'),
     }
     return badges.get(status, badges["unmonitored"])
 
@@ -502,6 +502,16 @@ def monitoring_info_line(company: dict) -> str:
     careers = company.get("careers_url")
 
     if not method or method in ("none", "manual"):
+        # For unsuitable companies, show the research reason
+        if company.get("monitoring_status") == "watch_unsuitable":
+            notes = company.get("research_notes") or ""
+            if notes:
+                # Take first sentence or ~100 chars
+                short = notes.split(".")[0][:100]
+                if len(notes.split(".")[0]) > 100:
+                    short += "…"
+                return (f'<span style="color:#999;font-size:11px" '
+                        f'title="{notes}">⛔ {short}</span>')
         if careers:
             return (f'<span style="color:#888;font-size:12px">⚠️ No ATS detected · '
                     f'<a href="{careers}" target="_blank" style="color:#888">careers page</a></span>')
