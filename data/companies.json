@@ -860,7 +860,7 @@
     "careers_url": null,
     "ats_provider": "greenhouse",
     "scraping_method": "greenhouse",
-    "monitoring_status": "watch_ready",
+    "monitoring_status": "watch_pending",
     "research_notes": "Detected greenhouse board from careers page",
     "research_confidence": "high",
     "x_handle": null,
