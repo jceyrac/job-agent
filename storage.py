@@ -2243,8 +2243,8 @@ class JobStorage:
                          monitoring_status, research_notes, research_confidence,
                          x_handle, industry_sector, company_country, notes,
                          status, first_seen_at, last_seen_at, created_at)
-                        VALUES ({placeholders}, 'prospect', ?, ?, ?, ?)""",
-                    vals + [now, now, now, now],
+                        VALUES ({placeholders}, 'prospect', ?, ?, ?)""",
+                    vals + [now, now, now],
                 )
                 return True
 
