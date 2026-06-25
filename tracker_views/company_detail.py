@@ -154,11 +154,6 @@ def _render_detail(company_id: int):
     st.subheader("📡 Monitoring")
     mon_status = company.get("monitoring_status", "unmonitored")
 
-    # ATS / method / confidence info line
-    info = monitoring_info_line(company)
-    if info:
-        st.markdown(info, unsafe_allow_html=True)
-
     # Monitoring status selectbox — only shows valid transitions
     _MON_TRANSITIONS = {
         "unmonitored":      ["unmonitored", "watch_pending"],
@@ -191,6 +186,11 @@ def _render_detail(company_id: int):
             db.set_company_monitored(company_id, selected_status == "watching")
             st.cache_data.clear()
             st.rerun()
+
+    # ATS / method / confidence info line (below dropdown for all statuses)
+    info = monitoring_info_line(company)
+    if info:
+        st.markdown(info, unsafe_allow_html=True)
 
     # Contextual action buttons — only for watch_pending
     if mon_status == "watch_pending":
