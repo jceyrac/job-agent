@@ -6,7 +6,7 @@ import streamlit as st
 from tracker_views.shared import (
     ensure_db, get_db,
     load_companies, md_link,
-    company_status_badge, monitoring_badge, monitoring_status_badge,
+    company_status_badge, monitoring_status_badge, monitoring_info_line,
     COMPANY_STATUSES, COUNTRY_OPTIONS, COUNTRY_FLAG, SECTOR_LABELS, sector_label,
 )
 from tracker_views.forms import add_company_dialog
@@ -156,11 +156,11 @@ def _render_list():
             with c1:
                 st.markdown(md_link(f"**{c['name']}**",
                                     f"/company_detail?id={c['id']}"))
-                badge = monitoring_badge(c)
-                if badge:
-                    st.html(badge)
                 mon_badge = monitoring_status_badge(c)
                 st.markdown(mon_badge, unsafe_allow_html=True)
+                info = monitoring_info_line(c)
+                if info:
+                    st.markdown(info, unsafe_allow_html=True)
                 st.caption(
                     f"{company_status_badge(c['status'])} | "
                     f"💼 {c['job_count']} jobs | 👥 {c['contact_count']} contacts"

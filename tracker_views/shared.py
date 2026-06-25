@@ -489,6 +489,62 @@ def monitoring_status_badge(company: dict) -> str:
     return badges.get(status, badges["unmonitored"])
 
 
+def monitoring_info_line(company: dict) -> str:
+    """Return a compact HTML info line showing ATS/scraping research results.
+    Designed to appear below the monitoring_status_badge in both list and detail views.
+    Returns empty string if no research data is available.
+    """
+    method = company.get("scraping_method")
+    ats = company.get("ats_provider")
+    slug = company.get("ats_identifier")
+    confidence = company.get("research_confidence")
+    careers = company.get("careers_url")
+
+    if not method or method in ("none", "manual"):
+        if careers:
+            return (f'<span style="color:#888;font-size:12px">⚠️ No ATS detected · '
+                    f'<a href="{careers}" target="_blank" style="color:#888">careers page</a></span>')
+        return ""
+
+    # Build method pill color
+    method_colors = {
+        "greenhouse": ("#e8f5e9", "#2e7d32"),
+        "lever":      ("#e8eaf6", "#3949ab"),
+        "workable":   ("#fce4ec", "#c62828"),
+        "ashby":      ("#e0f7fa", "#00838f"),
+        "custom_html":("#fff8e1", "#f57f17"),
+        "jobspy":     ("#ede7f6", "#6a1b9a"),
+    }
+    bg, fg = method_colors.get(method, ("#f5f5f5", "#555"))
+
+    parts = []
+    # Method pill
+    parts.append(
+        f'<span style="background:{bg};color:{fg};padding:1px 7px;'
+        f'border-radius:4px;font-size:12px;font-weight:600">{method}</span>'
+    )
+    # Slug if available
+    if slug:
+        parts.append(f'<span style="color:#888;font-size:12px">/ {slug}</span>')
+    # ATS provider if different from method and meaningful
+    if ats and ats.lower() not in (method, "none", "null", "", method.lower()):
+        parts.append(f'<span style="color:#888;font-size:12px">· {ats}</span>')
+    # Confidence dot
+    conf_colors = {"high": "#2e7d32", "medium": "#f57f17", "low": "#c62828"}
+    if confidence and confidence in conf_colors:
+        parts.append(
+            f'<span style="color:{conf_colors[confidence]};font-size:11px">● {confidence}</span>'
+        )
+    # Careers link
+    if careers:
+        parts.append(
+            f'<a href="{careers}" target="_blank" '
+            f'style="color:#888;font-size:11px">🔗</a>'
+        )
+
+    return " ".join(parts)
+
+
 def monitoring_badge(company: dict) -> str:
     """Return an HTML badge string for the company's monitoring status, or ''."""
     ats = company.get("ats_provider")

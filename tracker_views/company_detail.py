@@ -6,7 +6,8 @@ from tracker_views.shared import (
     load_company_by_id, load_jobs_for_company, load_contacts,
     score_badge, company_status_badge, relationship_badge,
     COMPANY_STATUSES, COUNTRY_FLAG, sector_label,
-    monitoring_status_badge,
+    monitoring_status_badge, monitoring_badge, is_monitoring_source_enabled,
+    monitoring_info_line,
 )
 from tracker_views.forms import add_contact_dialog, log_interaction_dialog
 
@@ -141,6 +142,9 @@ def _render_detail(company_id: int):
     st.subheader("📡 Monitoring")
     mon_status = company.get("monitoring_status", "unmonitored")
     st.markdown(monitoring_status_badge(company), unsafe_allow_html=True)
+    info = monitoring_info_line(company)
+    if info:
+        st.markdown(info, unsafe_allow_html=True)
 
     if mon_status == "unmonitored":
         if st.button("👁 Watch this company", use_container_width=True):
@@ -208,31 +212,6 @@ def _render_detail(company_id: int):
                     update_company_from_research(db, company_id, result)
                     st.cache_data.clear()
                     st.rerun()
-
-    # ── Monitoring badge + toggle (Phase 8a three-state model) ──
-    from tracker_views.shared import monitoring_badge, is_monitoring_source_enabled
-    badge_html = monitoring_badge(company)
-    if badge_html:
-        st.html(badge_html)
-        source_enabled = is_monitoring_source_enabled(db, company)
-        if source_enabled:
-            new_mon = st.toggle(
-                "Monitor this company",
-                value=bool(company.get("monitored")),
-                key=f"mon_toggle_detail_{company_id}",
-            )
-            if new_mon != bool(company.get("monitored")):
-                db.set_company_monitored(company_id, new_mon)
-                st.cache_data.clear()
-                st.rerun()
-        else:
-            provider = company.get("ats_provider") or company.get("scraper_id") or "?"
-            st.toggle(
-                "Monitor this company",
-                value=False, disabled=True,
-                key=f"mon_toggle_detail_dis_{company_id}",
-                help=f"Enable the {provider} scraper in Settings to monitor this company.",
-            )
 
     # Status change
     new_status = st.selectbox(
