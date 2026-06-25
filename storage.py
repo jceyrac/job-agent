@@ -2217,8 +2217,8 @@ class JobStorage:
                 updates = []
                 params = []
                 for col, val in seed_fields.items():
-                    if col in ("name", "name_normalized"):
-                        continue
+                    if col in ("name", "name_normalized", "monitoring_status"):
+                        continue  # name/normalized are keys; status is owned by UI/agent
                     existing_val = existing[col] if col in existing.keys() else None
                     if val != existing_val:
                         updates.append(f"{col} = ?")
