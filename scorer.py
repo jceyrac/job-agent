@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from datetime import datetime
 
@@ -487,6 +488,16 @@ def _call_groq(messages: list, model: str, max_retries: int = 5,
                     "region (e.g. United States, Europe) or check your API key at "
                     "console.groq.com."
                 ) from e
+            elif "json_validate_failed" in err:
+                if json_mode:
+                    # Groq server-side JSON validation rejected the output.
+                    # Retry without json_mode so we get raw text and parse it ourselves.
+                    print(f"  ⚠️  Groq JSON validation failed ({model})"
+                          f" — retrying without json_mode…")
+                    json_mode = False
+                    time.sleep(1)
+                else:
+                    raise  # already tried without json_mode, give up
             else:
                 raise  # auth error, bad request → propagate immediately
 
@@ -581,7 +592,23 @@ _VALID_LANGUAGES = {
 
 
 def _parse_result(raw: str) -> dict:
-    result = json.loads(raw)
+    # Strip markdown fences (model may wrap JSON when json_mode is off)
+    cleaned = raw.strip()
+    cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+    cleaned = re.sub(r'\s*```$', '', cleaned)
+    brace_start = cleaned.find('{')
+    if brace_start >= 0:
+        depth = 0
+        for i in range(brace_start, len(cleaned)):
+            if cleaned[i] == '{':
+                depth += 1
+            elif cleaned[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    cleaned = cleaned[brace_start:i + 1]
+                    break
+
+    result = json.loads(cleaned)
 
     sector = (result.get("industry_sector") or "other").strip().lower()
     if sector not in _VALID_SECTORS:
@@ -609,8 +636,26 @@ def _parse_result(raw: str) -> dict:
 
 
 def _parse_extraction_result(raw: str) -> dict:
-    """Parse extraction-only JSON response (no score, no reason)."""
-    result = json.loads(raw)
+    """Parse extraction-only JSON response (no score, no reason).
+    Strips markdown fences for responses that came without json_mode."""
+    # Strip markdown fences (model may wrap JSON in ```json``` when json_mode is off)
+    cleaned = raw.strip()
+    cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+    cleaned = re.sub(r'\s*```$', '', cleaned)
+    # If the model wrapped JSON in other text, extract just the JSON object
+    brace_start = cleaned.find('{')
+    if brace_start >= 0:
+        depth = 0
+        for i in range(brace_start, len(cleaned)):
+            if cleaned[i] == '{':
+                depth += 1
+            elif cleaned[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    cleaned = cleaned[brace_start:i + 1]
+                    break
+
+    result = json.loads(cleaned)
 
     sector = (result.get("industry_sector") or "other").strip().lower()
     if sector not in _VALID_SECTORS:
