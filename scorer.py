@@ -804,7 +804,8 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
     raw = None
     model = None
     try:
-        raw, model = _call_groq_fallback_chain(messages, models=EXTRACTION_MODELS)
+        raw, model = _call_groq_fallback_chain(messages, models=EXTRACTION_MODELS,
+                                                 json_mode=False)
     except Exception as e:
         if "All Groq models exhausted" in str(e):
             print(f"  ⚠️  Groq extraction exhausted — falling back to DeepSeek")
@@ -1019,8 +1020,8 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     ]
 
     try:
-        raw, model = _call_groq_fallback_chain(messages, models=EVALUATION_MODELS)
-        result = json.loads(raw)
+        raw, model = _call_groq_fallback_chain(messages, models=EVALUATION_MODELS, json_mode=False)
+        result = _parse_result(raw)
         score = int(result["score"])
         reason = result.get("reason", "")
         return _evaluation_result(score, reason, model, job, profile, comp_flag=comp_flag)
