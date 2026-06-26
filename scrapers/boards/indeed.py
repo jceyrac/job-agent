@@ -59,7 +59,7 @@ class IndeedScraper(BaseScraper):
         consecutive_timeouts = 0
 
         from profiles import load_active_profile
-        _p = load_active_profile(self.storage)
+        _p = load_active_profile(self._storage)
         terms = _p.search_query_titles or SEARCH_TERMS_INDEED
         raw_locs = _p.search_locations
         countries = [_to_indeed_slug(n) for n in raw_locs] if raw_locs else INDEED_COUNTRIES

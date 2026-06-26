@@ -44,7 +44,7 @@ class LinkedInScraper(BaseScraper):
             return []
 
         from profiles import load_active_profile
-        _p = load_active_profile(self.storage)
+        _p = load_active_profile(self._storage)
         terms = _p.search_query_titles or SEARCH_TERMS_LINKEDIN
         locations = _p.search_locations or LINKEDIN_LOCATIONS
 
