@@ -156,8 +156,8 @@ class GreenhouseScraper(BaseScraper):
         if self._targets is not None:
             board_tokens = [t["ats_identifier"] for t in self._targets]
         else:
-            from profiles import get_active_profile
-            boards = get_active_profile().greenhouse_boards
+            from profiles import load_active_profile
+            boards = load_active_profile(self._storage).greenhouse_boards
             if boards:
                 board_tokens = boards
             else:
