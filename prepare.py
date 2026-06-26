@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from paths import DB_PATH, DATA_DIR
-from profiles import ALL_PROFILES
+from profiles import ALL_PROFILES, SearchProfile
 from scorer import (
     _call_groq_fallback_chain,
     _call_deepseek,
@@ -365,11 +365,15 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
         from profiles import get_active_profile
         profile_id = get_active_profile().id
 
-    if profile_id not in ALL_PROFILES:
+    # Load from DB first (respects onboarding-saved profiles), fall back to code seed
+    profile_row = db.get_profile(profile_id)
+    if profile_row:
+        profile = SearchProfile.from_criteria(profile_row["id"], profile_row["name"], profile_row["criteria"])
+    elif profile_id in ALL_PROFILES:
+        profile = ALL_PROFILES[profile_id]
+    else:
         print(f"Unknown profile '{profile_id}'. Valid: {list(ALL_PROFILES.keys())}")
         return None
-
-    profile = ALL_PROFILES[profile_id]
 
     # Idempotency check
     existing = db.get_application(job_id)

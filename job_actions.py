@@ -8,7 +8,7 @@ load_dotenv()
 
 from models import JobPosting
 from paths import DB_PATH
-from profiles import ALL_PROFILES
+from profiles import ALL_PROFILES, SearchProfile
 from scorer import extract_job_fields, evaluate_for_profile
 from storage import JobStorage
 
@@ -269,10 +269,17 @@ def score_one(job_id: str, profile_id: str | None = None) -> dict | None:
     from profiles import get_active_profile
     profile_id = profile_id or get_active_profile().id
 
-    if profile_id not in ALL_PROFILES:
+    db = JobStorage(DB_PATH)
+
+    # Load from DB first (respects onboarding-saved profiles), fall back to code seed
+    profile_row = db.get_profile(profile_id)
+    if profile_row:
+        profile = SearchProfile.from_criteria(profile_row["id"], profile_row["name"], profile_row["criteria"])
+    elif profile_id in ALL_PROFILES:
+        profile = ALL_PROFILES[profile_id]
+    else:
         return {"status": "error", "error": f"unknown profile {profile_id}"}
 
-    db = JobStorage(DB_PATH)
     row = db.get_job_for_prepare(job_id)
     if row is None:
         return None
@@ -282,9 +289,6 @@ def score_one(job_id: str, profile_id: str | None = None) -> dict | None:
         if ext is None or ext.get("status") == "error":
             return ext or {"status": "error", "error": "extraction failed"}
         row = db.get_job_for_prepare(job_id)
-
-    profile = ALL_PROFILES[profile_id]
-    db.upsert_profile(profile)
     job = _dict_to_posting(row)
     result = evaluate_for_profile(job, profile)
 
