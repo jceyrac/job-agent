@@ -527,6 +527,12 @@ def _call_groq_fallback_chain(messages: list,
             continue
         try:
             raw = _call_groq(messages, model, json_mode=json_mode, max_tokens=max_tokens)
+            # Skip models that return empty responses (e.g. json_validate_failed
+            # retry without json_mode produced nothing) — try next model.
+            if not raw.strip():
+                print(f"  ⚠️  {model} returned empty — essai modèle suivant")
+                last_err = Exception(f"{model} returned empty response")
+                continue
             return raw, model
         except Exception as e:
             err = str(e)
@@ -813,19 +819,25 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
             model = DEEPSEEK_MODEL
             time.sleep(1)  # rate-limit safety
         except Exception as e:
-            print(f"  ❌  DeepSeek extraction failed for '{job.title}': {e}")
+            if "DEEPSEEK_API_KEY" in str(e) or "not set" in str(e):
+                print(f"  ⚠️  DeepSeek not configured — extraction skipped for '{job.title}'")
+            else:
+                print(f"  ❌  DeepSeek extraction failed for '{job.title}': {e}")
             return None
 
-    # DeepSeek reasoning models sometimes return empty — retry without json_mode
+    # Model returned empty (even after retry without json_mode) — try DeepSeek
     if raw is not None and not raw.strip():
-        print(f"  ⚠️  DeepSeek returned empty — retrying without json_mode…")
+        print(f"  ⚠️  Model returned empty — retrying with DeepSeek…")
         try:
             raw = _call_deepseek(messages, json_mode=False, max_tokens=600)
             model = DEEPSEEK_MODEL
             time.sleep(1)
         except Exception as e:
-            print(f"  ❌  DeepSeek retry failed for '{job.title}': {e}")
-            return None
+            if "DEEPSEEK_API_KEY" in str(e) or "not set" in str(e):
+                print(f"  ⚠️  DeepSeek not configured — skipping")
+            else:
+                print(f"  ⚠️  DeepSeek retry failed: {e}")
+            raw = None
 
     if raw is None or not raw.strip():
         print(f"  ❌  Empty response from all models for '{job.title}'")
