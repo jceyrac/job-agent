@@ -40,23 +40,38 @@ def _is_onboarded() -> bool:
     """Return True if the user has a usable profile (completed onboarding
     OR a pre-existing profile with a scoring_context).
 
-    Uses load_active_profile() rather than a raw DB row so that profiles
-    predating the scoring_context field get backfilled from the code seed."""
+    Checks onboarding_complete first. If not set, queries the DB directly
+    — does NOT use load_active_profile() here because it seeds a default
+    profile into an empty DB, which would falsely pass the gate mid-onboarding
+    and redirect the user away from the wizard before they can save."""
     if not os.path.exists(DB_PATH):
         return False
     from storage import JobStorage
-    from profiles import load_active_profile
+    from profiles import DEFAULT_PROFILE_ID, load_active_profile
     db = JobStorage(DB_PATH)
-    profile = load_active_profile(db)
-    if not profile:
-        return False
-    if not profile.scoring_context.strip():
-        return False
-    # If the explicit flag is missing but a usable profile exists
-    # (pre-Phase-2 user), auto-set it so the wizard doesn't show.
-    if db.get_config("onboarding_complete") != "true":
-        db.set_config("onboarding_complete", "true")
-    return True
+
+    # If the explicit onboarding flag is set, the user completed the wizard.
+    # Use load_active_profile for backfill safety (pre-v3 scoring_context).
+    if db.get_config("onboarding_complete") == "true":
+        profile = load_active_profile(db)
+        return bool(profile and profile.scoring_context.strip())
+
+    # No flag yet — query the DB directly to avoid seeding.
+    # load_active_profile() would insert the code-defined default profile
+    # into an empty DB, which makes the gate pass prematurely during a
+    # first-time onboarding session (the CV step creates the DB file, and
+    # the next rerun would find the seeded profile and redirect to the
+    # dashboard before the user reaches Generate/Review/Save).
+    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    row = db.get_profile(active_id)
+    if row:
+        criteria = row.get("criteria", {})
+        if isinstance(criteria, dict) and criteria.get("scoring_context", "").strip():
+            # Pre-Phase-2 user: has a real saved profile but no flag — auto-set
+            db.set_config("onboarding_complete", "true")
+            return True
+
+    return False
 
 
 if not _is_onboarded():
