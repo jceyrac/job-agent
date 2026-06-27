@@ -96,7 +96,11 @@ def main():
 
         # ── Step: Extraction ────────────────────────────────────────────────
         print(f"\n[{_ts()}] === Step {step_num}: Extraction ===")
-        subprocess.run([sys.executable, "score.py", "--extract"], check=True)
+        try:
+            subprocess.run([sys.executable, "score.py", "--extract"], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[{_ts()}] ⚠ Extraction step failed (exit {e.returncode})"
+                  f" — continuing to scoring anyway")
         t_now = time.monotonic()
         print(f"[{_ts()}] Extraction done"
               f" — {t_now - t_prev:.0f}s elapsed, {t_now - t0:.0f}s total")
