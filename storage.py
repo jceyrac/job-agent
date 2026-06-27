@@ -3085,6 +3085,7 @@ class JobStorage:
         query = """SELECT j.id, j.company_id, j.title, j.company, j.url, j.source, j.location,
                           j.base_location, j.posted_date, j.description,
                           j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
+                          j.monitored_company_id,
                           COALESCE(j.summary, '') AS summary,
                           COALESCE(j.work_mode, 'unknown') AS work_mode,
                           COALESCE(j.geo_zone, 'unknown') AS geo_zone,

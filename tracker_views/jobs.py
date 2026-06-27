@@ -217,6 +217,15 @@ def _render_list():
 
         source_filter = st.multiselect("Source", all_sources, key="jobs_source")
 
+        st.divider()
+
+        source_type = st.selectbox(
+            "Source type",
+            options=["All", "Monitored companies", "Job boards only"],
+            index=0,
+            key="jobs_source_type",
+        )
+
         per_page = st.selectbox(
             "Per page", [25, 50, 100, 250, "All"],
             index=1,
@@ -237,6 +246,7 @@ def _render_list():
         sector_filter=sector_filter,
         language_filter=language_filter,
         source_filter=source_filter,
+        source_type_filter=source_type,
         status_filter=status_filter,
         show_archived_view=show_archived,
     )
@@ -248,7 +258,7 @@ def _render_list():
         tuple(geo_zone_filter or ()), tuple(country_code_filter or ()),
         tuple(company_size_filter or ()),
         tuple(sector_filter or ()), tuple(language_filter or ()),
-        tuple(source_filter or ()), tuple(status_filter or ()),
+        tuple(source_filter or ()), source_type, tuple(status_filter or ()),
         show_archived, per_page,
     )
     if st.session_state.get("jobs_filter_sig") != sig:

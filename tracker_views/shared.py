@@ -277,6 +277,7 @@ def apply_filters(
     sector_filter: list[str] | None = None,
     language_filter: list[str] | None = None,
     source_filter: list[str] | None = None,
+    source_type_filter: str = "All",
     status_filter: list[str] | None = None,
     show_archived_view: bool = False,
 ) -> list[dict]:
@@ -327,6 +328,10 @@ def apply_filters(
         result = [j for j in result if (j.get("language_required") or "unknown") in language_filter]
     if source_filter:
         result = [j for j in result if j.get("source") in source_filter]
+    if source_type_filter == "Monitored companies":
+        result = [j for j in result if j.get("monitored_company_id") is not None]
+    elif source_type_filter == "Job boards only":
+        result = [j for j in result if j.get("monitored_company_id") is None]
     if show_archived_view:
         result = [j for j in result if j.get("status") == "archived"]
     elif status_filter:
