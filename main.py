@@ -109,8 +109,12 @@ def main():
 
         # ── Step: Scoring ───────────────────────────────────────────────────
         print(f"\n[{_ts()}] === Step {step_num}: Scoring [{active_id}] ===")
-        subprocess.run([sys.executable, "score.py", "--profile", active_id],
-                       check=True)
+        try:
+            subprocess.run([sys.executable, "score.py", "--profile", active_id],
+                           check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[{_ts()}] ⚠ Scoring step failed (exit {e.returncode})"
+                  f" — some jobs may remain unscored")
         t_now = time.monotonic()
         total = t_now - t0
         print(f"[{_ts()}] Scoring done"
