@@ -22,7 +22,7 @@ Scrape (wide net) → Extract (structured fields) → Score (LLM, per profile) �
    mode, geo zone, company size, sector, country, contract type, language.
 3. **`score.py --profile <id>`** runs the full pipeline for one search
    profile: pre-filter → extract any unextracted survivors → LLM evaluation
-   (1–10 score + reasoning) via Groq, with deterministic Tier-0 rules (company
+   (1–10 score + reasoning) via DeepSeek, with deterministic Tier-0 rules (company
    blacklist, country/sector/language exclusions, soft penalties) ahead of any
    LLM call.
 4. **`tracker.py`** (Streamlit) is the human interface: browse and triage
@@ -53,8 +53,8 @@ job_agent/
 ├── main.py              # Thin orchestrator: scrape → extract → score (subprocess pipeline)
 ├── scrape.py             # Broad scrape (--monitored-only for company-keyed mode)
 ├── score.py               # Extraction + LLM evaluation (--extract / --profile / --rescore / --mock)
-├── scorer.py              # Groq (+ DeepSeek/Gemini fallback) LLM calls
-├── title_gate.py          # Deterministic PM-title gate (pre-LLM, protects Groq quota)
+├── scorer.py              # DeepSeek LLM calls (extraction + evaluation)
+├── title_gate.py          # Deterministic PM-title gate (pre-LLM, protects DeepSeek quota)
 ├── ats_detection.py        # Resolves an ATS provider/identifier from a careers URL
 ├── storage.py              # SQLite persistence (WAL mode) — all DB access goes through here
 ├── models.py               # JobPosting / JobFilter dataclasses
@@ -142,7 +142,7 @@ In addition to the wide-net board scrapers, you can mark specific companies as
 - **Title gate** (`title_gate.py`): before any LLM call, jobs from monitored
   companies are checked against a PM-family inclusion list (case-insensitive
   substring match, errs on inclusion). Non-matching jobs are marked
-  `filtered_non_product` and never consume Groq quota.
+  `filtered_non_product` and never consume API quota.
 - **Scoring signal**: "this job is from a monitored company" is injected into
   the LLM scoring context as prose — a strong positive signal, not a hard
   score override. A clearly mismatched role (junior, wrong company type) still
@@ -150,9 +150,29 @@ In addition to the wide-net board scrapers, you can mark specific companies as
 
 ---
 
-## Quick start
+## Getting started
 
-### 1. Clone and install
+### 1. Prerequisites
+
+- Python 3.11+
+- A [DeepSeek](https://platform.deepseek.com) account (API key) for LLM extraction and evaluation — **optional if you only want scraping**
+- Docker + Docker Compose — **optional**, only needed for server deployment
+
+The app runs natively on **Windows, macOS, and Linux** without Docker. All
+dependencies are pure Python or have prebuilt wheels for all three platforms.
+
+> **Windows note**: `email_monitor.py` (inbound email parsing via Hydroxide,
+> the Proton Mail IMAP bridge) is Linux/macOS only and not needed for the
+> core scrape → score → track flow. Everything else — scraping, scoring,
+> the Streamlit tracker, and the pipeline — works without modification on
+> Windows.
+
+Docker is only required if you want to deploy to a server with the
+always-on `tracker` service and cron-triggered `agent` container (see
+[Deployment](#deployment) below). On Windows, you can schedule
+`python main.py` via Task Scheduler instead of cron.
+
+### 2. Clone and install
 
 ```bash
 git clone https://github.com/jceyrac/job-agent.git
@@ -162,89 +182,112 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure environment variables
+### 3. Required API keys and subscriptions
+
+**`DEEPSEEK_API_KEY` is the only key required to run the full pipeline.**
+All other keys are optional.
+
+> **Running without LLM (scraping only)**: if you don't want to set up a
+> DeepSeek account, you can still run `scrape.py` and `scrape.py
+> --monitored-only` to populate the DB with raw job postings. Jobs will
+> appear in the tracker without scores, summaries, or structured fields
+> (work mode, geo zone, sector). The score filter in the Jobs tab won't
+> apply, but you can browse and triage raw jobs directly. This is useful
+> for testing the scraping layer or if you prefer to review jobs manually
+> without LLM assistance.
+
+| Service | Variable | Required? | Notes |
+| --- | --- | --- | --- |
+| [DeepSeek](https://platform.deepseek.com) | `DEEPSEEK_API_KEY` | ✅ For scoring | Sole LLM backend for extraction and evaluation. Cost is negligible — a full pipeline run (100 jobs) costs roughly $0.01. |
+| Gmail SMTP | `GMAIL_FROM` + `GMAIL_APP_PASSWORD` | Optional | Sends the daily email digest. Requires a [Google App Password](https://myaccount.google.com/apppasswords). |
+| Any email address | `NOTIFY_TO` | Optional | Digest recipient. Required if Gmail SMTP is configured. |
+| [Joplin](https://joplinapp.org) | `JOPLIN_TOKEN` | Optional | Exports job notes to Joplin via Web Clipper. Get the token in Joplin → Tools → Web Clipper → Advanced options. |
+| [RapidAPI](https://rapidapi.com) | `X_RAPIDAPI_KEY` | Optional | Powers the Wellfound scraper. Free tier limited to 10 req/month. |
+
+These can be set in `.env` before launching, or entered directly from the
+Streamlit **Settings** page after onboarding (written to `.env`, never stored
+in the database).
 
 ```bash
 cp .env.example .env
+# Edit .env and paste your DEEPSEEK_API_KEY
 ```
 
-Edit `.env`:
+> **Note on scraper coverage without optional keys**: without `X_RAPIDAPI_KEY`,
+> the Wellfound scraper is disabled. All other board scrapers (LinkedIn, Indeed,
+> Web3Career, RemoteOK, CryptoJobsList, and more) work without any extra key.
+> Monitored-company ATS scrapers (Greenhouse, Lever, Ashby, Workable,
+> Workday) also require no key.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `GROQ_API_KEY` | ✅ | Primary scorer LLM — free at [console.groq.com](https://console.groq.com) |
-| `GEMINI_API_KEY` | Optional | Scorer fallback |
-| `DEEPSEEK_API_KEY` | Optional | Extraction fallback |
-| `GMAIL_FROM` / `GMAIL_APP_PASSWORD` | Optional | Email digest sender |
-| `NOTIFY_TO` | Optional | Email digest recipient |
-| `JOPLIN_TOKEN` | Optional | Joplin Web Clipper token — enables note export |
-| `X_RAPIDAPI_KEY` | Optional | RapidAPI key for the Wellfound scraper |
-
-All of these can also be set from the Streamlit Settings page (written to
-`.env`, never to the database).
-
-### 3. First run — onboarding
+### 4. First run — onboarding wizard
 
 ```bash
 streamlit run tracker.py
 ```
 
-On first launch, the onboarding wizard asks about your target roles,
-locations, and preferences, and (optionally) reads your CV to generate a
-starting `scoring_context`. This creates your active search profile.
+On first launch, the onboarding wizard walks you through:
 
-### 4. Run the pipeline
+1. **Template** — pick a starting point (General tech, Fintech, Web3, or blank)
+2. **Criteria** — target roles, location, work modes, company sizes, industries, languages
+3. **Scraping mode** — choose between broad board scraping, targeted company monitoring, or both
+4. **CV upload** — optional; extracts your experience to improve the scoring rubric
+5. **Generate** — calls DeepSeek to write a personalised `scoring_context` (the essay the scorer reads)
+6. **Review** — edit and refine the rubric before saving
+
+This creates your active search profile and configures which pipeline steps run.
+
+### 5. Run the pipeline
 
 ```bash
 python main.py
 ```
 
-This runs, in sequence:
-1. `scrape.py` — broad scrape across all enabled boards
-2. `score.py --extract` — structured field extraction
-3. `score.py --profile <active>` — LLM scoring + digest + notifications
+This runs, in sequence, the steps you enabled during onboarding:
 
-> Once `specs/002-pipeline-monitoring-step/` is implemented, this sequence
-> will optionally include a monitored-company scrape step before step 1 (gated
-> by a `monitoring.enabled_in_pipeline` setting and the presence of monitored
-> companies), and `main.py` will accept `--monitored-only` /
-> `--no-monitoring` flags for per-run overrides.
+1. `scrape.py --monitored-only` — company-keyed ATS scrape (if monitoring is enabled and companies are configured)
+2. `scrape.py` — broad scrape across all enabled job boards (if board scraping is enabled)
+3. `score.py --extract` — profile-independent structured field extraction
+4. `score.py --profile <active>` — LLM scoring, digest, and notifications
 
-Or run steps individually:
+You can also run steps individually:
 
 ```bash
-python scrape.py                  # broad scrape
-python scrape.py --monitored-only # company-keyed monitoring scrape
+python scrape.py                  # broad board scrape
+python scrape.py --monitored-only # company-keyed monitoring scrape only
 python score.py --extract         # extraction only (profile-independent)
 python score.py --profile unified_jc [--rescore] [--limit N]
 python score.py --mock --profile unified_jc   # sanity-check scoring_context against fixed test jobs
 ```
 
-### 5. Use the tracker
+Or use CLI flags to override the pipeline mode for a single run:
+
+```bash
+python main.py --monitored-only   # only the monitoring scrape + extract + score
+python main.py --no-monitoring    # skip monitoring, run broad scrape only
+python main.py --no-scrape        # skip broad scrape (e.g. extract+score only)
+```
+
+### 6. Use the tracker
 
 ```bash
 streamlit run tracker.py
 ```
 
-- **Jobs** — browse scored jobs, filter by score/location/work mode/etc.,
-  update status (save/apply/reject/archive)
-- **Companies** — browse the company registry, filter by monitoring status,
-  manage relationship status and notes
-- **Contacts** — lightweight CRM for recruiters/hiring managers
+- **Jobs** — browse scored jobs, filter by score/location/work mode, update status
+- **Companies** — company registry, monitoring status, relationship notes
+- **Contacts** — lightweight CRM for recruiters and hiring managers
 - **Dashboard** — follow-ups due, recent inbound interactions, stale outreach
-- **Settings** — profile editor, scraper enable/disable toggles, monitored
-  companies, API keys / setup
+- **Settings** — profile editor, scraper toggles, monitored companies, API key setup
 
 ---
 
 ## Deployment
 
-`docker-compose.yml` defines three services:
+`docker-compose.yml` defines two active services and one experimental one:
 
 - **`tracker`** — always-on Streamlit UI on port 8501
 - **`agent`** — `python main.py`, triggered by cron (not kept alive)
-- **`email-monitor`** — parses inbound application-status emails (reaches a
-  Proton Mail IMAP bridge on the host via `host.docker.internal`)
+- **`email-monitor`** — experimental; parses inbound recruiter emails via a Proton Mail IMAP bridge (Hydroxide) running on the host. Not used in normal operation — requires manual Hydroxide setup and is Linux/macOS only.
 
 ```bash
 docker compose up -d tracker
@@ -287,15 +330,14 @@ le serveur Live (`ssh` → `cd /opt/job-agent && python export_orp.py`).
 
 ## Development
 
-- `prompts/` — `BUILD_*.md` / `SPEC_*.md` implementation specs (canonical
-  location for design docs)
-- `specs/` — [GitHub Spec Kit](https://github.com/github/spec-kit) feature
-  specs (spec → plan → tasks → implement)
+- `specs/` — SpecKit feature specs (`spec.md` + `plan.md` + `tasks.md` per feature)
   - `001-monitored-companies/` — targeted company monitoring, ATS adapters,
     title gate, scoring signal, monitoring status UI (implemented)
   - `002-pipeline-monitoring-step/` — wires the monitored-company scrape into
     `main.py`'s full pipeline via a config setting + CLI flags (spec ready,
     not yet implemented)
+  - `013-deepseek-only-backend/` — removes Groq and Gemini, simplifies scorer
+    to DeepSeek only (implemented)
 - `CLAUDE.md` — runtime instructions for Claude Code (never-modify file list,
   code style, active spec pointer)
 - `tests/` — `pytest tests/` (in-memory SQLite, run before any commit

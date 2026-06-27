@@ -8,7 +8,7 @@ import os
 from datetime import date
 
 from paths import DB_PATH
-from scorer import client as _groq_client
+import llm
 from storage import JobStorage
 
 
@@ -208,16 +208,11 @@ wrapper, no code fences. The output will be stored verbatim in the DB.
 
     # ── 5. Call the LLM ────────────────────────────────────────────────────
     try:
-        completion = _groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are an expert at tuning LLM scoring rubrics for job matching pipelines. Return ONLY the revised scoring_context text — no preamble, no markdown wrapper, no code fences."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=3000,
-        )
-        proposal_text = completion.choices[0].message.content.strip()
+        messages = [
+            {"role": "system", "content": "You are an expert at tuning LLM scoring rubrics for job matching pipelines. Return ONLY the revised scoring_context text — no preamble, no markdown wrapper, no code fences."},
+            {"role": "user", "content": prompt},
+        ]
+        proposal_text = llm.call(messages, json_mode=False, max_tokens=3000, sleep_after=0).strip()
     except Exception as e:
         raise Exception(f"LLM call failed: {e}") from e
 

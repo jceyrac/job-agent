@@ -135,7 +135,8 @@ def _discover_contacts(job, description: str, company_id: int | None, db) -> tup
 
     print(f"    LLM contact extraction: enabled, running...")
     try:
-        from scorer import CONTACT_EXTRACTION_PROMPT, _call_groq_fallback_chain
+        from scorer import CONTACT_EXTRACTION_PROMPT
+        import llm
 
         prompt = (
             f"Title: {job.title}\n"
@@ -146,7 +147,8 @@ def _discover_contacts(job, description: str, company_id: int | None, db) -> tup
             {"role": "system", "content": CONTACT_EXTRACTION_PROMPT},
             {"role": "user", "content": prompt},
         ]
-        raw, model = _call_groq_fallback_chain(messages, max_tokens=500)
+        raw = llm.call(messages, max_tokens=500, sleep_after=0)
+        model = llm.MODEL
         result = json.loads(raw)
         llm_contacts = result.get("contacts", []) if isinstance(result, dict) else []
     except Exception as e:

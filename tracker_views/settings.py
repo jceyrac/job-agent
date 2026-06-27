@@ -18,9 +18,7 @@ SECRET_SECTOR_CODES = list(SECTOR_LABELS.values())
 # ── Env vars the Setup section manages ──────────────────────────────────────
 # (key, label, required)
 _SETUP_ENV_VARS = [
-    ("GROQ_API_KEY",     "Groq API key (primary scorer LLM)",        True),
-    ("GEMINI_API_KEY",   "Gemini API key (scorer fallback)",         False),
-    ("DEEPSEEK_API_KEY", "DeepSeek API key (extraction fallback)",   False),
+    ("DEEPSEEK_API_KEY", "DeepSeek API key (LLM extraction + scoring)", True),
 ]
 
 _SETUP_EMAIL_VARS = [

@@ -285,8 +285,8 @@ def test_eval_tier0_country_filter():
 
 def test_eval_tier0_country_unknown_passes():
     job = _eval_job(company_country="unknown")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 5, "reason": "Test pass"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 5, "reason": "Test pass"}'
         r = evaluate_for_profile(job, _EvalProfile())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 5
@@ -311,8 +311,8 @@ def test_eval_tier0_first_match_wins():
 
 def test_eval_tier0_no_exclusion_passes():
     job = _eval_job()
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 6, "reason": "Solid match"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 6, "reason": "Solid match"}'
         r = evaluate_for_profile(job, _EvalProfileNoFilters())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 6
@@ -333,8 +333,8 @@ def test_eval_tier0_passthrough_fields_preserved():
 def test_eval_tier0_allowed_countries_none_means_no_restriction():
     job = _eval_job(company_country="United States", language_required="french",
                     industry_sector="fintech")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 7, "reason": "Good fit"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 7, "reason": "Good fit"}'
         r = evaluate_for_profile(job, _EvalProfileNoFilters())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 7
@@ -361,8 +361,8 @@ def test_eval_tier0_hybrid_outside_ch():
 def test_eval_tier0_hybrid_in_ch_passes():
     """Hybrid role in Switzerland still reaches LLM tier."""
     job = _eval_job(work_mode="hybrid", company_country="Switzerland")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 8, "reason": "Good hybrid CH fit"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 8, "reason": "Good hybrid CH fit"}'
         r = evaluate_for_profile(job, _EvalProfile())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 8
@@ -371,8 +371,8 @@ def test_eval_tier0_hybrid_in_ch_passes():
 def test_eval_tier0_remote_spain_passes():
     """Remote job from Spain (allowed country) still reaches LLM tier."""
     job = _eval_job(work_mode="remote", company_country="Spain")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 7, "reason": "Remote EU fit"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 7, "reason": "Remote EU fit"}'
         r = evaluate_for_profile(job, _EvalProfileEU())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 7
@@ -381,8 +381,8 @@ def test_eval_tier0_remote_spain_passes():
 def test_eval_tier0_unknown_country_passes_both():
     """company_country='unknown' is NOT blocked by either new rule."""
     job = _eval_job(company_country="unknown", geo_zone="global_remote", work_mode="hybrid")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 5, "reason": "Uncertain but plausible"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 5, "reason": "Uncertain but plausible"}'
         r = evaluate_for_profile(job, _EvalProfile())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 5
@@ -431,8 +431,8 @@ class _EvalProfileEU:
 def test_eval_tier0_empty_lists_noop():
     """Profile with empty banned/hybrid_ok lists → rules don't fire."""
     job = _eval_job(work_mode="hybrid", company_country="Ireland", geo_zone="global_remote")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 6, "reason": "Ireland hybrid passes"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 6, "reason": "Ireland hybrid passes"}'
         r = evaluate_for_profile(job, _EvalProfileNoRestrictions())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 6
@@ -461,8 +461,8 @@ def test_eval_tier0_denylist_company_blocked():
 def test_eval_tier0_denylist_stripe_passes():
     """Job from 'Stripe' passes through — not on the denylist."""
     job = _eval_job(company="Stripe")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 7, "reason": "Good fintech role"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 7, "reason": "Good fintech role"}'
         r = evaluate_for_profile(job, _EvalProfileWithDenylist())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 7
@@ -471,8 +471,8 @@ def test_eval_tier0_denylist_stripe_passes():
 def test_eval_tier0_denylist_noop_on_empty():
     """Job from 'EWOR GmbH' passes through on a profile that did not opt in."""
     job = _eval_job(company="EWOR GmbH")
-    with patch("scorer._call_groq_fallback_chain") as mock:
-        mock.return_value = ('{"score": 5, "reason": "No denylist here"}', "test-model")
+    with patch("llm.call") as mock:
+        mock.return_value = '{"score": 5, "reason": "No denylist here"}'
         r = evaluate_for_profile(job, _EvalProfileNoRestrictions())
     assert r["scored_by"] != "tier_0"
     assert r["score"] == 5

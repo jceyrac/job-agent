@@ -28,25 +28,12 @@ load_dotenv()
 
 from paths import DB_PATH, DATA_DIR
 from profiles import ALL_PROFILES, SearchProfile
-from scorer import (
-    _call_groq_fallback_chain,
-    _call_deepseek,
-)
+import llm
 from storage import JobStorage
 
 # ---------------------------------------------------------------------------
 # Model chains for preparation tasks
 # ---------------------------------------------------------------------------
-
-PREPARE_HEAVY_MODELS = [
-    "llama-3.3-70b-versatile",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-]
-
-PREPARE_LIGHT_MODELS = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "llama-3.3-70b-versatile",
-]
 
 # ---------------------------------------------------------------------------
 # CV bullet library — loaded from config-driven sources
@@ -275,11 +262,10 @@ def _build_user_prompt(job: dict) -> str:
 
 
 def _call_prepare_model(system: str, user: str,
-                        preferred_models: list[str],
                         json_mode: bool = True,
                         max_tokens: int = 800) -> tuple[str, str]:
     """
-    Call LLM with Groq → DeepSeek fallback chain for preparation tasks.
+    Call DeepSeek for preparation tasks.
 
     Returns (response_text, model_name).
     """
@@ -288,23 +274,9 @@ def _call_prepare_model(system: str, user: str,
         {"role": "user", "content": user},
     ]
 
-    # Try Groq chain first
-    try:
-        raw, model = _call_groq_fallback_chain(
-            messages, models=preferred_models,
-            json_mode=json_mode, max_tokens=max_tokens,
-        )
-        return raw, model
-    except Exception as e:
-        if "All Groq models exhausted" not in str(e):
-            raise
-
-    # Fall back to DeepSeek
-    print(f"  ⚠️  Groq exhausted — falling back to DeepSeek")
-    raw = _call_deepseek(messages, model="deepseek-v4-pro",
-                         json_mode=json_mode, max_tokens=max_tokens)
+    raw = llm.call(messages, json_mode=json_mode, max_tokens=max_tokens, sleep_after=0)
     time.sleep(1)
-    return raw, "tier_fallback:deepseek-v4-pro"
+    return raw, "deepseek-chat"
 
 
 def _safe_json_parse(raw: str, label: str) -> dict | None:
@@ -421,7 +393,7 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
     try:
         raw, model = _call_prepare_model(
             cover_system, user_prompt,
-            preferred_models=PREPARE_HEAVY_MODELS,
+
             json_mode=False,
             max_tokens=1500,
         )
@@ -443,7 +415,7 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
     try:
         raw, model = _call_prepare_model(
             screen_system, user_prompt,
-            preferred_models=PREPARE_HEAVY_MODELS,
+
             json_mode=True,
             max_tokens=1000,
         )
@@ -453,7 +425,7 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
             retry_system = screen_system + "\n\nIMPORTANT: You MUST respond with ONLY valid JSON. No markdown, no explanation, just the JSON object."
             raw2, model2 = _call_prepare_model(
                 retry_system, user_prompt,
-                preferred_models=PREPARE_LIGHT_MODELS,
+
                 json_mode=True,
                 max_tokens=1000,
             )
@@ -488,7 +460,7 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
             retry_system = bullet_system + "\n\nIMPORTANT: You MUST respond with ONLY valid JSON. No markdown, no explanation, just the JSON object."
             raw2, model2 = _call_prepare_model(
                 retry_system, bullet_prompt,
-                preferred_models=PREPARE_LIGHT_MODELS,
+
                 json_mode=True,
                 max_tokens=1500,
             )
@@ -525,7 +497,7 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
             retry_system = research_system + "\n\nIMPORTANT: You MUST respond with ONLY valid JSON."
             raw2, model2 = _call_prepare_model(
                 retry_system, user_prompt,
-                preferred_models=PREPARE_LIGHT_MODELS,
+
                 json_mode=True,
                 max_tokens=600,
             )

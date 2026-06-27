@@ -4,62 +4,12 @@ import re
 import time
 from datetime import datetime
 
-from groq import Groq
-from openai import OpenAI
 from dotenv import load_dotenv
 
+import llm
 from models import JobPosting
 
 load_dotenv()
-
-api_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_APIKEY")
-client = Groq(api_key=api_key, max_retries=0)
-
-
-def reload_client() -> None:
-    """Rebuild the Groq client from the current environment. Call after a key
-    is set at runtime (onboarding / Settings) so the in-process client picks it
-    up without restarting Streamlit."""
-    global client
-    client = Groq(api_key=os.getenv("GROQ_API_KEY") or os.getenv("GROQ_APIKEY"),
-                  max_retries=0)
-
-deepseek_api_key = os.environ.get("DEEPSEEK_API_KEY")
-_deepseek_client: OpenAI | None = None
-if deepseek_api_key:
-    _deepseek_client = OpenAI(
-        api_key=deepseek_api_key,
-        base_url="https://api.deepseek.com/v1",
-    )
-
-def _parse_model_list(env_var: str, fallback: str) -> list[str]:
-    """Parse a comma-separated model list from env, or use the fallback."""
-    val = os.getenv(env_var)
-    if val:
-        return [m.strip() for m in val.split(",") if m.strip()]
-    return [m.strip() for m in fallback.split(",")]
-
-
-# Model lists — env-overridable so they can be updated without a code commit.
-# Set GROQ_FALLBACK_MODELS, GROQ_EXTRACTION_MODELS, GROQ_EVALUATION_MODELS
-# as comma-separated lists in .env.
-
-FALLBACK_MODELS = _parse_model_list("GROQ_FALLBACK_MODELS",
-    "openai/gpt-oss-120b,"
-    "qwen/qwen3.6-27b,"
-    "groq/compound,"
-    "openai/gpt-oss-20b")
-
-EXTRACTION_MODELS = _parse_model_list("GROQ_EXTRACTION_MODELS",
-    "openai/gpt-oss-120b,"
-    "qwen/qwen3.6-27b")
-
-EVALUATION_MODELS = _parse_model_list("GROQ_EVALUATION_MODELS",
-    "openai/gpt-oss-20b,"
-    "qwen/qwen3.6-27b")
-
-# DeepSeek model — also env-overridable
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
 SYSTEM_PROMPT = """You are an expert recruiter scoring job postings for a Senior Product Manager with expertise in Web3, DeFi, AI, and Crypto.
 
@@ -411,176 +361,9 @@ Return ONLY a JSON object:
 }"""
 
 
-# ---------------------------------------------------------------------------
-# Per-run model exhaustion tracking
-# ---------------------------------------------------------------------------
-
-_exhausted_models: set[str] = set()
-
-
-def _is_quota_exhausted(error_str: str) -> bool:
-    """True when the 429/503 is a non-recoverable daily quota, not a per-minute rate limit."""
-    return any(x in error_str for x in ("per day", "tokens per day", "TPD"))
-
-
-# ---------------------------------------------------------------------------
-# Single-model caller with RPM backoff
-# ---------------------------------------------------------------------------
-
-def _call_groq(messages: list, model: str, max_retries: int = 5,
-              json_mode: bool = True, max_tokens: int = 300) -> str:
-    """
-    Call one Groq model with exponential backoff on per-minute rate limits.
-    Raises immediately on daily quota exhaustion (marks model exhausted).
-    Raises after max_retries on persistent RPM limits (marks model exhausted).
-    Any other error (auth, network, bad request) is re-raised as-is.
-    """
-    if model in _exhausted_models:
-        raise Exception(f"{model} already exhausted this run")
-
-    had_429 = False
-    for attempt in range(max_retries):
-        try:
-            kwargs = dict(
-                model=model,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=max_tokens,
-            )
-            if json_mode:
-                kwargs["response_format"] = {"type": "json_object"}
-            result = client.chat.completions.create(**kwargs)
-            if had_429:
-                time.sleep(10)  # cooldown after a successful retry
-            return result.choices[0].message.content
-        except Exception as e:
-            err = str(e)
-            if "413" in err or "request_too_large" in err.lower():
-                # Prompt too large for this model's context window — skip it
-                _exhausted_models.add(model)
-                raise Exception(f"{model} request too large") from e
-            elif "404" in err or ("400" in err and "decommissioned" in err):
-                # Model unavailable or decommissioned — fall through to next model
-                _exhausted_models.add(model)
-                raise Exception(f"{model} not available") from e
-            elif "429" in err or "503" in err:
-                if _is_quota_exhausted(err):
-                    _exhausted_models.add(model)
-                    raise Exception(f"{model} daily quota exhausted") from e
-                # Per-minute rate limit — backoff and retry same model
-                had_429 = True
-                wait = 2 ** (attempt + 1)
-                print(f"  ⚠️  Groq RPM 429 ({model}) — attente {wait}s "
-                      f"(tentative {attempt + 1}/{max_retries})")
-                time.sleep(wait)
-            elif "timed out" in err.lower() or "timeout" in err.lower():
-                # Transient network timeout — retry with backoff
-                wait = 2 ** (attempt + 1)
-                print(f"  ⚠️  Groq timeout ({model}) — retry in {wait}s "
-                      f"(tentative {attempt + 1}/{max_retries})")
-                time.sleep(wait)
-            elif "401" in err or "403" in err or "permission" in err.lower() or "access denied" in err.lower():
-                # Auth / access error — don't retry, surface immediately with context
-                raise Exception(
-                    f"Groq API access denied (HTTP {err[:80]}). "
-                    "This is usually a network/VPN restriction — Groq blocks access "
-                    "from certain countries/regions. Try enabling a VPN to a supported "
-                    "region (e.g. United States, Europe) or check your API key at "
-                    "console.groq.com."
-                ) from e
-            elif "json_validate_failed" in err:
-                if json_mode:
-                    # Groq server-side JSON validation rejected the output.
-                    # Retry without json_mode so we get raw text and parse it ourselves.
-                    print(f"  ⚠️  Groq JSON validation failed ({model})"
-                          f" — retrying without json_mode…")
-                    json_mode = False
-                    time.sleep(1)
-                else:
-                    raise  # already tried without json_mode, give up
-            else:
-                raise  # auth error, bad request → propagate immediately
-
-    _exhausted_models.add(model)
-    raise Exception(f"{model} rate limit persistant après {max_retries} tentatives")
-
-
-# ---------------------------------------------------------------------------
-# Multi-model fallback chain
-# ---------------------------------------------------------------------------
-
-def _call_groq_fallback_chain(messages: list,
-                               models: list[str] | None = None,
-                               json_mode: bool = True,
-                               max_tokens: int = 300) -> tuple[str, str]:
-    """
-    Try each model in order. Defaults to FALLBACK_MODELS if no model list given.
-    Falls through to the next model on quota/rate exhaustion.
-    Re-raises immediately on non-quota errors (auth, network, bad request).
-    Returns (raw_json_text, model_name) on success.
-    """
-    if models is None:
-        models = FALLBACK_MODELS
-    last_err: Exception | None = None
-    for model in models:
-        if model in _exhausted_models:
-            continue
-        try:
-            raw = _call_groq(messages, model, json_mode=json_mode, max_tokens=max_tokens)
-            # Skip models that return empty responses (e.g. json_validate_failed
-            # retry without json_mode produced nothing) — try next model.
-            if not raw.strip():
-                print(f"  ⚠️  {model} returned empty — essai modèle suivant")
-                last_err = Exception(f"{model} returned empty response")
-                continue
-            return raw, model
-        except Exception as e:
-            err = str(e)
-            if any(x in err for x in ("exhausted", "rate limit persistant", "not available",
-                                       "request too large", "access denied",
-                                       "401", "403", "api key", "unauthorized")):
-                print(f"  ⚠️  {model} unavailable/exhausted — essai modèle suivant")
-                last_err = e
-            else:
-                raise  # non-quota error: don't fall through
-
-    raise Exception("All Groq models exhausted for today. Retry tomorrow.") from last_err
-
-
 def generate_json(messages: list, max_tokens: int = 3000) -> str:
-    """Public entry for non-scoring JSON generation (onboarding, etc.).
-    Uses the same FALLBACK_MODELS chain + backoff as scoring."""
-    raw, _model = _call_groq_fallback_chain(messages, json_mode=True,
-                                             max_tokens=max_tokens)
-    return raw
-
-
-# ---------------------------------------------------------------------------
-# DeepSeek caller (last-resort for extraction)
-# ---------------------------------------------------------------------------
-
-def _call_deepseek(messages: list, model: str | None = None,
-                   json_mode: bool = True, max_tokens: int = 300) -> str:
-    """Call DeepSeek via OpenAI-compatible endpoint. Returns raw response text."""
-    if model is None:
-        model = DEEPSEEK_MODEL
-    if _deepseek_client is None:
-        raise Exception("DEEPSEEK_API_KEY not set — cannot call DeepSeek")
-
-    try:
-        kwargs = dict(
-            model=model,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=max_tokens,
-        )
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        result = _deepseek_client.chat.completions.create(**kwargs)
-        return result.choices[0].message.content
-    except Exception as e:
-        print(f"  ❌  DeepSeek API error: {e}")
-        raise
+    """Public entry for non-scoring JSON generation (onboarding, etc.)."""
+    return llm.call(messages, json_mode=True, max_tokens=max_tokens, sleep_after=0)
 
 
 # ---------------------------------------------------------------------------
@@ -726,7 +509,7 @@ def _parse_int_or_none(raw) -> int | None:
 
 def score_job(job: dict, scoring_context=None) -> dict | None:
     """
-    Scores a job posting using the Groq fallback chain.
+    Scores a job posting using DeepSeek.
 
     Args:
         job: dict with keys title, company, location, base_location, description.
@@ -734,9 +517,8 @@ def score_job(job: dict, scoring_context=None) -> dict | None:
             a SearchProfile object (its .scoring_context attribute is used).
 
     Returns a dict with keys: score, reason, summary, work_mode, company_size,
-    contract_type, geo_zone, scored_by (model name that succeeded).
-    Returns None only when all models are exhausted — caller should save_unscored.
-    Raises on non-quota errors (bad JSON, auth failure, etc.).
+    contract_type, geo_zone, scored_by.
+    Returns None when DeepSeek is not configured or the API key is missing.
     """
     if scoring_context is None:
         scoring_context = ""
@@ -763,14 +545,14 @@ def score_job(job: dict, scoring_context=None) -> dict | None:
     ]
 
     try:
-        raw, model = _call_groq_fallback_chain(messages)
+        raw = llm.call(messages, max_tokens=600, sleep_after=0)
         result = _parse_result(raw)
-        result["scored_by"] = model
+        result["scored_by"] = llm.MODEL
         return result
     except Exception as e:
         msg = str(e)
-        if "All Groq models exhausted" in msg:
-            print(f"  ❌  {msg}")
+        if "DEEPSEEK_API_KEY" in msg or "not set" in msg:
+            print(f"  ⚠️  DeepSeek not configured — scoring skipped")
             return None
         print(f"  ❌  score_job failed for '{job.get('title', '')}': {e}")
         raise
@@ -781,8 +563,7 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
     Profile-independent extraction of structured fields from a job description.
 
     Skips jobs where extracted_at is already set (idempotent).
-    Tries Groq extraction models first, falls back to DeepSeek V3 as last resort.
-    Returns the updated JobPosting with fields populated, or None on exhaustion.
+    Calls DeepSeek directly. Returns the updated JobPosting, or None on failure.
     """
     if job.extracted_at is not None:
         return job
@@ -800,48 +581,19 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         {"role": "user",   "content": prompt},
     ]
 
-    # Try Groq extraction models first
-    raw = None
-    model = None
     try:
-        raw, model = _call_groq_fallback_chain(messages, models=EXTRACTION_MODELS,
-                                                 json_mode=False)
+        raw = llm.call(messages, max_tokens=1000, sleep_after=0)
+        model = llm.MODEL
+        time.sleep(1)
     except Exception as e:
-        if "All Groq models exhausted" in str(e):
-            print(f"  ⚠️  Groq extraction exhausted — falling back to DeepSeek")
+        if "DEEPSEEK_API_KEY" in str(e) or "not set" in str(e):
+            print(f"  ⚠️  DeepSeek not configured — extraction skipped for '{job.title}'")
         else:
-            print(f"  ❌  extract_job_fields failed (Groq) for '{job.title}': {e}")
-            raise
+            print(f"  ❌  DeepSeek extraction failed for '{job.title}': {e}")
+        return None
 
-    # Fall back to DeepSeek if Groq chain exhausted
-    if raw is None:
-        try:
-            raw = _call_deepseek(messages)
-            model = DEEPSEEK_MODEL
-            time.sleep(1)  # rate-limit safety
-        except Exception as e:
-            if "DEEPSEEK_API_KEY" in str(e) or "not set" in str(e):
-                print(f"  ⚠️  DeepSeek not configured — extraction skipped for '{job.title}'")
-            else:
-                print(f"  ❌  DeepSeek extraction failed for '{job.title}': {e}")
-            return None
-
-    # Model returned empty (even after retry without json_mode) — try DeepSeek
-    if raw is not None and not raw.strip():
-        print(f"  ⚠️  Model returned empty — retrying with DeepSeek…")
-        try:
-            raw = _call_deepseek(messages, json_mode=False, max_tokens=600)
-            model = DEEPSEEK_MODEL
-            time.sleep(1)
-        except Exception as e:
-            if "DEEPSEEK_API_KEY" in str(e) or "not set" in str(e):
-                print(f"  ⚠️  DeepSeek not configured — skipping")
-            else:
-                print(f"  ⚠️  DeepSeek retry failed: {e}")
-            raw = None
-
-    if raw is None or not raw.strip():
-        print(f"  ❌  Empty response from all models for '{job.title}'")
+    if not raw or not raw.strip():
+        print(f"  ❌  Empty response from DeepSeek for '{job.title}'")
         return None
 
     try:
@@ -1020,15 +772,16 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     ]
 
     try:
-        raw, model = _call_groq_fallback_chain(messages, models=EVALUATION_MODELS, json_mode=False)
+        raw = llm.call(messages, json_mode=False, max_tokens=300, sleep_after=0)
+        model = llm.MODEL
         result = _parse_result(raw)
         score = int(result["score"])
         reason = result.get("reason", "")
         return _evaluation_result(score, reason, model, job, profile, comp_flag=comp_flag)
     except Exception as e:
         msg = str(e)
-        if "All Groq models exhausted" in msg:
-            print(f"  ❌  {msg}")
+        if "DEEPSEEK_API_KEY" in msg or "not set" in msg:
+            print(f"  ⚠️  DeepSeek not configured — evaluation skipped")
             return None
         print(f"  ❌  evaluate_for_profile failed for '{job.title}': {e}")
         raise
@@ -1048,7 +801,7 @@ if __name__ == "__main__":
 
     result = score_job(test_job)
     if result is None:
-        print("Scoring failed — all models exhausted")
+        print("Scoring failed — DeepSeek not configured")
     else:
         print(f"Model          : {result['scored_by']}")
         print(f"Score          : {result['score']}/10")

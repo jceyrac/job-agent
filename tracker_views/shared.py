@@ -111,17 +111,11 @@ def upsert_env(key: str, value: str) -> None:
 
 
 def set_secret(key: str, value: str) -> None:
-    """Persist a secret to .env AND os.environ, then refresh the scorer's Groq
-    client so in-process callers (wizard, Settings) see it immediately.
+    """Persist a secret to .env AND os.environ.
     Never logs or returns the value."""
     value = value.strip()
     upsert_env(key, value)
     os.environ[key] = value
-    try:
-        from scorer import reload_client  # local import: avoid load cost/cycle
-        reload_client()
-    except Exception:
-        pass  # scorer import/refresh best-effort; .env+environ already set
 
 
 # ── Cached data loaders ─────────────────────────────────────────────────────────

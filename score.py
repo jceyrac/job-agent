@@ -161,6 +161,8 @@ def _run_mock(profile) -> None:
         print(f"    Reason: {reason}")
         print()
 
+        time.sleep(4)  # avoid rate-limit between mock jobs
+
     if all_pass:
         print("✅ All 6 cases in expected bands.")
     else:

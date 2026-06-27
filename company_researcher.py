@@ -225,7 +225,7 @@ def _detect_ats(html: str, url: str) -> tuple[str | None, str | None, str | None
 
 def _classify_with_llm(name: str, url: str, html_snippet: str) -> dict | None:
     """Use LLM cascade to classify an ambiguous careers page."""
-    from scorer import _call_groq_fallback_chain, _call_deepseek
+    import llm
 
     prompt = f"""Given this careers page, determine the ATS platform and how to scrape it.
 
@@ -248,20 +248,9 @@ Return ONLY JSON:
         {"role": "user", "content": prompt},
     ]
 
-    # Cascade: Groq 8b → Groq 70b → DeepSeek
+    # DeepSeek
     try:
-        raw, model = _call_groq_fallback_chain(
-            messages,
-            models=["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
-            json_mode=True, max_tokens=500,
-        )
-        import json as _json
-        return _json.loads(raw)
-    except Exception:
-        pass
-
-    try:
-        raw = _call_deepseek(messages)
+        raw = llm.call(messages, max_tokens=500, sleep_after=0)
         import json as _json
         return _json.loads(raw)
     except Exception:
