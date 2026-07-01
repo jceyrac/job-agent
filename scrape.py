@@ -2,7 +2,10 @@ import importlib
 import os
 import pkgutil
 import re
+import subprocess
+import sys
 import time
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -159,6 +162,8 @@ def main():
     parser = argparse.ArgumentParser(description="Job scraping pipeline")
     parser.add_argument("--monitored-only", action="store_true",
                         help="Only scrape monitored companies (company-keyed, no broad boards)")
+    parser.add_argument("--no-score", action="store_true",
+                        help="Skip extraction + scoring after monitored-only scrape")
     args = parser.parse_args()
 
     t0 = time.monotonic()
@@ -168,7 +173,7 @@ def main():
     profile = load_active_profile(db)
 
     if args.monitored_only:
-        _run_monitored_only(db, profile)
+        _run_monitored_only(db, profile, run_scoring=not args.no_score)
     else:
         _run_broad_scrape(db, profile)
 
@@ -176,8 +181,12 @@ def main():
     print(f"\nScrape complete ({elapsed:.0f}s)")
 
 
-def _run_monitored_only(db: JobStorage, profile) -> None:
-    """Company-keyed monitoring run — only monitored companies, no broad boards."""
+def _run_monitored_only(db: JobStorage, profile, *, run_scoring: bool = True) -> None:
+    """Company-keyed monitoring run — only monitored companies, no broad boards.
+
+    If run_scoring is True (the default), extraction and scoring run immediately
+    after scraping so monitored jobs are scored without waiting for a full pipeline.
+    """
     import importlib
     t_start = time.monotonic()
 
@@ -289,7 +298,7 @@ def _run_monitored_only(db: JobStorage, profile) -> None:
         time.sleep(1.0)
 
     already_count = total_fetched - total_new
-    print(f"\nMonitored-only run: {total_fetched} fetched, {total_new} new, "
+    print(f"\nMonitored-only scrape: {total_fetched} fetched, {total_new} new, "
           f"{already_count} already in DB")
     db.log_run(
         profile_id=profile.id,
@@ -298,6 +307,12 @@ def _run_monitored_only(db: JobStorage, profile) -> None:
         duration_seconds=round(time.monotonic() - t_start, 1),
         run_type="monitored_only",
     )
+
+    # ── Immediately extract & score the new jobs (unless suppressed) ─────
+    if run_scoring:
+        print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Extracting + scoring monitored jobs...")
+        subprocess.run([sys.executable, "score.py", "--extract"], check=False)
+        subprocess.run([sys.executable, "score.py", "--profile", profile.id], check=False)
 
 
 def _run_broad_scrape(db: JobStorage, profile) -> None:

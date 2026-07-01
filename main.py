@@ -74,8 +74,8 @@ def main():
         # ── Step: Monitored-company scrape (conditional) ────────────────────
         if run_monitoring:
             print(f"\n[{_ts()}] === Step {step_num}: Monitored scrape ===")
-            subprocess.run([sys.executable, "scrape.py", "--monitored-only"],
-                           check=True)
+            subprocess.run([sys.executable, "scrape.py", "--monitored-only",
+                            "--no-score"], check=True)
             t_now = time.monotonic()
             print(f"[{_ts()}] Monitored scrape done"
                   f" — {t_now - t_prev:.0f}s elapsed"
