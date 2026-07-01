@@ -657,6 +657,26 @@ def _evaluation_result(score: int, reason: str, scored_by: str, job: JobPosting,
     return d
 
 
+def _geography_for_mode(profile, mode):
+    """Return (countries, geo_zones) acceptable for this work_mode.
+
+    Empty countries = no restriction. geo_zones only used as remote fallback
+    when company_country is unknown.
+    """
+    wmg = getattr(profile, "work_mode_geography", None) or {}
+    if mode in ("on-site", "hybrid", "remote"):
+        spec = wmg.get(mode, {}) or {}
+        return spec.get("countries", []) or [], spec.get("geo_zones", []) or []
+    # unknown work_mode → union across all modes (permissive)
+    countries, zones = [], []
+    for m in ("on-site", "hybrid", "remote"):
+        spec = wmg.get(m, {}) or {}
+        countries += spec.get("countries", []) or []
+        zones += spec.get("geo_zones", []) or []
+    # dedupe, preserve order
+    return list(dict.fromkeys(countries)), list(dict.fromkeys(zones))
+
+
 def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     """
     Tiered evaluation: deterministic filters first, then small-model LLM.
@@ -665,10 +685,9 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
       0. company in profile.denylisted_companies        → score=1 (no-op when empty)
       1. language_required in profile.excluded_languages → score=1
       2. industry_sector in profile.excluded_sectors    → score=1
-      3. country not in profile.allowed_countries       → score=2
+      3. country in profile.banned_countries            → score=1 (no-op when empty)
       4. work_mode not in profile.allowed_work_modes    → score=1
-      5. country in profile.banned_countries            → score=1 (no-op when empty)
-      6. hybrid work_mode outside profile.hybrid_ok_countries → score=2 (no-op when empty)
+      5. per-mode geography (work_mode_geography)       → score=2
 
     Tier 1: small-model LLM (llama-3.1-8b-instant → llama-4-scout).
 
@@ -705,10 +724,10 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
         return _evaluation_result(1, f"filtered: sector ({industry_sector})",
                                   "tier_0", job, profile)
 
-    # 3. Country allowlist
-    allowed = profile.allowed_countries
-    if allowed is not None and company_country != "unknown" and company_country not in allowed:
-        return _evaluation_result(2, f"filtered: country ({company_country})",
+    # 3. Banned-country denylist (global, checked before per-mode geography)
+    banned = getattr(profile, "banned_countries", []) or []
+    if company_country in banned:
+        return _evaluation_result(1, f"filtered: banned country ({company_country})",
                                   "tier_0", job, profile)
 
     # 4. Work mode filter
@@ -717,19 +736,23 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
         return _evaluation_result(1, f"filtered: work_mode ({work_mode})",
                                   "tier_0", job, profile)
 
-    # 5. Banned-country denylist (no-op when profile.banned_countries is empty)
-    banned = getattr(profile, "banned_countries", []) or []
-    if company_country in banned:
-        return _evaluation_result(1, f"filtered: banned country ({company_country})",
-                                  "tier_0", job, profile)
-
-    # 6. Hybrid only in allowed countries (no-op when profile.hybrid_ok_countries is empty)
-    hybrid_ok = getattr(profile, "hybrid_ok_countries", []) or []
-    if (hybrid_ok and work_mode == "hybrid"
-            and company_country != "unknown"
-            and company_country not in hybrid_ok):
-        return _evaluation_result(2, f"filtered: hybrid outside allowed countries ({company_country})",
-                                  "tier_0", job, profile)
+    # 5. Per-mode geography (replaces old allowed_countries + hybrid_ok_countries)
+    allowed_geo, geo_zones = _geography_for_mode(profile, work_mode)
+    if allowed_geo:
+        if company_country != "unknown":
+            if company_country not in allowed_geo:
+                return _evaluation_result(
+                    2, f"filtered: {work_mode} not available in {company_country}",
+                    "tier_0", job, profile, comp_flag=comp_flag)
+        else:
+            # company_country unknown: for remote / unknown modes, fall back to geo_zone
+            if work_mode in ("remote", "unknown") and geo_zones:
+                jz = (job.geo_zone or "unknown").strip().lower()
+                if jz != "unknown" and jz not in geo_zones:
+                    return _evaluation_result(
+                        2, f"filtered: remote geo_zone ({jz}) not allowed",
+                        "tier_0", job, profile, comp_flag=comp_flag)
+            # on-site/hybrid with unknown country, or no geo_zone signal → pass
 
     # ── Tier 1: LLM evaluation with small model ────────────────────────────
     profile_context = profile.scoring_context if hasattr(profile, "scoring_context") else ""

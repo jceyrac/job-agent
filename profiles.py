@@ -2,7 +2,7 @@
 profiles.py — Search profile definitions for job_agent
 =======================================================
 Each profile drives:
-  - Which geo_zones are accepted (post-scoring filter)
+  - Geography per work mode via ``work_mode_geography`` (spec 016)
   - Which work_modes are accepted (post-scoring filter)
   - Which location keywords trigger pre-scoring inclusion (empty = no filter)
   - Which company_sizes are accepted (empty = no filter)
@@ -18,6 +18,7 @@ from typing import Optional
 class SearchProfile:
     id: str
     name: str
+    # deprecated: superseded by work_mode_geography (spec 016); retained for back-compat round-trip
     allowed_geo_zones: list[str]          # post-scoring geo filter
     allowed_work_modes: list[str]         # post-scoring work_mode filter
     location_keywords: list[str]          # pre-scoring location filter (OR match, empty = disabled)
@@ -27,12 +28,15 @@ class SearchProfile:
     remote_or_hybrid: bool = True         # pre-scoring: exclude fully on-site jobs
     scoring_context: str = ""             # injected at top of scorer system prompt
     pre_filter: dict = field(default_factory=dict)  # SQL pre-filter before LLM scoring
+    # deprecated: superseded by work_mode_geography (spec 016); retained for back-compat round-trip
     allowed_countries: Optional[list[str]] = None   # None = no restriction; list = allowlist (unknown always passes)
     banned_countries: list[str] = field(default_factory=list)   # hard-reject at Tier-0 even when geo_zone='global_remote'; empty = disabled
+    # deprecated: superseded by work_mode_geography (spec 016); retained for back-compat round-trip
     hybrid_ok_countries: list[str] = field(default_factory=list)  # hybrid roles whose company_country is set and not in this list → score 2; empty = disabled
     denylisted_companies: list[str] = field(default_factory=list)  # companies to hard-reject at Tier-0 before any LLM call; empty = disabled
     excluded_sectors: list[str] = field(default_factory=list)   # sector codes to exclude from digest
     excluded_languages: list[str] = field(default_factory=list) # language codes to exclude from digest
+    work_mode_geography: dict = field(default_factory=dict)  # per-work-mode country allowlists + geo_zone fallback (spec 016)
 
     # ── Search inputs (relocated from scrape.py + scraper modules) ──────────
     # When a list is empty, the consuming scraper falls back to its module
@@ -62,6 +66,7 @@ class SearchProfile:
             "denylisted_companies":  self.denylisted_companies,
             "excluded_sectors":      self.excluded_sectors,
             "excluded_languages":   self.excluded_languages,
+            "work_mode_geography":  self.work_mode_geography,
             # ── Search inputs ─────────────────────────────────────────
             "scrape_titles":          self.scrape_titles,
             "scrape_exclude":         self.scrape_exclude,
@@ -75,6 +80,16 @@ class SearchProfile:
     def from_criteria(cls, id: str, name: str, criteria: dict) -> "SearchProfile":
         """Build a profile from a persisted criteria dict. Forward-prep for the
         Phase-1 Settings UI; not used by get_active_profile() in Phase 0."""
+        wmg = criteria.get("work_mode_geography")
+        if not wmg:
+            legacy_allowed = criteria.get("allowed_countries") or []
+            legacy_hybrid  = criteria.get("hybrid_ok_countries") or []
+            legacy_zones   = criteria.get("allowed_geo_zones") or []
+            wmg = {
+                "on-site": {"countries": legacy_hybrid or ["Switzerland"]},
+                "hybrid":  {"countries": legacy_hybrid or ["Switzerland"]},
+                "remote":  {"countries": legacy_allowed, "geo_zones": legacy_zones},
+            }
         return cls(
             id=id,
             name=name,
@@ -93,6 +108,7 @@ class SearchProfile:
             denylisted_companies=criteria.get("denylisted_companies", []),
             excluded_sectors=criteria.get("excluded_sectors", []),
             excluded_languages=criteria.get("excluded_languages", []),
+            work_mode_geography=wmg,
             scrape_titles=criteria.get("scrape_titles", []),
             scrape_exclude=criteria.get("scrape_exclude", []),
             scrape_remote_or_hybrid=criteria.get("scrape_remote_or_hybrid", False),
@@ -178,9 +194,7 @@ roles that hit multiple criteria simultaneously.
   SwissRe, Zurich Insurance, BNP Paribas, Deutsche Bank, SAP, Oracle,
   IBM, Accenture, Deloitte, PwC, EY, KPMG.
 - JUNIOR / INTERN / ASSOCIATE / non-PM roles: MAX SCORE = 3.
-- ON-SITE outside Switzerland: MAX SCORE = 3 (no relocation).
 - ROLES REQUIRING German or Spanish: MAX SCORE = 3 (only French/English).
-- US-ONLY remote: MAX SCORE = 3 (timezone incompatible).
 
 # Strong preference: company type
 - Startups, scale-ups, and SMEs are the target. Lean, flat, agile
@@ -253,8 +267,6 @@ stage, headcount, flexibility).
 - ACCEPTABLE: On-site in Switzerland — score based on domain fit, not
   work mode.
 - WEAKER: Rigid hybrid requiring 4+ days in a Swiss office.
-- EXCLUDE: On-site or hybrid outside Switzerland (Tier-0 enforced),
-  US-only remote, APAC roles.
 
 # Swiss-employer certainty discount
 A remote role whose company is based outside Switzerland (EU/Türkiye)
@@ -285,6 +297,19 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
         "Poland", "Romania", "Greece", "Luxembourg",
         "Türkiye", "Turkey",            # enable EU/Türkiye fintech remote (tier 6)
     ],
+    work_mode_geography={
+        "on-site": {"countries": ["Switzerland"]},
+        "hybrid":  {"countries": ["Switzerland"]},   # user may widen in Settings (e.g. add "France")
+        "remote":  {
+            "countries": [
+                "Switzerland", "France", "Spain", "Portugal", "Italy", "Netherlands",
+                "Germany", "Ireland", "United Kingdom", "Belgium", "Austria",
+                "Sweden", "Denmark", "Finland", "Norway", "Estonia", "Czech Republic",
+                "Poland", "Romania", "Greece", "Luxembourg", "Türkiye", "Turkey",
+            ],
+            "geo_zones": ["europe", "global_remote", "unknown"],
+        },
+    },
     banned_countries=[
         "United States", "Canada", "Mexico", "Brazil", "Argentina", "Colombia",
         "Singapore", "Hong Kong", "Taiwan", "Japan", "South Korea",

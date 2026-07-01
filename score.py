@@ -88,6 +88,26 @@ MOCK_JOBS = [
             "Series C, 200 employees."
         ),
     },
+    {
+        "title": "Senior Product Manager",
+        "company": "WarsawSoft",
+        "location": "Warsaw, Poland (On-site)",
+        "base_location": "Warsaw, Poland",
+        "description": (
+            "WarsawSoft is a Polish B2B SaaS company. On-site role in our Warsaw "
+            "office, 5 days a week. Series A, 60 employees."
+        ),
+    },
+    {
+        "title": "Senior Product Manager — Payments",
+        "company": "ParisPay",
+        "location": "Paris, France (Hybrid)",
+        "base_location": "Paris, France",
+        "description": (
+            "ParisPay is a French fintech. Hybrid role, 3 days in our Paris office. "
+            "Series B payments platform, 180 employees."
+        ),
+    },
 ]
 
 
@@ -112,6 +132,8 @@ def _run_mock(profile) -> None:
         (8, 9, "SwissNeo — tokenized custody, crypto-fintech bridge, CH hybrid → tier 2"),
         (6, 8, "TokenBridge Labs — Web3 RWA, EU remote, salary unstated → tier 3 + comp flag"),
         (4, 5, "Istanbul Fintech — TR fintech remote → tier 6, must NOT be Tier-0 filtered"),
+        (1, 2, "WarsawSoft — on-site outside CH → Tier-0 per-mode geography reject (score 2)"),
+        (1, 2, "ParisPay — hybrid outside CH → Tier-0 per-mode geography reject (score 2)"),
     ]
 
     print(f"\n=== MOCK TEST: {profile.name} ({profile.id}) ===")
@@ -164,7 +186,7 @@ def _run_mock(profile) -> None:
         time.sleep(4)  # avoid rate-limit between mock jobs
 
     if all_pass:
-        print("✅ All 6 cases in expected bands.")
+        print(f"✅ All {len(MOCK_JOBS)} cases in expected bands.")
     else:
         print("❌ Some cases out of band — review scoring_context or Tier-0 rules.")
 
@@ -410,26 +432,15 @@ def main():
     all_scored = db.get_digest(profile.id, min_score=profile.score_threshold)
 
     # Post-scoring filters — applied at digest assembly, not at scoring
-    excl_geo = excl_work_mode = excl_country = excl_sector = excl_language = 0
+    excl_work_mode = excl_sector = excl_language = 0
     digest_jobs = []
     for job_dict in all_scored:
-        geo_zone         = job_dict.get("geo_zone", "unknown")
         work_mode        = job_dict.get("work_mode", "unknown")
-        company_country  = job_dict.get("company_country", "unknown")
         industry_sector  = job_dict.get("industry_sector", "other")
         language_required = job_dict.get("language_required", "unknown")
 
-        if profile.allowed_geo_zones and geo_zone and geo_zone not in profile.allowed_geo_zones:
-            excl_geo += 1
-            continue
         if profile.allowed_work_modes and work_mode and work_mode not in profile.allowed_work_modes:
             excl_work_mode += 1
-            continue
-        # country allowlist: unknown always passes through
-        if (profile.allowed_countries is not None
-                and company_country != "unknown"
-                and company_country not in profile.allowed_countries):
-            excl_country += 1
             continue
         if industry_sector in profile.excluded_sectors:
             excl_sector += 1
@@ -444,12 +455,12 @@ def main():
     mid = [j for j in digest_jobs if 5 <= j["score"] <= 7]
 
     stats = db.get_stats(profile.id)
-    total_excl = excl_geo + excl_work_mode + excl_country + excl_sector + excl_language
+    total_excl = excl_work_mode + excl_sector + excl_language
     print(f"\n--- Stats [{profile.name}] ---")
     if total_excl:
         print(f"🌍 {total_excl} jobs excluded "
-              f"(geo/work_mode: {excl_geo + excl_work_mode}, "
-              f"country: {excl_country}, sector: {excl_sector}, language: {excl_language})")
+              f"(work_mode: {excl_work_mode}, "
+              f"sector: {excl_sector}, language: {excl_language})")
     print(f"✅ {len(digest_jobs)} jobs in digest  (🔥 {len(hot)} hot  ⭐ {len(mid)} solid)")
     print(f"📊 DB: {stats['total']} jobs total · {stats['hot']} 🔥 hot · {stats['solid']} ⭐ solid")
 

@@ -457,9 +457,8 @@ def _render_profile_editor(db):
             help="Minimum score for a job to appear in the digest.",
         )
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         WORK_MODES = ["remote", "hybrid", "on-site", "unknown"]
-        GEO_ZONES = ["europe", "global_remote", "us_only", "apac", "latam", "unknown"]
         COMPANY_SIZES = ["startup", "scaleup", "sme", "large"]
 
         with c1:
@@ -467,10 +466,6 @@ def _render_profile_editor(db):
                 "Allowed work modes", WORK_MODES, default=profile.allowed_work_modes,
             )
         with c2:
-            allowed_geo_zones = st.multiselect(
-                "Allowed geo zones", GEO_ZONES, default=profile.allowed_geo_zones,
-            )
-        with c3:
             company_sizes = st.multiselect(
                 "Company sizes", COMPANY_SIZES, default=profile.company_sizes,
             )
@@ -487,21 +482,37 @@ def _render_profile_editor(db):
 
         # ── Countries & filters (expander) ──────────────────────────────
         with st.expander("🌍 Countries & filters"):
+            st.markdown("**Geography by work mode**")
+            wmg = profile.work_mode_geography or {}
+            onsite_countries = st.text_area(
+                "On-site countries (one per line — where you can commute)",
+                value="\n".join((wmg.get("on-site", {}) or {}).get("countries", [])),
+                height=80,
+            )
+            hybrid_countries = st.text_area(
+                "Hybrid countries (one per line)",
+                value="\n".join((wmg.get("hybrid", {}) or {}).get("countries", [])),
+                height=80,
+            )
+            remote_countries = st.text_area(
+                "Remote countries (one per line — timezone-bounded)",
+                value="\n".join((wmg.get("remote", {}) or {}).get("countries", [])),
+                height=150,
+            )
+            GEO_ZONES = ["europe", "global_remote", "us_only", "apac", "latam", "unknown"]
+            remote_geo_zones = st.multiselect(
+                "Remote geo-zone fallback (used when a remote role's country is unknown)",
+                GEO_ZONES,
+                default=(wmg.get("remote", {}) or {}).get("geo_zones", []),
+            )
+
+            st.divider()
+
             c1, c2 = st.columns(2)
             with c1:
-                allowed_countries = st.text_area(
-                    "Allowed countries (one per line; empty = no restriction)",
-                    value="\n".join(profile.allowed_countries) if profile.allowed_countries else "",
-                    height=150,
-                )
                 banned_countries = st.text_area(
                     "Banned countries (one per line)",
                     value="\n".join(profile.banned_countries),
-                    height=120,
-                )
-                hybrid_ok_countries = st.text_area(
-                    "Hybrid-ok countries (one per line)",
-                    value="\n".join(profile.hybrid_ok_countries),
                     height=120,
                 )
             with c2:
@@ -510,16 +521,16 @@ def _render_profile_editor(db):
                     value="\n".join(profile.denylisted_companies),
                     height=150,
                 )
-                excluded_sectors = st.multiselect(
-                    "Excluded sectors",
-                    list(SECTOR_LABELS.keys()),
-                    default=[k for k, v in SECTOR_LABELS.items() if v in profile.excluded_sectors],
-                )
-                excluded_languages = st.text_area(
-                    "Excluded languages (one per line — e.g. german, spanish)",
-                    value="\n".join(profile.excluded_languages),
-                    height=120,
-                )
+            excluded_sectors = st.multiselect(
+                "Excluded sectors",
+                list(SECTOR_LABELS.keys()),
+                default=[k for k, v in SECTOR_LABELS.items() if v in profile.excluded_sectors],
+            )
+            excluded_languages = st.text_area(
+                "Excluded languages (one per line — e.g. german, spanish)",
+                value="\n".join(profile.excluded_languages),
+                height=120,
+            )
 
         # ── Scrape net & advanced (expander) ────────────────────────────
         with st.expander("🕸 Scrape net & advanced"):
@@ -568,16 +579,21 @@ def _render_profile_editor(db):
             profile.name = name
             profile.score_threshold = score_threshold
             profile.allowed_work_modes = allowed_work_modes
-            profile.allowed_geo_zones = allowed_geo_zones
             profile.company_sizes = company_sizes
             profile.scoring_context = scoring_context
 
             profile.search_query_titles = _textarea_to_list(search_query_titles)
             profile.search_locations = _textarea_to_list(search_locations)
 
-            profile.allowed_countries = _textarea_to_list(allowed_countries) or None
+            profile.work_mode_geography = {
+                "on-site": {"countries": _textarea_to_list(onsite_countries)},
+                "hybrid":  {"countries": _textarea_to_list(hybrid_countries)},
+                "remote":  {
+                    "countries": _textarea_to_list(remote_countries),
+                    "geo_zones": remote_geo_zones,
+                },
+            }
             profile.banned_countries = _textarea_to_list(banned_countries)
-            profile.hybrid_ok_countries = _textarea_to_list(hybrid_ok_countries)
             profile.denylisted_companies = _textarea_to_list(denylisted_companies)
             profile.excluded_sectors = [SECTOR_LABELS[k] for k in excluded_sectors]
             profile.excluded_languages = _textarea_to_list(excluded_languages)
