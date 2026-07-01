@@ -395,6 +395,9 @@ def main():
             else:
                 tier1_count += 1
 
+            if i < len(jobs_to_score):
+                time.sleep(4)
+
         print(f"\nScoring complete: {scored_count} scored, {error_count} errors"
               + (f", {gate_filtered} filtered (non-PM title)" if gate_filtered else ""))
         if tier0_count:
