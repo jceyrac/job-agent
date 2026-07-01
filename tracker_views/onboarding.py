@@ -131,6 +131,7 @@ def _render_welcome():
         st.session_state["q"] = dict(TEMPLATES[template])  # shallow copy
         st.session_state["onboarding_step"] = 1
         st.session_state["cv_text"] = ""
+        st.session_state["scraping_mode"] = {"boards": True, "monitoring": False}
         st.rerun()
 
 
@@ -282,6 +283,85 @@ def _render_questionnaire():
     _back_button(1)
 
 
+
+def _render_scraping_mode():
+    st.title("🔍 How do you want to find jobs?")
+    st.caption(
+        "Choose how the pipeline collects job postings. "
+        "You can change this any time from Settings."
+    )
+
+    # Determine defaults from any prior choice, or sensible first-run defaults.
+    prev = st.session_state.get("scraping_mode", {"boards": True, "monitoring": False})
+
+    st.markdown("#### Job board scraping")
+    st.markdown(
+        "Fetches postings from LinkedIn, Indeed, Web3Career, RemoteOK, "
+        "CryptoJobsList, WeWorkRemotely, and more — a broad net across "
+        "dozens of sources on every run."
+    )
+    boards_enabled = st.checkbox(
+        "Enable job board scraping",
+        value=prev.get("boards", True),
+        key="mode_boards",
+    )
+    if boards_enabled:
+        st.caption(
+            "All board scrapers are enabled by default. "
+            "You can toggle individual scrapers in Settings after onboarding."
+        )
+
+    st.divider()
+
+    st.markdown("#### Targeted company monitoring")
+    st.markdown(
+        "Directly queries the ATS of companies you've curated "
+        "(Greenhouse, Lever, Ashby, Workable, Workday) and pulls all their open roles. "
+        "Faster and more complete than boards for your target companies — "
+        "but requires you to build a watchlist of companies first."
+    )
+    monitoring_enabled = st.checkbox(
+        "Enable company monitoring",
+        value=prev.get("monitoring", False),
+        key="mode_monitoring",
+    )
+    if monitoring_enabled:
+        st.caption(
+            "After onboarding, go to **Settings → Monitored Companies** "
+            "to add companies by pasting their careers URL. "
+            "The app will auto-detect their ATS provider."
+        )
+
+    if not boards_enabled and not monitoring_enabled:
+        st.warning(
+            "⚠️ At least one mode must be enabled, "
+            "otherwise the pipeline has nothing to scrape."
+        )
+
+    st.divider()
+    st.caption(
+        "**Both** is the recommended setup: boards cast a wide net, "
+        "monitoring ensures you never miss a role at companies you care about."
+    )
+
+    c1, c2 = st.columns([1, 3])
+    with c2:
+        if st.button(
+            "Next →",
+            use_container_width=True,
+            type="primary",
+            disabled=not boards_enabled and not monitoring_enabled,
+        ):
+            st.session_state["scraping_mode"] = {
+                "boards": boards_enabled,
+                "monitoring": monitoring_enabled,
+            }
+            st.session_state["onboarding_step"] = 3
+            st.rerun()
+
+    _back_button(2)
+
+
 def _render_cv():
     st.title("📄 Your CV / resume")
     st.caption(
@@ -325,14 +405,14 @@ def _render_cv():
     c1, c2 = st.columns([1, 3])
     with c1:
         if st.button("Skip", use_container_width=True):
-            st.session_state["onboarding_step"] = 3
+            st.session_state["onboarding_step"] = 4
             st.rerun()
     with c2:
         if st.button("Next →", use_container_width=True, type="primary"):
-            st.session_state["onboarding_step"] = 3
+            st.session_state["onboarding_step"] = 4
             st.rerun()
 
-    _back_button(2)
+    _back_button(3)
 
 
 def _render_generate():
@@ -409,10 +489,10 @@ def _render_generate():
     else:
         st.success("Profile generated!  Proceed to review →")
         if st.button("Review →", use_container_width=True, type="primary"):
-            st.session_state["onboarding_step"] = 4
+            st.session_state["onboarding_step"] = 5
             st.rerun()
 
-    _back_button(3)
+    _back_button(4)
 
 
 def _render_review():
@@ -423,7 +503,7 @@ def _render_review():
 
     if not criteria:
         st.warning("No generated profile.  Go back and generate first.")
-        _back_button(4)
+        _back_button(5)
         return
 
     # ── scoring_context editor ──────────────────────────────────────────
@@ -494,10 +574,10 @@ def _render_review():
     # ── Navigation ──────────────────────────────────────────────────────
     c1, c2 = st.columns([1, 3])
     with c1:
-        _back_button(4)
+        _back_button(5)
     with c2:
         if st.button("Save profile →", use_container_width=True, type="primary"):
-            st.session_state["onboarding_step"] = 5
+            st.session_state["onboarding_step"] = 6
             st.rerun()
 
 
@@ -507,7 +587,7 @@ def _render_save():
     criteria = st.session_state.get("generated_criteria", {})
     if not criteria:
         st.warning("No generated profile.  Go back and generate first.")
-        _back_button(5)
+        _back_button(6)
         return
 
     db = get_db()
@@ -525,16 +605,20 @@ def _render_save():
         db.upsert_profile(profile)
         db.set_config("active_profile_id", profile.id)
         db.set_config("onboarding_complete", "true")
+        # Persist scraping mode choices to config
+        scraping_mode = st.session_state.get("scraping_mode", {"boards": True, "monitoring": False})
+        db.set_config("scrape.enabled_in_pipeline", "true" if scraping_mode.get("boards", True) else "false")
+        db.set_config("monitoring.enabled_in_pipeline", "true" if scraping_mode.get("monitoring", False) else "false")
         st.balloons()
         st.success(f"Profile **{new_name}** saved!  All future scrape/score runs will use it.")
         st.caption("Redirecting to Dashboard…")
         # Clear session state so re-run starts fresh
-        for key in ["onboarding_step", "q", "cv_text", "generated_criteria"]:
+        for key in ["onboarding_step", "q", "cv_text", "generated_criteria", "scraping_mode"]:
             st.session_state.pop(key, None)
         st.cache_data.clear()
         st.rerun()
 
-    _back_button(5)
+    _back_button(6)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -550,10 +634,11 @@ def render():
     steps = {
         0: _render_welcome,
         1: _render_questionnaire,
-        2: _render_cv,
-        3: _render_generate,
-        4: _render_review,
-        5: _render_save,
+        2: _render_scraping_mode,
+        3: _render_cv,
+        4: _render_generate,
+        5: _render_review,
+        6: _render_save,
     }
 
     renderer = steps.get(step, _render_welcome)
