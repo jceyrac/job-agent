@@ -1,5 +1,7 @@
 # Spec 006 — Monitoring Agent
 
+> ⚠️ Prerequisite: Spec 006-pre (scraper config from DB) must be implemented first.
+
 ## Prerequisite — Company seed file (Option 4)
 
 ### Problem
