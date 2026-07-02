@@ -108,6 +108,27 @@ MOCK_JOBS = [
             "Series B payments platform, 180 employees."
         ),
     },
+    {
+        "title": "Senior Product Manager",
+        "company": "USRemoteCo",
+        "location": "Remote (United States)",
+        "base_location": "New York, United States",
+        "description": "USRemoteCo is a US fintech hiring a fully-remote Senior PM. US-based team.",
+    },
+    {
+        "title": "Senior Product Manager",
+        "company": "BerlinBank",
+        "location": "Berlin, Germany",
+        "base_location": "Berlin, Germany",
+        "description": "Deutschkenntnisse erforderlich. On-site product role at a Berlin institution.",
+    },
+    {
+        "title": "Product Manager Intern",
+        "company": "InternCo",
+        "location": "Remote (Switzerland)",
+        "base_location": "Zurich, Switzerland",
+        "description": "6-month product internship, Swiss startup.",
+    },
 ]
 
 
@@ -134,6 +155,9 @@ def _run_mock(profile) -> None:
         (4, 5, "Istanbul Fintech — TR fintech remote → tier 6, must NOT be Tier-0 filtered"),
         (1, 2, "WarsawSoft — on-site outside CH → Tier-0 per-mode geography reject (score 2)"),
         (1, 2, "ParisPay — hybrid outside CH → Tier-0 per-mode geography reject (score 2)"),
+        (1, 2, "USRemoteCo — US remote, no banned_countries rule → per-mode geography reject (score 2)"),
+        (1, 1, "BerlinBank — German required, not spoken → Tier-0 language reject (score 1)"),
+        (1, 1, "InternCo — internship not in allowed_contract_types → Tier-0 contract reject (score 1)"),
     ]
 
     print(f"\n=== MOCK TEST: {profile.name} ({profile.id}) ===")
@@ -321,8 +345,13 @@ def main():
         print(f"--rescore: cleared {deleted} existing scores for '{profile.id}'")
 
     total_in_db = db.get_stats(profile.id)["total"]
-    # Merge location_keywords into pre_filter.location_contains (additive, no dupes)
+    # Build effective pre-filter from canonical fields (spec 017)
     effective_pre_filter = dict(profile.pre_filter) if profile.pre_filter else {}
+    if profile.job_titles:
+        effective_pre_filter["title_contains"] = list(profile.job_titles)
+    if profile.title_exclude:
+        effective_pre_filter["exclude_title_contains"] = list(profile.title_exclude)
+    # Merge location_keywords into pre_filter.location_contains (additive, no dupes)
     if profile.location_keywords:
         existing = effective_pre_filter.get("location_contains", [])
         merged = list(dict.fromkeys(profile.location_keywords + existing))  # preserve order, dedupe
@@ -390,7 +419,7 @@ def main():
 
             # ── Title gate: skip non-PM jobs from monitored companies ──
             if job_dict.get("monitored_company_id"):
-                if not is_product_management_title(title):
+                if not is_product_management_title(title, profile.job_titles):
                     db.set_job_filtered_non_product(job_dict["id"])
                     gate_filtered += 1
                     print(f"    → filtered (non-PM title from monitored company)")
@@ -432,12 +461,13 @@ def main():
     all_scored = db.get_digest(profile.id, min_score=profile.score_threshold)
 
     # Post-scoring filters — applied at digest assembly, not at scoring
-    excl_work_mode = excl_sector = excl_language = 0
+    excl_work_mode = excl_sector = excl_language = excl_contract = 0
     digest_jobs = []
     for job_dict in all_scored:
-        work_mode        = job_dict.get("work_mode", "unknown")
-        industry_sector  = job_dict.get("industry_sector", "other")
+        work_mode         = job_dict.get("work_mode", "unknown")
+        industry_sector   = job_dict.get("industry_sector", "other")
         language_required = job_dict.get("language_required", "unknown")
+        contract_type     = (job_dict.get("contract_type") or "unknown").strip().lower()
 
         if profile.allowed_work_modes and work_mode and work_mode not in profile.allowed_work_modes:
             excl_work_mode += 1
@@ -445,8 +475,15 @@ def main():
         if industry_sector in profile.excluded_sectors:
             excl_sector += 1
             continue
-        if language_required in profile.excluded_languages:
+        # Language (positive): reject when required language is known and not spoken
+        spoken = profile.languages_spoken or []
+        if spoken and language_required not in ("unknown", "multiple") and language_required not in spoken:
             excl_language += 1
+            continue
+        # Contract type
+        allowed_ct = profile.allowed_contract_types or []
+        if allowed_ct and contract_type not in allowed_ct:
+            excl_contract += 1
             continue
         digest_jobs.append(job_dict)
 
@@ -455,12 +492,12 @@ def main():
     mid = [j for j in digest_jobs if 5 <= j["score"] <= 7]
 
     stats = db.get_stats(profile.id)
-    total_excl = excl_work_mode + excl_sector + excl_language
+    total_excl = excl_work_mode + excl_sector + excl_language + excl_contract
     print(f"\n--- Stats [{profile.name}] ---")
     if total_excl:
         print(f"🌍 {total_excl} jobs excluded "
-              f"(work_mode: {excl_work_mode}, "
-              f"sector: {excl_sector}, language: {excl_language})")
+              f"(work_mode: {excl_work_mode}, sector: {excl_sector}, "
+              f"language: {excl_language}, contract: {excl_contract})")
     print(f"✅ {len(digest_jobs)} jobs in digest  (🔥 {len(hot)} hot  ⭐ {len(mid)} solid)")
     print(f"📊 DB: {stats['total']} jobs total · {stats['hot']} 🔥 hot · {stats['solid']} ⭐ solid")
 

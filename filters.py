@@ -8,7 +8,6 @@ class JobFilterEngine:
     def apply(jobs: list[JobPosting], job_filter: JobFilter) -> tuple[list[JobPosting], int, int]:
         results = []
         excluded_date = 0
-        excluded_geo = 0
         cutoff = date.today() - timedelta(days=30)
 
         for job in jobs:
@@ -57,21 +56,5 @@ class JobFilterEngine:
                 if not any(s in loc_lower for s in remote_signals):
                     continue
 
-            # Company size OR filter (empty = no filter)
-            if job_filter.company_sizes and job.company_size:
-                if job.company_size not in job_filter.company_sizes:
-                    continue
-
-            # Contract type OR filter (empty = no filter)
-            if job_filter.contract_types and job.contract_type:
-                if job.contract_type not in job_filter.contract_types:
-                    continue
-
-            # Geo zone filter
-            if job_filter.allowed_geo_zones and job.geo_zone:
-                if job.geo_zone not in job_filter.allowed_geo_zones:
-                    excluded_geo += 1
-                    continue
-
             results.append(job)
-        return results, excluded_date, excluded_geo
+        return results, excluded_date, 0

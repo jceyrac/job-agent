@@ -26,15 +26,18 @@ _PM_TITLES = [
 ]
 
 
-def is_product_management_title(title: str) -> bool:
+def is_product_management_title(title: str, titles: list[str] | None = None) -> bool:
     """Return True if *title* matches the PM family inclusion list.
 
     Case-insensitive substring match — never exact equality.
+    When *titles* is provided, it replaces the built-in _PM_TITLES
+    (e.g. driven by profile.job_titles).
     """
     if not title:
         return False
+    keywords = titles if titles else _PM_TITLES
     t = title.lower().strip()
-    return any(kw in t for kw in _PM_TITLES)
+    return any(kw.lower() in t for kw in keywords)
 
 
 # ---------------------------------------------------------------------------

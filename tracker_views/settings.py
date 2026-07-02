@@ -436,20 +436,27 @@ def _render_profile_editor(db):
 
         name = st.text_input("Profile name", value=profile.name)
 
+        job_titles_input = st.text_area(
+            "Job titles — one per line; used as search queries, the PM title gate, and the scoring pre-filter",
+            value="\n".join(profile.job_titles),
+            height=120,
+            help="Single source of truth for all title matching. Drives LinkedIn/Indeed queries, Greenhouse filtering, scrape net, and SQL pre-filter.",
+        )
+
         c1, c2 = st.columns(2)
         with c1:
-            search_query_titles = st.text_area(
-                "Search query titles (one per line)",
-                value="\n".join(profile.search_query_titles),
-                height=120,
-                help="Queries sent to LinkedIn, Indeed, and other jobspy-based scrapers.",
+            title_exclude_input = st.text_area(
+                "Exclude titles containing — one per line",
+                value="\n".join(profile.title_exclude),
+                height=80,
+                help="Drop jobs whose title contains any of these words (e.g. junior, intern).",
             )
         with c2:
             search_locations = st.text_area(
-                "Scrape locations — where to search (one per line)",
+                "Scrape locations override (one per line — leave empty to search everywhere you accept jobs)",
                 value="\n".join(profile.search_locations),
-                height=120,
-                help="Countries/cities queried by LinkedIn, Indeed, etc. Narrows where scrapers look — independent of the geography acceptance filters below.",
+                height=80,
+                help="Override where LinkedIn/Indeed search. Empty = derive from Geography by work mode below (all accepted countries).",
             )
 
         score_threshold = st.slider(
@@ -457,9 +464,10 @@ def _render_profile_editor(db):
             help="Minimum score for a job to appear in the digest.",
         )
 
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         WORK_MODES = ["remote", "hybrid", "on-site", "unknown"]
         COMPANY_SIZES = ["startup", "scaleup", "sme", "large"]
+        CONTRACT_TYPES = ["permanent", "freelance", "contract", "internship", "unknown"]
 
         with c1:
             allowed_work_modes = st.multiselect(
@@ -468,6 +476,10 @@ def _render_profile_editor(db):
         with c2:
             company_sizes = st.multiselect(
                 "Company sizes", COMPANY_SIZES, default=profile.company_sizes,
+            )
+        with c3:
+            allowed_contract_types = st.multiselect(
+                "Allowed contract types", CONTRACT_TYPES, default=profile.allowed_contract_types,
             )
 
         # ── Scoring ─────────────────────────────────────────────────────
@@ -511,10 +523,11 @@ def _render_profile_editor(db):
 
             c1, c2 = st.columns(2)
             with c1:
-                banned_countries = st.text_area(
-                    "Banned countries (one per line)",
-                    value="\n".join(profile.banned_countries),
-                    height=120,
+                languages_spoken_input = st.text_area(
+                    "Languages you work in — one per line (e.g. french / english)",
+                    value="\n".join(profile.languages_spoken),
+                    height=80,
+                    help="Positive allowlist. A role requiring a language not listed here is rejected at Tier-0. Empty = no language restriction.",
                 )
             with c2:
                 denylisted_companies = st.text_area(
@@ -527,26 +540,11 @@ def _render_profile_editor(db):
                 list(SECTOR_LABELS.keys()),
                 default=[k for k, v in SECTOR_LABELS.items() if v in profile.excluded_sectors],
             )
-            excluded_languages = st.text_area(
-                "Excluded languages (one per line — e.g. german, spanish)",
-                value="\n".join(profile.excluded_languages),
-                height=120,
-            )
 
-        # ── Scrape net & advanced (expander) ────────────────────────────
-        with st.expander("🕸 Scrape net & advanced"):
+        # ── Advanced scrape inputs (expander) ────────────────────────────
+        with st.expander("🕸 Advanced scrape inputs"):
             c1, c2 = st.columns(2)
             with c1:
-                scrape_titles = st.text_area(
-                    "Scrape titles (one per line)",
-                    value="\n".join(profile.scrape_titles),
-                    height=150,
-                )
-                scrape_exclude = st.text_area(
-                    "Scrape exclude (one per line)",
-                    value="\n".join(profile.scrape_exclude),
-                    height=100,
-                )
                 greenhouse_boards = st.text_area(
                     "Greenhouse boards (one per line)",
                     value="\n".join(profile.greenhouse_boards),
@@ -558,20 +556,11 @@ def _render_profile_editor(db):
                     height=150,
                 )
             with c2:
-                pre_title_contains = st.text_area(
-                    "pre_filter: title_contains (one per line)",
-                    value="\n".join(profile.pre_filter.get("title_contains", [])),
-                    height=120,
-                )
-                pre_exclude_title = st.text_area(
-                    "pre_filter: exclude_title_contains (one per line)",
-                    value="\n".join(profile.pre_filter.get("exclude_title_contains", [])),
-                    height=120,
-                )
                 pre_exclude_location = st.text_area(
                     "pre_filter: exclude_location_contains (one per line)",
                     value="\n".join(profile.pre_filter.get("exclude_location_contains", [])),
                     height=150,
+                    help="Cheap pre-extraction filter — drops jobs whose location contains these terms before LLM spend. US terms are auto-included by default.",
                 )
 
         # ── Save ────────────────────────────────────────────────────────
@@ -583,8 +572,11 @@ def _render_profile_editor(db):
             profile.company_sizes = company_sizes
             profile.scoring_context = scoring_context
 
-            profile.search_query_titles = _textarea_to_list(search_query_titles)
+            profile.job_titles = _textarea_to_list(job_titles_input)
+            profile.title_exclude = _textarea_to_list(title_exclude_input)
             profile.search_locations = _textarea_to_list(search_locations)
+            profile.allowed_contract_types = allowed_contract_types
+            profile.languages_spoken = _textarea_to_list(languages_spoken_input)
 
             profile.work_mode_geography = {
                 "on-site": {"countries": _textarea_to_list(onsite_countries)},
@@ -594,19 +586,13 @@ def _render_profile_editor(db):
                     "geo_zones": remote_geo_zones,
                 },
             }
-            profile.banned_countries = _textarea_to_list(banned_countries)
             profile.denylisted_companies = _textarea_to_list(denylisted_companies)
             profile.excluded_sectors = [SECTOR_LABELS[k] for k in excluded_sectors]
-            profile.excluded_languages = _textarea_to_list(excluded_languages)
 
-            profile.scrape_titles = _textarea_to_list(scrape_titles)
-            profile.scrape_exclude = _textarea_to_list(scrape_exclude)
             profile.greenhouse_boards = _textarea_to_list(greenhouse_boards)
             profile.boost_keywords = _textarea_to_list(boost_keywords)
 
-            # Mutate pre_filter keys without replacing the whole dict
-            profile.pre_filter["title_contains"] = _textarea_to_list(pre_title_contains)
-            profile.pre_filter["exclude_title_contains"] = _textarea_to_list(pre_exclude_title)
+            # Keep exclude_location_contains (cheap pre-extraction US dropper)
             profile.pre_filter["exclude_location_contains"] = _textarea_to_list(pre_exclude_location)
 
             db.upsert_profile(profile)

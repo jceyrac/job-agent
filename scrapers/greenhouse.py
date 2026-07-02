@@ -7,6 +7,7 @@ import httpx
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
 from storage import JobStorage
+from title_gate import is_product_management_title
 
 BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
 HEADERS = {
@@ -62,25 +63,6 @@ def get_greenhouse_boards(db: JobStorage | None) -> list[str]:
     slugs = [r["ats_identifier"] for r in rows if r.get("ats_identifier")]
     # Seed first so legacy companies are always covered; DB slugs appended
     return list(dict.fromkeys(list(GREENHOUSE_BOARDS_SEED) + slugs))
-
-
-PM_TITLE_KEYWORDS = [
-    "product manager",
-    " pm ",
-    "head of product",
-    "vp product",
-    "vp of product",
-    "director of product",
-    "product lead",
-    "product owner",
-    "cpo",
-    "chief product",
-]
-
-
-def _is_pm_title(title: str) -> bool:
-    t = title.lower()
-    return any(kw in t for kw in PM_TITLE_KEYWORDS)
 
 
 def _parse_greenhouse_location(name: str) -> tuple[str, str]:
@@ -151,13 +133,17 @@ class GreenhouseScraper(BaseScraper):
             print(f"[{self.SOURCE_NAME}] ⚠️ beautifulsoup4 not installed")
             return []
 
+        # Load active profile once for job_titles (used by both paths)
+        from profiles import load_active_profile
+        active_profile = load_active_profile(self._storage)
+        profile_titles = active_profile.job_titles
+
         # Use DB-driven targets when provided (monitoring path),
         # otherwise fall back to profile boards / DB+seed list (broad scrape)
         if self._targets is not None:
             board_tokens = [t["ats_identifier"] for t in self._targets]
         else:
-            from profiles import load_active_profile
-            boards = load_active_profile(self._storage).greenhouse_boards
+            boards = active_profile.greenhouse_boards
             if boards:
                 board_tokens = boards
             else:
@@ -177,7 +163,7 @@ class GreenhouseScraper(BaseScraper):
 
                     data = r.json()
                     raw_jobs = data.get("jobs", [])
-                    pm_jobs = [j for j in raw_jobs if _is_pm_title(j.get("title", ""))]
+                    pm_jobs = [j for j in raw_jobs if is_product_management_title(j.get("title", ""), profile_titles)]
 
                     if pm_jobs:
                         board_summary.append(f"{token}: {len(pm_jobs)} PM job{'s' if len(pm_jobs) > 1 else ''}")
@@ -210,9 +196,6 @@ class GreenhouseScraper(BaseScraper):
                         description = ""
                         if raw_content:
                             description = BeautifulSoup(raw_content, "html.parser").get_text(" ", strip=True)[:300]
-
-                        if base_location == "United States":
-                            continue
 
                         jobs.append(JobPosting(
                             source=self.SOURCE_NAME,

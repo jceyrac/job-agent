@@ -319,8 +319,8 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     """Broad scrape: all enabled scrapers (boards + discovery), no monitoring filter."""
     t_start = time.monotonic()
     job_filter = JobFilter(
-        titles=profile.scrape_titles,
-        exclude=profile.scrape_exclude,
+        titles=profile.job_titles,
+        exclude=profile.title_exclude,
         remote_or_hybrid=profile.scrape_remote_or_hybrid,
     )
 
@@ -362,7 +362,7 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
 
         before_count = db.get_stats(profile.id)["total"]
         for job in unique_batch:
-            if not is_product_management_title(job.title):
+            if not is_product_management_title(job.title, profile.job_titles):
                 total_excluded_title += 1
                 print(f"  → skipped (non-PM title): {job.title[:60]}")
                 continue

@@ -60,8 +60,8 @@ class IndeedScraper(BaseScraper):
 
         from profiles import load_active_profile
         _p = load_active_profile(self._storage)
-        terms = _p.search_query_titles or SEARCH_TERMS_INDEED
-        raw_locs = _p.search_locations
+        terms = _p.job_titles or SEARCH_TERMS_INDEED
+        raw_locs = _p.effective_search_locations()
         countries = [_to_indeed_slug(n) for n in raw_locs] if raw_locs else INDEED_COUNTRIES
 
         original_request = patch_requests_for_indeed()

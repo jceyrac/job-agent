@@ -2,9 +2,14 @@
 profiles.py — Search profile definitions for job_agent
 =======================================================
 Each profile drives:
+  - Canonical ``job_titles`` and ``title_exclude`` — single source for search
+    queries, title gate, scrape net, and scoring pre-filter (spec 017)
+  - ``languages_spoken`` — positive allowlist for Tier-0 language filtering
+  - ``allowed_contract_types`` — contract-type Tier-0 / digest filter
   - Geography per work mode via ``work_mode_geography`` (spec 016)
+  - Search locations derived from ``work_mode_geography`` by default
+    (``effective_search_locations()``), overridable via ``search_locations``
   - Which work_modes are accepted (post-scoring filter)
-  - Which location keywords trigger pre-scoring inclusion (empty = no filter)
   - Which company_sizes are accepted (empty = no filter)
   - Score threshold for inclusion in the digest
   - Boost keywords used as search hints (passed to scrapers / scorer context)
@@ -30,23 +35,45 @@ class SearchProfile:
     pre_filter: dict = field(default_factory=dict)  # SQL pre-filter before LLM scoring
     # deprecated: superseded by work_mode_geography (spec 016); retained for back-compat round-trip
     allowed_countries: Optional[list[str]] = None   # None = no restriction; list = allowlist (unknown always passes)
+    # deprecated: removed as enforcement mechanism (spec 017); retained for round-trip
     banned_countries: list[str] = field(default_factory=list)   # hard-reject at Tier-0 even when geo_zone='global_remote'; empty = disabled
     # deprecated: superseded by work_mode_geography (spec 016); retained for back-compat round-trip
     hybrid_ok_countries: list[str] = field(default_factory=list)  # hybrid roles whose company_country is set and not in this list → score 2; empty = disabled
     denylisted_companies: list[str] = field(default_factory=list)  # companies to hard-reject at Tier-0 before any LLM call; empty = disabled
     excluded_sectors: list[str] = field(default_factory=list)   # sector codes to exclude from digest
+    # deprecated: superseded by languages_spoken (spec 017); retained for round-trip
     excluded_languages: list[str] = field(default_factory=list) # language codes to exclude from digest
     work_mode_geography: dict = field(default_factory=dict)  # per-work-mode country allowlists + geo_zone fallback (spec 016)
+
+    # ── Canonical search fields (spec 017) ─────────────────────────────────
+    job_titles: list[str] = field(default_factory=list)           # single include list — gate + jobspy query + scrape net + pre_filter
+    title_exclude: list[str] = field(default_factory=list)         # single exclude list — scrape exclude + pre_filter exclude
+    allowed_contract_types: list[str] = field(default_factory=list)# empty = no restriction; allowlist over extraction vocab {permanent, freelance, contract, internship, unknown}
+    languages_spoken: list[str] = field(default_factory=list)      # positive allowlist; empty = no language restriction
 
     # ── Search inputs (relocated from scrape.py + scraper modules) ──────────
     # When a list is empty, the consuming scraper falls back to its module
     # constant. Populate these to make the active profile the source of truth.
+    # deprecated: superseded by job_titles (spec 017); retained for round-trip
     scrape_titles: list[str] = field(default_factory=list)      # broad post-fetch title net (scrape.py JobFilter.titles)
+    # deprecated: superseded by title_exclude (spec 017); retained for round-trip
     scrape_exclude: list[str] = field(default_factory=list)     # post-fetch exclusions (scrape.py JobFilter.exclude)
     scrape_remote_or_hybrid: bool = False                       # scrape.py JobFilter.remote_or_hybrid
+    # deprecated: superseded by job_titles (spec 017); retained for round-trip
     search_query_titles: list[str] = field(default_factory=list)  # queries sent to jobspy (LinkedIn/Indeed)
-    search_locations: list[str] = field(default_factory=list)     # location display names for jobspy
+    search_locations: list[str] = field(default_factory=list)     # location display names for jobspy (empty → derived from work_mode_geography)
     greenhouse_boards: list[str] = field(default_factory=list)    # Greenhouse board tokens
+
+    def effective_search_locations(self) -> list[str]:
+        """Where jobspy should search: explicit override if set, else the union of
+        all work_mode_geography countries (dedup, order-preserving)."""
+        if self.search_locations:
+            return list(self.search_locations)
+        wmg = self.work_mode_geography or {}
+        out: list[str] = []
+        for mode in ("on-site", "hybrid", "remote"):
+            out += (wmg.get(mode, {}) or {}).get("countries", []) or []
+        return list(dict.fromkeys(out))
 
     def to_criteria_dict(self) -> dict:
         """Serialisable en JSON pour stockage dans search_profiles.criteria."""
@@ -67,6 +94,10 @@ class SearchProfile:
             "excluded_sectors":      self.excluded_sectors,
             "excluded_languages":   self.excluded_languages,
             "work_mode_geography":  self.work_mode_geography,
+            "job_titles":           self.job_titles,
+            "title_exclude":        self.title_exclude,
+            "allowed_contract_types": self.allowed_contract_types,
+            "languages_spoken":     self.languages_spoken,
             # ── Search inputs ─────────────────────────────────────────
             "scrape_titles":          self.scrape_titles,
             "scrape_exclude":         self.scrape_exclude,
@@ -90,6 +121,17 @@ class SearchProfile:
                 "hybrid":  {"countries": legacy_hybrid or ["Switzerland"]},
                 "remote":  {"countries": legacy_allowed, "geo_zones": legacy_zones},
             }
+        jt = criteria.get("job_titles")
+        if not jt:
+            legacy = (criteria.get("scrape_titles") or []) + (criteria.get("search_query_titles") or [])
+            jt = list(dict.fromkeys(legacy))
+        te = criteria.get("title_exclude") or criteria.get("scrape_exclude") or []
+        ls = criteria.get("languages_spoken")
+        if ls is None:
+            ls = ["french", "english"]
+        act = criteria.get("allowed_contract_types")
+        if act is None:
+            act = ["permanent", "freelance", "contract", "unknown"]
         return cls(
             id=id,
             name=name,
@@ -109,6 +151,10 @@ class SearchProfile:
             excluded_sectors=criteria.get("excluded_sectors", []),
             excluded_languages=criteria.get("excluded_languages", []),
             work_mode_geography=wmg,
+            job_titles=jt,
+            title_exclude=te,
+            allowed_contract_types=act,
+            languages_spoken=ls,
             scrape_titles=criteria.get("scrape_titles", []),
             scrape_exclude=criteria.get("scrape_exclude", []),
             scrape_remote_or_hybrid=criteria.get("scrape_remote_or_hybrid", False),
@@ -194,7 +240,6 @@ roles that hit multiple criteria simultaneously.
   SwissRe, Zurich Insurance, BNP Paribas, Deutsche Bank, SAP, Oracle,
   IBM, Accenture, Deloitte, PwC, EY, KPMG.
 - JUNIOR / INTERN / ASSOCIATE / non-PM roles: MAX SCORE = 3.
-- ROLES REQUIRING German or Spanish: MAX SCORE = 3 (only French/English).
 
 # Strong preference: company type
 - Startups, scale-ups, and SMEs are the target. Lean, flat, agile
@@ -250,6 +295,9 @@ stage, headcount, flexibility).
    the role on the PM fit, not the AI angle.
 6. LOW FIT — non-fintech B2B SaaS, e-commerce, healthtech, edtech,
    media. Score on PM fundamentals only, no industry bonus.
+7. AVOID (soft signal, not a hard filter): pharma, government, pure
+   retail/manufacturing, energy — score low unless a genuine fintech/Web3
+   angle is present.
 
 # Geography and work mode
 - The candidate stays in Switzerland. Foreign roles are acceptable only
@@ -310,14 +358,18 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
             "geo_zones": ["europe", "global_remote", "unknown"],
         },
     },
-    banned_countries=[
-        "United States", "Canada", "Mexico", "Brazil", "Argentina", "Colombia",
-        "Singapore", "Hong Kong", "Taiwan", "Japan", "South Korea",
-        "Thailand", "India", "Indonesia", "Vietnam", "Philippines",
-        "United Arab Emirates", "Israel", "Saudi Arabia", "South Africa",
-        "Australia", "New Zealand", "China",
-    ],
+    banned_countries=[],   # inert — removed as enforcement mechanism (spec 017)
     hybrid_ok_countries=["Switzerland"],
+    job_titles=[
+        "product manager", "senior product manager", "staff product manager",
+        "principal product manager", "lead product manager", "group product manager",
+        "director of product", "head of product", "vp product",
+        "chief product officer", "product owner", "technical product owner",
+        "product lead",
+    ],
+    title_exclude=["junior", "intern", "stage", "apprentice"],
+    allowed_contract_types=["permanent", "freelance", "contract", "unknown"],
+    languages_spoken=["french", "english"],
     # Companies repeatedly archived in past digests — extend when a recruiter
     # or aggregator keeps wasting reviewer time.
     denylisted_companies=[
@@ -331,8 +383,7 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
         "Themesoft Inc.",              # US contracting agency
         "TechHuman",
     ],
-    excluded_sectors=["pharma", "retail", "manufacturing", "government", "healthcare",
-                      "energy", "media"],
+    excluded_sectors=[],  # soft via scoring_context (spec 017)
     excluded_languages=["german", "spanish", "dutch", "italian", "czech", "hungarian",
                         "polish", "mandarin", "turkish"],
     # ── Search inputs (exact current values from scrape.py + scraper modules) ──
@@ -347,11 +398,7 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
         "product lead", "product director", "senior product",
         "lead product manager",
     ],
-    search_locations=[
-        "Switzerland", "France", "United Kingdom", "Netherlands", "Spain",
-        "Portugal", "Austria", "Belgium", "Ireland", "Italy", "Germany",
-        "Czechia", "Hungary", "Türkiye",
-    ],
+    search_locations=[],  # empty → derive from work_mode_geography (spec 017)
     greenhouse_boards=[
         # Crypto / Web3 / fintech boards (from CRYPTO_WEB3_BOARDS)
         "coinbase", "chainalysis", "paxos", "avalabs", "consensys",

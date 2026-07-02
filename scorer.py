@@ -683,9 +683,9 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
 
     Tier 0 (first match wins):
       0. company in profile.denylisted_companies        → score=1 (no-op when empty)
-      1. language_required in profile.excluded_languages → score=1
+      1. language_required known + not in languages_spoken → score=1
       2. industry_sector in profile.excluded_sectors    → score=1
-      3. country in profile.banned_countries            → score=1 (no-op when empty)
+      3. contract_type not in allowed_contract_types    → score=1 (no-op when empty)
       4. work_mode not in profile.allowed_work_modes    → score=1
       5. per-mode geography (work_mode_geography)       → score=2
 
@@ -714,9 +714,10 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
             f"filtered: denylisted company ({job.company})",
             "tier_0", job, profile)
 
-    # 1. Language exclusion
-    if language_required in (profile.excluded_languages or []):
-        return _evaluation_result(1, f"filtered: language ({language_required})",
+    # 1. Language (positive): reject when required language is known and not spoken
+    spoken = profile.languages_spoken or []
+    if spoken and language_required not in ("unknown", "multiple") and language_required not in spoken:
+        return _evaluation_result(1, f"filtered: language ({language_required}) not spoken",
                                   "tier_0", job, profile)
 
     # 2. Sector exclusion
@@ -724,11 +725,12 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
         return _evaluation_result(1, f"filtered: sector ({industry_sector})",
                                   "tier_0", job, profile)
 
-    # 3. Banned-country denylist (global, checked before per-mode geography)
-    banned = getattr(profile, "banned_countries", []) or []
-    if company_country in banned:
-        return _evaluation_result(1, f"filtered: banned country ({company_country})",
-                                  "tier_0", job, profile)
+    # 3. Contract type
+    allowed_ct = profile.allowed_contract_types or []
+    ct = (job.contract_type or "unknown").strip().lower()
+    if allowed_ct and ct not in allowed_ct:
+        return _evaluation_result(1, f"filtered: contract_type ({ct})",
+                                  "tier_0", job, profile, comp_flag=comp_flag)
 
     # 4. Work mode filter
     allowed_modes = profile.allowed_work_modes or []
