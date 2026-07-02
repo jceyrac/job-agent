@@ -36,6 +36,8 @@ POST_BODY = {"query": "", "location": [], "department": [], "worktype": [], "rem
 class WorkableScraper(BaseScraper):
     SOURCE_NAME = "Workable"
     ENABLED = True
+    ACQUISITION_MODEL = "company_keyed"
+    SUPPORTS_DISCOVERY = True
 
     def _get_slugs(self) -> list[dict]:
         """Resolve scraping targets: DB targets (monitoring) or hardcoded slugs (broad scrape)."""

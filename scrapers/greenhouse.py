@@ -125,6 +125,8 @@ def _parse_greenhouse_location(name: str) -> tuple[str, str]:
 class GreenhouseScraper(BaseScraper):
     SOURCE_NAME = "Greenhouse"
     ENABLED = True
+    ACQUISITION_MODEL = "company_keyed"
+    SUPPORTS_DISCOVERY = True
 
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
         try:

@@ -21,6 +21,8 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; job_agent/1.0)"}
 class AshbyScraper(BaseScraper):
     SOURCE_NAME = "Ashby"
     ENABLED = True
+    ACQUISITION_MODEL = "company_keyed"
+    SUPPORTS_DISCOVERY = False
 
     def fetch(self, job_filter: JobFilter | None = None) -> list[JobPosting]:
         if self._targets is None:

@@ -28,6 +28,8 @@ JOB_SECTIONS = {"it and product", "sales and marketing"}
 class TangemScraper(BaseScraper):
     SOURCE_NAME = "Tangem"
     ENABLED = True
+    ACQUISITION_MODEL = "company_keyed"
+    SUPPORTS_DISCOVERY = True
 
     def fetch(self, job_filter: JobFilter | None = None) -> list[JobPosting]:
         try:

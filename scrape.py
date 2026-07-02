@@ -215,6 +215,10 @@ def _run_monitored_only(db: JobStorage, profile, *, run_scoring: bool = True) ->
     total_new = 0
 
     for provider, companies in sorted(by_provider.items()):
+        gate = db.get_config(f"monitoring.ats.{provider}.enabled")
+        if gate is not None and gate.lower() == "false":
+            print(f"[{provider}] monitoring paused (master switch off) — {len(companies)} companies skipped")
+            continue
         print(f"\n[{provider}] {len(companies)} companies")
         try:
             module = importlib.import_module(f"scrapers.ats.{provider}")
@@ -334,6 +338,9 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     total_excluded_title = 0
 
     for ScraperClass in scraper_classes:
+        if (getattr(ScraperClass, "ACQUISITION_MODEL", "board") == "company_keyed"
+                and not getattr(ScraperClass, "SUPPORTS_DISCOVERY", False)):
+            continue  # monitoring-only source — not part of the broad/discovery sweep
         scraper = ScraperClass(storage=db)
         if not scraper.is_enabled():
             print(f"  ⚠️ [{scraper.SOURCE_NAME}] disabled — skipped")

@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 class BaseScraper(ABC):
     SOURCE_NAME: str = "Unknown"
     ENABLED: bool = True
+    ACQUISITION_MODEL: str = "board"        # "board" | "company_keyed"
+    SUPPORTS_DISCOVERY: bool = True         # runs a seed/known-company sweep in the broad path
 
     def __init__(self, storage: JobStorage = None, targets: list[dict] | None = None):
         self._storage = storage

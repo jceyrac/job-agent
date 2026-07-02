@@ -38,6 +38,8 @@ def _extract_location(job: dict) -> str:
 class GemScraper(BaseScraper):
     SOURCE_NAME = "Gem"
     ENABLED = True
+    ACQUISITION_MODEL = "company_keyed"
+    SUPPORTS_DISCOVERY = False
 
     def fetch(self, job_filter: JobFilter | None = None) -> list[JobPosting]:
         if self._targets is None:

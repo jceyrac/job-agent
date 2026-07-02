@@ -363,19 +363,25 @@ def render():
     st.divider()
     _render_profile_editor(db)
     st.divider()
-    _render_scraper_toggles(db)
-    st.divider()
-    _render_purge(db)
+    _render_broad_scraping(db)
     st.divider()
     _render_company_monitoring(db)
+    st.divider()
+    _render_purge(db)
     st.divider()
     _render_reonboard(db)
 
 
 def _render_company_monitoring(db):
-    """Pipeline toggle for monitored-company scraping."""
-    st.subheader("📡 Company Monitoring")
+    """Company-keyed ATS sources. Each provider can be paused without losing
+    its company list (non-destructive master switch with cascade re-arm)."""
+    from scrape import discover_scrapers
+    from tracker_views.shared import load_all_monitorable_companies
 
+    st.subheader("📡 Company Monitoring")
+    st.caption("Company-keyed ATS sources. Each provider can be paused without losing its company list.")
+
+    # ── Pipeline toggle ──────────────────────────────────────────────────
     mon_cfg = db.get_config("monitoring.enabled_in_pipeline")
     mon_enabled = mon_cfg is None or mon_cfg.lower() == "true"
     scrape_cfg = db.get_config("scrape.enabled_in_pipeline")
@@ -385,9 +391,7 @@ def _render_company_monitoring(db):
         "Include monitored-company scrape in the full pipeline run",
         value=mon_enabled,
         key="monitoring_enabled_in_pipeline",
-        help="When on and at least one company is monitored, `python main.py` "
-             "will also run `scrape.py --monitored-only` as part of the full "
-             "pipeline. At least one scrape source must remain active.",
+        help="When on, `python main.py` runs `scrape.py --monitored-only` as part of the pipeline.",
     )
     if new_mon != mon_enabled:
         if not new_mon and not scrape_enabled:
@@ -397,12 +401,95 @@ def _render_company_monitoring(db):
                           "true" if new_mon else "false")
             st.rerun()
 
-    # Summary stats only — full management is on the Companies page
-    from tracker_views.shared import load_all_monitorable_companies
-    all_monitorable = load_all_monitorable_companies(db)
-    if all_monitorable:
-        active_count = sum(1 for c in all_monitorable if c.get("monitored"))
-        st.caption(f"{len(all_monitorable)} monitorable companies ({active_count} active)")
+    # ── Per-provider monitoring ──────────────────────────────────────────
+    scraper_classes = sorted(discover_scrapers(), key=lambda c: c.SOURCE_NAME)
+    company_keyed = [c for c in scraper_classes if getattr(c, "ACQUISITION_MODEL", "board") == "company_keyed"]
+
+    all_companies = load_all_monitorable_companies(db)
+    if not all_companies:
+        st.caption("No monitorable companies found. Add companies on the Companies page.")
+        return
+
+    # Group monitorable companies by ats_provider
+    by_provider: dict[str, list[dict]] = {}
+    for comp in all_companies:
+        provider = (comp.get("ats_provider") or "").strip().lower()
+        if provider:
+            by_provider.setdefault(provider, []).append(comp)
+
+    for ScraperCls in company_keyed:
+        name = ScraperCls.SOURCE_NAME
+        provider_key = name.lower()
+        companies = by_provider.get(provider_key, [])
+
+        n_monitorable = len(companies)
+        n_monitored = sum(1 for c in companies if c.get("monitored"))
+
+        with st.expander(f"{name} — {n_monitored} monitored / {n_monitorable} monitorable"):
+            # Master switch
+            gate = db.get_config(f"monitoring.ats.{provider_key}.enabled")
+            gate_enabled = gate is None or gate.lower() == "true"
+
+            new_gate = st.checkbox(
+                f"Monitor {name} in the pipeline",
+                value=gate_enabled,
+                key=f"monitoring_ats_{provider_key}",
+                help="Non-destructive — pausing preserves all company monitored flags.",
+            )
+            if new_gate != gate_enabled:
+                db.set_config(f"monitoring.ats.{provider_key}.enabled",
+                              "true" if new_gate else "false")
+                st.rerun()
+
+            # Monitored companies list
+            monitored = [c for c in companies if c.get("monitored")]
+            if monitored:
+                st.caption(f"**{len(monitored)} monitored:**")
+                for comp in monitored:
+                    cname = comp.get("name", comp.get("ats_identifier", "?"))
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        st.text(f"• {cname}")
+                    with c2:
+                        if st.button("🔕", key=f"unmonitor_{comp.get('id', comp.get('ats_identifier'))}",
+                                     help=f"Stop monitoring {cname}"):
+                            # Use existing storage method to clear monitored flag
+                            with db._conn() as conn:
+                                conn.execute(
+                                    "UPDATE companies SET monitored = 0 WHERE id = ?",
+                                    (comp.get("id"),),
+                                )
+                            st.cache_data.clear()
+                            st.rerun()
+            else:
+                st.caption("No monitored companies for this provider.")
+
+            # Add-to-monitoring dropdown
+            unmonitored = [c for c in companies if not c.get("monitored")]
+            if unmonitored:
+                options = {f"{c.get('name', c.get('ats_identifier', '?'))}": c for c in unmonitored}
+                selected_label = st.selectbox(
+                    "Add a monitorable company to monitoring",
+                    [""] + list(options.keys()),
+                    key=f"add_mon_{provider_key}",
+                )
+                if selected_label and st.button("➕ Monitor", key=f"btn_mon_{provider_key}"):
+                    comp = options[selected_label]
+                    with db._conn() as conn:
+                        conn.execute(
+                            "UPDATE companies SET monitored = 1 WHERE id = ?",
+                            (comp.get("id"),),
+                        )
+                    # Cascade re-arm: flip master switch back on if paused
+                    if not gate_enabled:
+                        db.set_config(f"monitoring.ats.{provider_key}.enabled", "true")
+                    st.cache_data.clear()
+                    st.rerun()
+
+    # Summary
+    active = sum(1 for c in all_companies if c.get("monitored"))
+    st.caption(f"{len(all_companies)} monitorable companies ({active} monitored)")
+    st.caption("Add new companies or run ATS detection on the Companies page.")
 
 
 def _render_reonboard(db):
@@ -601,14 +688,17 @@ def _render_profile_editor(db):
             st.rerun()
 
 
-def _render_scraper_toggles(db):
-    """Enable/disable individual scrapers + pipeline inclusion toggle."""
+def _render_broad_scraping(db):
+    """Query-driven boards and discovery-capable ATS scrapers.
+    Each toggle governs broad discovery only; monitoring has its own switches below."""
     from scrape import discover_scrapers
 
-    st.divider()
-    st.subheader("🔌 Scraper Toggles")
+    st.subheader("🕸 Broad scraping")
+    st.caption("Query-driven boards and discovery sweeps of known companies. "
+               "Independent of the monitoring path below — toggles here do not affect "
+               "monitored-company scraping, and vice versa.")
 
-    # ── Pipeline toggle: include broad scrape in full pipeline ────────────
+    # ── Pipeline toggle ──────────────────────────────────────────────────
     scrape_cfg = db.get_config("scrape.enabled_in_pipeline")
     scrape_enabled = scrape_cfg is None or scrape_cfg.lower() == "true"
     mon_cfg = db.get_config("monitoring.enabled_in_pipeline")
@@ -618,9 +708,8 @@ def _render_scraper_toggles(db):
         "Include broad scrape in the full pipeline run",
         value=scrape_enabled,
         key="scrape_enabled_in_pipeline",
-        help="When on, `python main.py` runs the broad scrape (boards + discovery) "
-             "as a pipeline step. You can still run it on demand with the "
-             "'🕸 Run scrape' button. At least one scrape source must remain active.",
+        help="When on, `python main.py` runs the broad scrape as a pipeline step. "
+             "At least one scrape source must remain active.",
     )
     if new_scrape != scrape_enabled:
         if not new_scrape and not mon_enabled:
@@ -630,25 +719,23 @@ def _render_scraper_toggles(db):
                           "true" if new_scrape else "false")
             st.rerun()
 
+    # ── Partition scrapers ───────────────────────────────────────────────
     scraper_classes = sorted(discover_scrapers(), key=lambda c: c.SOURCE_NAME)
+    boards = [c for c in scraper_classes if getattr(c, "ACQUISITION_MODEL", "board") == "board"]
+    company_keyed = [c for c in scraper_classes if getattr(c, "ACQUISITION_MODEL", "board") == "company_keyed"]
+    discovery_ats = [c for c in company_keyed if getattr(c, "SUPPORTS_DISCOVERY", False)]
 
-    # Crypto/Web3 scrapers a non-Web3 user might want to disable
-    CRYPTO_WEB3_NAMES = {
-        "Web3Career", "CryptoJobs.com", "CryptoJobsList", "DeFi Jobs",
-        "BeInCrypto", "Greenhouse",
-    }
+    toggles = boards + discovery_ats
 
     cols = st.columns(3)
-    for i, ScraperCls in enumerate(scraper_classes):
+    for i, ScraperCls in enumerate(toggles):
         name = ScraperCls.SOURCE_NAME
         key = ScraperCls.enabled_config_key()
         current_val = db.get_config(key)
-        # None → use class default (ENABLED); otherwise parse "true"/"false"
         enabled = ScraperCls.ENABLED if current_val is None else current_val.lower() == "true"
 
-        label = name
-        if name in CRYPTO_WEB3_NAMES:
-            label = f"{name} 🪙"
+        # Label discovery ATS with a suffix so user knows this governs broad sweep only
+        label = f"{name} (discovery)" if ScraperCls in discovery_ats else name
 
         with cols[i % 3]:
             new_val = st.checkbox(label, value=enabled, key=f"scraper_toggle_{name}")
@@ -656,7 +743,9 @@ def _render_scraper_toggles(db):
                 db.set_config(key, "true" if new_val else "false")
                 st.rerun()
 
-    st.caption("🪙 = crypto / Web3 scrapers — toggle off if targeting non-Web3 roles.")
+    if discovery_ats:
+        st.caption("(discovery) = company-keyed ATS that also run in the broad sweep. "
+                   "Their monitoring toggle is in the Company Monitoring section below.")
 
 
 def _render_stats_actions(db):

@@ -29,6 +29,8 @@ HEADERS = {
 class SygnumScraper(BaseScraper):
     SOURCE_NAME = "Sygnum"
     ENABLED = True
+    ACQUISITION_MODEL = "company_keyed"
+    SUPPORTS_DISCOVERY = True
 
     def fetch(self, job_filter: JobFilter | None = None) -> list[JobPosting]:
         jobs: list[JobPosting] = []

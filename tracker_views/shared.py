@@ -456,24 +456,19 @@ def _read_config_bool(db, key: str) -> bool | None:
 
 
 def is_monitoring_source_enabled(db, company: dict) -> bool:
-    """Return False only when the company's scraper is explicitly disabled via config.
-    Defaults to True when the config key is absent (scraper is enabled).
+    """Return False only when the company's ATS provider is explicitly paused
+    via the monitoring master switch. Defaults to True (enabled) when the
+    config key is absent.
 
-    company must have 'ats_provider' — we derive the slug from it, or from the
-    SOURCE_NAME of the dedicated scraper.
+    company must have 'ats_provider' or 'scraper_id'.
     """
-    provider = (company.get("ats_provider") or "").strip()
+    provider = (company.get("ats_provider") or company.get("scraper_id") or "").strip()
     if not provider:
-        # Dedicated scraper: look up scraper_id
-        sid = company.get("scraper_id")
-        if not sid:
-            return True  # shouldn't happen since we filter before calling
-        provider = sid
-    slug = _scraper_slug(provider)
-    enabled_val = db.get_config(f"{slug}.enabled")
-    if enabled_val is None:
-        return True  # not explicitly disabled → enabled
-    return enabled_val.lower() == "true"
+        return True
+    val = db.get_config(f"monitoring.ats.{provider}.enabled")
+    if val is None:
+        return True
+    return val.lower() == "true"
 
 
 def monitoring_status_badge(company: dict) -> str:

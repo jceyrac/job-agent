@@ -50,6 +50,8 @@ def _strip_html(html: str) -> str:
 class LeverScraper(BaseScraper):
     SOURCE_NAME = "Lever"
     ENABLED = True
+    ACQUISITION_MODEL = "company_keyed"
+    SUPPORTS_DISCOVERY = True
 
     def _get_slugs(self) -> list[dict]:
         """Resolve scraping targets: DB targets (monitoring) or hardcoded slugs (broad scrape)."""
