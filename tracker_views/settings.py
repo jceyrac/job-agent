@@ -446,10 +446,10 @@ def _render_profile_editor(db):
             )
         with c2:
             search_locations = st.text_area(
-                "Search locations (one per line)",
+                "Scrape locations — where to search (one per line)",
                 value="\n".join(profile.search_locations),
                 height=120,
-                help="Location display names for jobspy. Indeed is auto-mapped to country slugs.",
+                help="Countries/cities queried by LinkedIn, Indeed, etc. Narrows where scrapers look — independent of the geography acceptance filters below.",
             )
 
         score_threshold = st.slider(
@@ -483,6 +483,7 @@ def _render_profile_editor(db):
         # ── Countries & filters (expander) ──────────────────────────────
         with st.expander("🌍 Countries & filters"):
             st.markdown("**Geography by work mode**")
+            st.caption("Acceptance filters — jobs outside these countries are rejected at Tier-0. Distinct from Scrape locations above, which only narrow the search query.")
             wmg = profile.work_mode_geography or {}
             onsite_countries = st.text_area(
                 "On-site countries (one per line — where you can commute)",
