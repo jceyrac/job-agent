@@ -12,7 +12,6 @@ Each profile drives:
   - Which work_modes are accepted (post-scoring filter)
   - Which company_sizes are accepted (empty = no filter)
   - Score threshold for inclusion in the digest
-  - Boost keywords used as search hints (passed to scrapers / scorer context)
 """
 
 from dataclasses import dataclass, field
@@ -27,7 +26,6 @@ class SearchProfile:
     allowed_geo_zones: list[str]          # post-scoring geo filter
     allowed_work_modes: list[str]         # post-scoring work_mode filter
     location_keywords: list[str]          # pre-scoring location filter (OR match, empty = disabled)
-    boost_keywords: list[str]             # context hints for scoring
     company_sizes: list[str]              # post-scoring company_size filter (empty = no filter)
     score_threshold: int = 5              # minimum score to appear in digest
     remote_or_hybrid: bool = True         # pre-scoring: exclude fully on-site jobs
@@ -81,7 +79,6 @@ class SearchProfile:
             "allowed_geo_zones":  self.allowed_geo_zones,
             "allowed_work_modes": self.allowed_work_modes,
             "location_keywords":  self.location_keywords,
-            "boost_keywords":     self.boost_keywords,
             "company_sizes":      self.company_sizes,
             "score_threshold":    self.score_threshold,
             "remote_or_hybrid":   self.remote_or_hybrid,
@@ -138,7 +135,6 @@ class SearchProfile:
             allowed_geo_zones=criteria.get("allowed_geo_zones", []),
             allowed_work_modes=criteria.get("allowed_work_modes", []),
             location_keywords=criteria.get("location_keywords", []),
-            boost_keywords=criteria.get("boost_keywords", []),
             company_sizes=criteria.get("company_sizes", []),
             score_threshold=criteria.get("score_threshold", 5),
             remote_or_hybrid=criteria.get("remote_or_hybrid", True),
@@ -198,10 +194,6 @@ UNIFIED_JC = SearchProfile(
     allowed_geo_zones=["europe", "global_remote", "unknown"],
     allowed_work_modes=["remote", "hybrid", "on-site", "unknown"],
     location_keywords=[],
-    boost_keywords=["fintech", "web3", "defi", "crypto", "blockchain", "AI",
-                    "tokenization", "RWA", "stablecoin", "neobank",
-                    "payments", "wealthtech", "regtech", "embedded finance",
-                    "startup", "scaleup", "SME", "product"],
     company_sizes=["startup", "scaleup", "sme"],
     score_threshold=5,
     remote_or_hybrid=True,
