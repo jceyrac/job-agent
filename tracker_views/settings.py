@@ -637,11 +637,6 @@ def _render_profile_editor(db):
                     value="\n".join(profile.greenhouse_boards),
                     height=150,
                 )
-                boost_keywords = st.text_area(
-                    "Boost keywords (one per line)",
-                    value="\n".join(profile.boost_keywords),
-                    height=150,
-                )
             with c2:
                 pre_exclude_location = st.text_area(
                     "pre_filter: exclude_location_contains (one per line)",
@@ -677,7 +672,6 @@ def _render_profile_editor(db):
             profile.excluded_sectors = [SECTOR_LABELS[k] for k in excluded_sectors]
 
             profile.greenhouse_boards = _textarea_to_list(greenhouse_boards)
-            profile.boost_keywords = _textarea_to_list(boost_keywords)
 
             # Keep exclude_location_contains (cheap pre-extraction US dropper)
             profile.pre_filter["exclude_location_contains"] = _textarea_to_list(pre_exclude_location)
