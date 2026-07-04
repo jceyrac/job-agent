@@ -2372,6 +2372,55 @@ def test_get_job_for_prepare_defaults_new():
     assert job["status"] == "new"
 
 
+def test_get_job_for_prepare_company_country_from_companies_table():
+    """get_job_for_prepare resolves company_country from companies JOIN, not jobs.* NULL.
+
+    Regression: j.* used to expand j.company_country (NULL) which shadowed the
+    COALESCE(c.company_country, 'unknown') alias in sqlite3.Row name-based lookups.
+
+    Phase 5 drops company_country/company_size/industry_sector from the jobs table
+    on SQLite ≥ 3.35 (cleanup after data migrated to companies table). On older
+    SQLite (production server), the columns remain as NULL dead weight — exactly
+    the scenario where the collision manifests. Re-add them to simulate that.
+    """
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    # Simulate production: re-add columns that Phase 5 may have dropped
+    with db._conn() as conn:
+        for col in ("company_country", "company_size", "industry_sector"):
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if col not in existing:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
+        conn.commit()
+
+    cid = db.upsert_company("USRemoteCo")
+    db.update_company_enrichment(cid, {
+        "company_country": "United States",
+        "industry_sector": "web3_crypto",
+        "company_size": "startup",
+    }, enriched_by="test")
+
+    j = _job(url="https://example.com/us-remote", company="USRemoteCo")
+    db.save_scored(j, _score(7), PROFILE_ID, company_id=cid)
+
+    # Verify j.company_country is indeed NULL (the precondition for the bug)
+    with db._conn() as conn:
+        j_cc = conn.execute(
+            "SELECT company_country FROM jobs WHERE id = ?", (j.id,)
+        ).fetchone()["company_country"]
+    assert j_cc is None, f"Precondition: j.company_country must be NULL, got {j_cc!r}"
+
+    result = db.get_job_for_prepare(j.id)
+    assert result is not None
+    assert result["company_country"] == "United States", \
+        f"Expected 'United States' from companies JOIN, got {result['company_country']!r}"
+    assert result["industry_sector"] == "web3_crypto", \
+        f"Expected 'web3_crypto' from companies JOIN, got {result['industry_sector']!r}"
+    assert result["company_size"] == "startup", \
+        f"Expected 'startup' from companies JOIN, got {result['company_size']!r}"
+
+
 def test_score_one_defaults_to_active_profile():
     """score_one with profile_id=None resolves to the active profile."""
     from profiles import get_active_profile

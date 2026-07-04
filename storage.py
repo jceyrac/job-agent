@@ -1311,19 +1311,27 @@ class JobStorage:
         clauses = []
         params: list = [profile_id]
 
+        _job_columns = (
+            "j.id, j.title, j.company, j.company_id, j.url, j.source,"
+            "j.location, j.base_location, j.posted_date, j.description,"
+            "j.first_seen, j.last_seen, j.summary, j.work_mode, j.geo_zone,"
+            "j.contract_type, j.language_required, j.extracted_at, j.extracted_by,"
+            "j.country_code, j.monitored_company_id, j.filtered_non_product,"
+            "j.canonical_url, j.norm_title, j.norm_company"
+        )
         _company_fields = (
             "COALESCE(c.company_country, 'unknown') AS company_country,"
             "COALESCE(c.industry_sector, 'other') AS industry_sector,"
             "COALESCE(c.company_size, 'unknown') AS company_size"
         )
         if rescore:
-            base = (f"SELECT j.*, {_company_fields} FROM jobs j"
+            base = (f"SELECT {_job_columns}, {_company_fields} FROM jobs j"
                     " LEFT JOIN companies c ON j.company_id = c.id"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
                     " LEFT JOIN job_tracking t ON j.id = t.job_id")
             clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired'))")
         else:
-            base = (f"SELECT j.*, {_company_fields} FROM jobs j"
+            base = (f"SELECT {_job_columns}, {_company_fields} FROM jobs j"
                     " LEFT JOIN companies c ON j.company_id = c.id"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
                     " LEFT JOIN job_tracking t ON j.id = t.job_id")
@@ -1805,7 +1813,11 @@ class JobStorage:
         """Fetch a single job with all extracted fields for preparation."""
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT j.*,
+                """SELECT j.id, j.title, j.company, j.company_id, j.url, j.source,
+                          j.location, j.base_location, j.posted_date, j.description,
+                          j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
+                          j.monitored_company_id, j.filtered_non_product,
+                          j.canonical_url, j.norm_title, j.norm_company,
                           COALESCE(j.summary, '') AS summary,
                           COALESCE(j.work_mode, 'unknown') AS work_mode,
                           COALESCE(j.geo_zone, 'unknown') AS geo_zone,
@@ -1814,7 +1826,7 @@ class JobStorage:
                           COALESCE(c.company_country, 'unknown') AS company_country,
                           COALESCE(c.industry_sector, 'other') AS industry_sector,
                           COALESCE(j.language_required, 'unknown') AS language_required,
-                          j.country_code AS country_code,
+                          j.country_code,
                           COALESCE(t.status, 'new') AS status
                    FROM jobs j
                    LEFT JOIN companies c ON j.company_id = c.id
