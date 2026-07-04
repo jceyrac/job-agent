@@ -2280,81 +2280,53 @@ class JobStorage:
                      AND (
                          jt.job_id IS NULL
                          OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
-                     )""",
+                     )
+                     AND NOT EXISTS (SELECT 1 FROM interactions i WHERE i.job_id = j.id)
+                     AND NOT EXISTS (SELECT 1 FROM job_applications a WHERE a.job_id = j.id)""",
                 (retention_days,),
             ).fetchone()[0]
             return count
 
     def purge_stale_jobs(self, retention_days: int = 30) -> int:
-        """Delete stale jobs (>retention_days old, untouched, no notes).
-        Cleans up status_history, job_scores, job_tracking, interactions,
-        and jobs in a transaction. Returns the number of job rows deleted.
+        """Delete stale jobs (>retention_days old, untouched, no notes, no interactions).
+
+        Cleans up job_applications, interactions, status_history, job_scores,
+        job_tracking, and jobs in a transaction. Returns the number of job rows deleted.
+
+        Jobs are protected from purging if they have:
+          - A non-'new' tracking status (applied, queued, rejected, etc.)
+          - Notes in job_tracking
+          - Any interaction row (outreach, reply, call, etc.)
+          - Any prepared application (cover letter, CV selection, etc.)
         """
         with self._conn() as conn:
             conn.execute("BEGIN")
             try:
+                # Compute purgeable job IDs once so the filter is defined in one place.
+                conn.execute(
+                    """CREATE TEMP TABLE _purgeable AS
+                       SELECT j.id FROM jobs j
+                       LEFT JOIN job_tracking jt ON j.id = jt.job_id
+                       WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                         AND (
+                             jt.job_id IS NULL
+                             OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
+                         )
+                         AND NOT EXISTS (SELECT 1 FROM interactions i WHERE i.job_id = j.id)
+                         AND NOT EXISTS (SELECT 1 FROM job_applications a WHERE a.job_id = j.id)""",
+                    (retention_days,),
+                )
                 # Delete from child tables first (no CASCADE in schema)
-                conn.execute(
-                    """DELETE FROM interactions WHERE job_id IN (
-                        SELECT j.id FROM jobs j
-                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
-                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
-                          AND (
-                              jt.job_id IS NULL
-                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
-                          )
-                    )""",
-                    (retention_days,),
-                )
-                conn.execute(
-                    """DELETE FROM status_history WHERE job_id IN (
-                        SELECT j.id FROM jobs j
-                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
-                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
-                          AND (
-                              jt.job_id IS NULL
-                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
-                          )
-                    )""",
-                    (retention_days,),
-                )
-                conn.execute(
-                    """DELETE FROM job_scores WHERE job_id IN (
-                        SELECT j.id FROM jobs j
-                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
-                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
-                          AND (
-                              jt.job_id IS NULL
-                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
-                          )
-                    )""",
-                    (retention_days,),
-                )
-                conn.execute(
-                    """DELETE FROM job_tracking WHERE job_id IN (
-                        SELECT j.id FROM jobs j
-                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
-                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
-                          AND (
-                              jt.job_id IS NULL
-                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
-                          )
-                    )""",
-                    (retention_days,),
-                )
+                for table in ("job_applications", "interactions", "status_history",
+                              "job_scores", "job_tracking"):
+                    conn.execute(
+                        f"DELETE FROM {table} WHERE job_id IN (SELECT id FROM _purgeable)"
+                    )
                 cursor = conn.execute(
-                    """DELETE FROM jobs WHERE id IN (
-                        SELECT j.id FROM jobs j
-                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
-                        WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
-                          AND (
-                              jt.job_id IS NULL
-                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
-                          )
-                    )""",
-                    (retention_days,),
+                    "DELETE FROM jobs WHERE id IN (SELECT id FROM _purgeable)"
                 )
                 count = cursor.rowcount
+                conn.execute("DROP TABLE _purgeable")
                 conn.execute("COMMIT")
                 return count
             except Exception:
