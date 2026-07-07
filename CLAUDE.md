@@ -170,8 +170,10 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Company Edit Form** (`specs/007-company-edit/`)
-- Spec: `specs/007-company-edit/spec.md`
-- Plan: `specs/007-company-edit/plan.md`
-- Tasks: `specs/007-company-edit/tasks.md`
+Current feature: **Scoring Pipeline Integrity** (`specs/020-scoring-pipeline-integrity/`)
+- Spec: `specs/020-scoring-pipeline-integrity/spec.md`
+- Plan: `specs/020-scoring-pipeline-integrity/plan.md`
+- Research: `specs/020-scoring-pipeline-integrity/research.md`
+- Data Model: `specs/020-scoring-pipeline-integrity/data-model.md`
+- Quickstart: `specs/020-scoring-pipeline-integrity/quickstart.md`
 <!-- SPECKIT END -->

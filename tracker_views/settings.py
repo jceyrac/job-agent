@@ -102,13 +102,22 @@ def _render_run_controls(db):
     bg_output = st.session_state.bg_output
     bg_start = st.session_state.bg_start
 
+    # ── Pending result from a completed run (display once, then clear) ──
+    pending = st.session_state.get("bg_result")
+    if pending:
+        st.session_state.bg_result = None
+        if pending["type"] == "success":
+            st.success(pending["message"])
+        else:
+            st.error(pending["message"])
+        output = pending.get("output", "")
+        st.text_area(f"{pending.get('label', 'run')} output", output, height=200)
+        if pending["type"] == "success":
+            st.cache_data.clear()
+
     # ── Live metric (always fresh — recomputed on every render) ──────────
-    with db._conn() as conn:
-        total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        scored_distinct = conn.execute(
-            "SELECT COUNT(DISTINCT job_id) FROM job_scores"
-        ).fetchone()[0]
-        unscored = total_jobs - scored_distinct
+    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    unscored = len(db.get_jobs_for_scoring(active_id))
     st.metric("Unscored jobs", unscored)
 
     # ── If a process is running, show its status ─────────────────────────
@@ -153,7 +162,7 @@ def _render_run_controls(db):
                 st.rerun()
         return
 
-    # ── If a process just finished, show results ─────────────────────────
+    # ── If a process just finished, store result for next pass ──────────
     if proc is not None and proc.poll() is not None:
         ret = proc.returncode
         # Read any remaining output (stderr is merged into stdout via Popen)
@@ -165,6 +174,7 @@ def _render_run_controls(db):
             pass
 
         final_output = st.session_state.bg_output
+        finished_label = label
 
         # Clean up session state
         st.session_state.bg_process = None
@@ -172,16 +182,14 @@ def _render_run_controls(db):
         st.session_state.bg_output = ""
         st.session_state.bg_start = 0.0
 
-        if ret == 0:
-            st.success(f"✅ {label.title()} completed successfully!")
-        else:
-            st.error(f"❌ {label.title()} exited with code {ret}")
-
-        st.text_area(f"{label.title()} output", final_output, height=200)
-        if ret == 0:
-            st.cache_data.clear()
-            st.rerun()
-        return
+        st.session_state.bg_result = {
+            "type": "success" if ret == 0 else "error",
+            "message": f"✅ {finished_label.title()} completed successfully!" if ret == 0
+                       else f"❌ {finished_label.title()} exited with code {ret}",
+            "output": final_output,
+            "label": finished_label,
+        }
+        st.rerun()
 
     # ── No process running — show launch buttons ─────────────────────────
     c1, c2, c3 = st.columns(3)
@@ -639,10 +647,10 @@ def _render_profile_editor(db):
                 )
             with c2:
                 pre_exclude_location = st.text_area(
-                    "pre_filter: exclude_location_contains (one per line)",
+                    "pre_filter: exclude_location_contains (legacy — no longer used by scoring)",
                     value="\n".join(profile.pre_filter.get("exclude_location_contains", [])),
                     height=150,
-                    help="Cheap pre-extraction filter — drops jobs whose location contains these terms before LLM spend. US terms are auto-included by default.",
+                    help="Legacy field — preserved for record-keeping only. No longer consumed by scoring (geography filtering is now handled by Tier-0 structured checks in scorer.py).",
                 )
 
         # ── Save ────────────────────────────────────────────────────────
@@ -673,7 +681,7 @@ def _render_profile_editor(db):
 
             profile.greenhouse_boards = _textarea_to_list(greenhouse_boards)
 
-            # Keep exclude_location_contains (cheap pre-extraction US dropper)
+            # Keep exclude_location_contains (legacy — preserved for record-keeping)
             profile.pre_filter["exclude_location_contains"] = _textarea_to_list(pre_exclude_location)
 
             db.upsert_profile(profile)
@@ -788,12 +796,15 @@ def _render_stats_actions(db):
     with c2:
         if st.button("🔍 Re-extract Job Fields", use_container_width=True):
             with st.spinner("Running score.py --extract ..."):
-                result = subprocess.run(
-                    [sys.executable, "score.py", "--extract"],
-                    capture_output=True, text=True, timeout=600,
-                )
-                st.text_area("Output", result.stdout + "\n" + result.stderr, height=200)
-                st.cache_data.clear()
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "score.py", "--extract"],
+                        capture_output=True, text=True, timeout=600,
+                    )
+                    st.text_area("Output", result.stdout + "\n" + result.stderr, height=200)
+                    st.cache_data.clear()
+                except subprocess.TimeoutExpired:
+                    st.error("Re-extract timed out after 10 minutes — it may still be running in the background.")
 
 from tracker_views.shared import is_active_page
 if is_active_page(__file__):

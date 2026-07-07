@@ -351,11 +351,6 @@ def main():
         effective_pre_filter["title_contains"] = list(profile.job_titles)
     if profile.title_exclude:
         effective_pre_filter["exclude_title_contains"] = list(profile.title_exclude)
-    # Merge location_keywords into pre_filter.location_contains (additive, no dupes)
-    if profile.location_keywords:
-        existing = effective_pre_filter.get("location_contains", [])
-        merged = list(dict.fromkeys(profile.location_keywords + existing))  # preserve order, dedupe
-        effective_pre_filter["location_contains"] = merged
     jobs_to_score = db.get_jobs_for_scoring(
         profile_id=profile.id,
         pre_filter=effective_pre_filter or None,

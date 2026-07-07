@@ -47,12 +47,21 @@ def _render_controls_bar(db):
     if "bg_start" not in st.session_state:
         st.session_state.bg_start = 0.0
 
-    with db._conn() as conn:
-        total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        scored_distinct = conn.execute(
-            "SELECT COUNT(DISTINCT job_id) FROM job_scores"
-        ).fetchone()[0]
-        unscored = total_jobs - scored_distinct
+    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    unscored = len(db.get_jobs_for_scoring(active_id))
+
+    # ── Pending result from a completed run (display once, then clear) ──
+    pending = st.session_state.get("bg_result")
+    if pending:
+        st.session_state.bg_result = None
+        if pending["type"] == "success":
+            st.success(pending["message"])
+        else:
+            st.error(pending["message"])
+        with st.expander("Last run output", expanded=False):
+            output = pending.get("output", "")
+            st.text(output[-8000:] if len(output) > 8000 else output)
+        st.cache_data.clear()
 
     c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1])
 
@@ -96,14 +105,12 @@ def _render_controls_bar(db):
             st.session_state.bg_output = ""
             st.session_state.bg_start = 0.0
 
-            if ret == 0:
-                st.success(f"✅ {label.title()} completed successfully!")
-            else:
-                st.error(f"❌ {label.title()} exited with code {ret}")
-
-            with st.expander("Last run output", expanded=False):
-                st.text(final_output[-8000:] if len(final_output) > 8000 else final_output)
-            st.cache_data.clear()
+            st.session_state.bg_result = {
+                "type": "success" if ret == 0 else "error",
+                "message": f"✅ {label.title()} completed successfully!" if ret == 0
+                           else f"❌ {label.title()} exited with code {ret}",
+                "output": final_output,
+            }
             st.rerun()
 
         # No process running — show launch buttons
@@ -123,15 +130,18 @@ def _render_controls_bar(db):
             if st.button("🔍 Re-extract", use_container_width=True,
                          help="Run score.py --extract to re-extract job fields"):
                 with st.spinner("Re-extracting…"):
-                    result = subprocess.run(
-                        [sys.executable, "score.py", "--extract"],
-                        capture_output=True, text=True, timeout=600,
-                    )
-                    st.cache_data.clear()
-                    if result.returncode == 0:
-                        st.success("Re-extract done.")
-                    else:
-                        st.error(result.stderr[:500])
+                    try:
+                        result = subprocess.run(
+                            [sys.executable, "score.py", "--extract"],
+                            capture_output=True, text=True, timeout=600,
+                        )
+                        st.cache_data.clear()
+                        if result.returncode == 0:
+                            st.success("Re-extract done.")
+                        else:
+                            st.error(result.stderr[:500])
+                    except subprocess.TimeoutExpired:
+                        st.error("Re-extract timed out after 10 minutes — it may still be running in the background.")
 
     with c5:
         st.metric("Unscored", unscored)

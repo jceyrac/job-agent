@@ -1,6 +1,10 @@
 data/jobs.db
 data/jobs.db-wal
 data/jobs.db-shm
+data/jobs_live_snapshot.db
+data/jobs_live_snapshot.db-wal
+data/jobs_live_snapshot.db-shm
+data/jobs_dev_backup.db
 data/*.bak.*
 data/.fuse_hidden*
 data/cv_bullets.txt

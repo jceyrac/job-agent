@@ -1340,27 +1340,6 @@ class JobStorage:
         clauses.append("(c.id IS NULL OR c.status != 'blacklisted')")
 
         if pre_filter:
-            loc_kws = pre_filter.get("location_contains", [])
-            if loc_kws:
-                # Any keyword matching location OR base_location is sufficient; NULL base_location is ignored
-                or_parts = " OR ".join(
-                    "(LOWER(j.location) LIKE ? OR (j.base_location IS NOT NULL AND LOWER(j.base_location) LIKE ?))"
-                    for _ in loc_kws
-                )
-                clauses.append(f"({or_parts})")
-                for kw in loc_kws:
-                    params += [f"%{kw.lower()}%", f"%{kw.lower()}%"]
-
-            excl_loc = pre_filter.get("exclude_location_contains", [])
-            if excl_loc:
-                not_parts = " AND ".join(
-                    "(LOWER(j.location) NOT LIKE ? AND (j.base_location IS NULL OR LOWER(j.base_location) NOT LIKE ?))"
-                    for _ in excl_loc
-                )
-                clauses.append(f"({not_parts})")
-                for kw in excl_loc:
-                    params += [f"%{kw.lower()}%", f"%{kw.lower()}%"]
-
             title_kws = pre_filter.get("title_contains", [])
             if title_kws:
                 or_parts = " OR ".join("LOWER(j.title) LIKE ?" for _ in title_kws)

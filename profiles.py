@@ -171,13 +171,6 @@ def load_active_profile(db) -> "SearchProfile":
         db.set_config("active_profile_id", seed.id)
         return seed
     profile = SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
-    # Backfill scoring_context from the seed profile when the stored row
-    # predates the preference-model v3 field (onboarding gate depends on it).
-    if not profile.scoring_context.strip():
-        seed = ALL_PROFILES.get(pid, ACTIVE_PROFILE)
-        if seed and seed.scoring_context.strip():
-            profile.scoring_context = seed.scoring_context
-            db.upsert_profile(profile)
     return profile
 
 
@@ -187,6 +180,11 @@ def load_active_profile(db) -> "SearchProfile":
 
 # The single search profile the app manages. A rich scoring_context is the
 # primary preference-modelling mechanism; pre_filter carries only hard exclusions.
+#
+# ⚠️  ONE-TIME BOOTSTRAP SEED — consulted exactly once when a profile_id has no
+# existing DB row. Once seeded, all further edits go through the Settings UI
+# (Profile Editor in tracker_views/settings.py) or a direct DB write. Editing
+# this file after first run has no effect on a running instance.
 
 UNIFIED_JC = SearchProfile(
     id="unified_jc",
