@@ -170,10 +170,9 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Scoring Pipeline Integrity** (`specs/020-scoring-pipeline-integrity/`)
-- Spec: `specs/020-scoring-pipeline-integrity/spec.md`
-- Plan: `specs/020-scoring-pipeline-integrity/plan.md`
-- Research: `specs/020-scoring-pipeline-integrity/research.md`
-- Data Model: `specs/020-scoring-pipeline-integrity/data-model.md`
-- Quickstart: `specs/020-scoring-pipeline-integrity/quickstart.md`
+Current feature: **LinkedIn Workplace-Type HTML Detection** (`specs/021-workplace-type-html-detection/`)
+- Spec: `specs/021-workplace-type-html-detection/spec.md`
+- Plan: `specs/021-workplace-type-html-detection/plan.md`
+- Research: `specs/021-workplace-type-html-detection/research.md`
+- Status: **Closed** — approach not viable (signal not in JobSpy data)
 <!-- SPECKIT END -->
