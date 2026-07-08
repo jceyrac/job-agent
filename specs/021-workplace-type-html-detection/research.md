@@ -51,3 +51,21 @@ The `unknown` fallback from the 020-followon (`is_remote + concrete city` → `w
 Options to revisit:
 1. **Fix JobSpy upstream** — teach jobspy to extract LinkedIn's workplace badge from the job page DOM (requires changes in the jobspy library, not this repo).
 2. **Extractor LLM refinement** — the current approach already has the LLM classify from base location + description. The main weakness (pre-020-followon) was the scraper asserting "remote" off noisy `is_remote` and the LLM trusting that hint. With the hint now `unknown` for these ambiguous cases, the LLM makes an independent judgment — imperfect but no longer anchored to a false signal.
+
+---
+
+## Investigation 5 (2026-07-08): Two-format probe — `description_format="html"`
+
+**Method**: Ran `jobspy.scrape_jobs(site_name=["linkedin"], location="Netherlands", results_wanted=15, linkedin_fetch_description=True, description_format="html")` to test whether the alternate output format exposes country `<span>` elements or workplace type metadata. Compared against the default `description_format="markdown"` run from Investigation 1.
+
+**Findings**:
+
+1. **HTML tags ARE present** under `description_format="html"`. The `description` field contains real `<div>`, `<p>`, `<ul>`, `<li>`, `<strong>`, `<span>` markup. Under the default format, the field is tag-free plain text.
+
+2. **Country `<span>` regex matched 0/15.** The `<span>` tags in the HTML format contain only `&nbsp;` entities — not country names. Countries appear as emoji-prose in `<p>`/`<div>` body text (e.g. "📍Amsterdam"). The `_extract_country_from_html` regex has therefore NEVER matched — it is pattern-dead in BOTH formats, not a format-selection bug.
+
+3. **No workplace type column exists.** `work_from_home_type` is `None` for all 15 rows in both formats. `COLUMNS` output is identical across formats — no new field appears. The LinkedIn workplace type badge is top-card UI chrome rendered client-side, absent from JobSpy's returned payload regardless of output format.
+
+4. **Workplace words appear as PROSE** (not structured): "Hybrid 2 days per week in the office", "this full-time, on-site role", "Hybrid working setup", "remote-first", etc. These are body text, not extractable signals.
+
+**Conclusion**: Closure now confirmed against BOTH output formats. The country extraction regex and the workplace pill are both absent from JobSpy's data stream, regardless of `description_format`. The `unknown` fallback from the 020-followon is the correct resting state.

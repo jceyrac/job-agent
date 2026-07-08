@@ -170,9 +170,7 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **LinkedIn Workplace-Type HTML Detection** (`specs/021-workplace-type-html-detection/`)
-- Spec: `specs/021-workplace-type-html-detection/spec.md`
-- Plan: `specs/021-workplace-type-html-detection/plan.md`
-- Research: `specs/021-workplace-type-html-detection/research.md`
-- Status: **Closed** — approach not viable (signal not in JobSpy data)
+Last completed: **Scoring Pipeline Integrity** (`specs/020-scoring-pipeline-integrity/`)
+- Spec 021 (HTML workplace detection): closed — approach not viable
+- No active feature — ready for next spec
 <!-- SPECKIT END -->
