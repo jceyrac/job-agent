@@ -102,9 +102,19 @@ def dataframe_to_postings(df, source: str) -> list[JobPosting]:
         if "hybrid" in wfh:
             work_mode = "hybrid"
             location = f"{raw_loc} (Hybrid)" if raw_loc else "Hybrid"
-        elif is_remote or not raw_loc or "remote" in raw_loc.lower():
+        elif not raw_loc or "remote" in raw_loc.lower():
+            # No location, or the location string literally says remote → genuine remote.
             work_mode = "remote"
             location = "Remote" if not raw_loc else raw_loc
+        elif is_remote:
+            # JobSpy's is_remote is noisy on LinkedIn: often True even when the role
+            # has a concrete city location and is actually hybrid/on-site. A truthy
+            # flag + a real location is ambiguous — do NOT assert "remote". Emit an
+            # honest "unknown" and let the extractor decide from base_location +
+            # description. (SPEC 021 will upgrade this to read LinkedIn's HTML
+            # workplace pill.)
+            work_mode = "unknown"
+            location = raw_loc
         else:
             work_mode = "on-site"
             location = raw_loc

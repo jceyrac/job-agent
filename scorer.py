@@ -185,11 +185,26 @@ Given the job below, return ONLY a JSON object with these fields:
 }
 
 ## Work mode
-Detect work mode from title, location, and description:
-- "remote" → no adjustment
-- "hybrid" → subtract 1 from score (mention "Hybrid" in reason)
-- "on-site" → subtract 2 from score (mention "On-site" in reason)
-- "unknown" → no adjustment, note "Mode non précisé" in reason
+Detect work mode from title, location, description, and the source-detected hint:
+
+- "remote"   : the role is fully remote, no office presence required. Description says
+               "remote", "work from home", "distributed", or "anywhere".
+- "hybrid"   : the role requires some office presence (1-3 days/week) or is described
+               as "hybrid", "flexible", "partly remote".
+- "on-site"  : the role requires full-time office presence at a specific location.
+- "unknown"  : not enough information to determine.
+
+**IMPORTANT — how to use the source-detected hint**:
+- When the hint is "remote", "hybrid", or "on-site": TRUST it unless the
+  description EXPLICITLY contradicts it (hint "remote" but "in office 3
+  days/week" → "hybrid"; hint "hybrid" but "fully remote, work from anywhere"
+  → "remote").
+- When the hint is "unknown": do NOT default to "remote". Classify from Base
+  location + description. A concrete city/country in Base location with no
+  explicit remote language means office presence is expected → "on-site" (or
+  "hybrid" if any flexibility / partial-remote is mentioned). Choose "remote"
+  only when the location literally says Remote/Worldwide or the description
+  explicitly signals fully-remote / distributed / work-from-anywhere.
 
 Set work_mode to exactly one of: "remote", "hybrid", "on-site", "unknown"
 
@@ -569,11 +584,18 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         return job
 
     base_loc = job.base_location or ""
+    # Forward scraper-detected work mode as an authoritative hint.
+    # The scraper may misclassify (Scenario B: JobSpy doesn't populate
+    # work_from_home_type for LinkedIn, so is_remote=True drives a false
+    # "remote" for hybrid/on-site roles). The LLM is instructed to trust
+    # this hint UNLESS the description explicitly contradicts it.
+    source_mode = job.work_mode or "unknown"
     prompt = (
         f"Title: {job.title}\n"
         f"Company: {job.company}\n"
         f"Location: {job.location}\n"
         f"Base location: {base_loc}\n"
+        f"Source-detected work mode: {source_mode}\n"
         f"Description: {job.description or ''}"
     )
     messages = [
