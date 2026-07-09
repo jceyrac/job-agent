@@ -170,7 +170,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Last completed: **Scoring Pipeline Integrity** (`specs/020-scoring-pipeline-integrity/`)
-- Spec 021 (HTML workplace detection): closed — approach not viable
-- No active feature — ready for next spec
+Current feature: **HeadHunter Network Scraper** (`specs/023-hh-network-scraper/`)
+- Spec: `specs/023-hh-network-scraper/spec.md`
+- Plan: `specs/023-hh-network-scraper/plan.md`
+- Tasks: `specs/023-hh-network-scraper/tasks.md`
 <!-- SPECKIT END -->

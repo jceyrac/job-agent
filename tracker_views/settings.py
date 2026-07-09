@@ -607,7 +607,7 @@ def _render_profile_editor(db):
                 value="\n".join((wmg.get("remote", {}) or {}).get("countries", [])),
                 height=150,
             )
-            GEO_ZONES = ["europe", "global_remote", "us_only", "apac", "latam", "unknown"]
+            GEO_ZONES = ["europe", "russia_cis", "global_remote", "us_only", "apac", "latam", "unknown"]
             remote_geo_zones = st.multiselect(
                 "Remote geo-zone fallback (used when a remote role's country is unknown)",
                 GEO_ZONES,

@@ -52,7 +52,8 @@ Infer from title, description, or job type indicators:
 Infer geo_zone from the Base location field, then the Location field, then the description.
 Priority rule: if Base location names a specific country or city, use that country to set geo_zone — even if work arrangement is remote.
 
-- "europe"        : Base location or description mentions EU country, UK, Germany, France, Spain, Portugal, Netherlands, Switzerland, Poland, Turkey, CET/CEST/EET timezone, "Europe", "EMEA" without US restriction, UTC+0 to UTC+4
+- "europe"        : Base location or description mentions EU country, UK, Germany, France, Spain, Portugal, Netherlands, Switzerland, Poland, Turkey, CET/CEST/EET timezone, "Europe", "EMEA" without US restriction, UTC+0 to UTC+4 (excluding Russia and CIS countries — use russia_cis)
+- "russia_cis"    : Base location or description mentions Russia, Belarus, Kazakhstan, Uzbekistan, Kyrgyzstan, Armenia, Georgia, Moscow/SPb, a .ru/.by/.kz domain, "Russia", "CIS", MSK timezone (UTC+3), "Russian Federation"
 - "us_only"       : Base location or description mentions US city/state, "United States", "US only", "must be authorized to work in the US", "US-based", EST/PST/CST/MST timezone, UTC-5 to UTC-8, "Americas", "North America only"
 - "apac"          : Base location or description mentions Asia, Singapore, Hong Kong, Japan, South Korea, Australia, "UTC+5 to UTC+12", APAC
 - "latam"         : Base location or description mentions Latin America, Brazil, Mexico, UTC-3 to UTC-5 (excluding US)
@@ -97,6 +98,7 @@ If multiple countries are listed, return the primary one.
 
 ## Summary
 Write 2-3 sentences covering: company mission, key responsibilities, tech stack/context.
+Always write the summary in English, regardless of the language of the description.
 If description is empty → summary = "Description non disponible — consulter l'offre directement."
 
 Always return a score — never skip.
@@ -141,6 +143,10 @@ Detection signals:
 - "Fluent in [language]" / "[language] required"
 - "Deutschkenntnisse erforderlich" → german
 - "Maîtrise du français" → french
+- Description written entirely in Russian / "Знание русского языка" /
+  "Требуется свободное владение русским языком" → russian
+- Description written entirely in Turkish / "Türkçe" /
+  "İyi derecede Türkçe" → turkish
 - Job description written entirely in non-English with no English version → that language
 - Multiple languages explicitly required → "multiple"
 - No language mentioned and description is in English → "english"
@@ -156,11 +162,11 @@ Respond with JSON only:
   "work_mode": "<remote|hybrid|on-site|unknown>",
   "company_size": "<startup|scaleup|sme|large|unknown>",
   "contract_type": "<permanent|freelance|contract|internship|unknown>",
-  "geo_zone": "<europe|us_only|global_remote|apac|latam|unknown>",
+  "geo_zone": "<europe|russia_cis|us_only|global_remote|apac|latam|unknown>",
   "country_code": "<ISO 3166-1 alpha-2 country code, e.g. CH, DE, FR, US — or null if fully remote/unknown>",
   "company_country": "<country name or unknown>",
   "industry_sector": "<one of the 15 codes above>",
-  "language_required": "<english|french|german|italian|spanish|multiple|unknown>"
+  "language_required": "<english|french|german|italian|spanish|russian|turkish|multiple|unknown>"
 }"""
 
 EXTRACTION_PROMPT = """You are an extraction system. Your job is to read a job description and fill
@@ -173,7 +179,7 @@ Given the job below, return ONLY a JSON object with these fields:
   "industry_sector": "<controlled code from list below>",
   "language_required": "<code from list below>",
   "work_mode": "<remote|hybrid|on-site|unknown>",
-  "geo_zone": "<europe|us_only|global_remote|apac|latam|unknown>",
+  "geo_zone": "<europe|russia_cis|us_only|global_remote|apac|latam|unknown>",
   "country_code": "<ISO 3166-1 alpha-2 country code, e.g. CH, DE, FR, US — or null if fully remote/unknown>",
   "company_size": "<startup|scaleup|sme|large|unknown>",
   "contract_type": "<permanent|freelance|contract|unknown>",
@@ -228,7 +234,8 @@ Infer from title, description, or job type indicators:
 Infer geo_zone from the Base location field, then the Location field, then the description.
 Priority rule: if Base location names a specific country or city, use that country to set geo_zone — even if work arrangement is remote.
 
-- "europe"        : Base location or description mentions EU country, UK, Germany, France, Spain, Portugal, Netherlands, Switzerland, Poland, Turkey, CET/CEST/EET timezone, "Europe", "EMEA" without US restriction, UTC+0 to UTC+4
+- "europe"        : Base location or description mentions EU country, UK, Germany, France, Spain, Portugal, Netherlands, Switzerland, Poland, Turkey, CET/CEST/EET timezone, "Europe", "EMEA" without US restriction, UTC+0 to UTC+4 (excluding Russia and CIS countries — use russia_cis)
+- "russia_cis"    : Base location or description mentions Russia, Belarus, Kazakhstan, Uzbekistan, Kyrgyzstan, Armenia, Georgia, Moscow/SPb, a .ru/.by/.kz domain, "Russia", "CIS", MSK timezone (UTC+3), "Russian Federation"
 - "us_only"       : Base location or description mentions US city/state, "United States", "US only", "must be authorized to work in the US", "US-based", EST/PST/CST/MST timezone, UTC-5 to UTC-8, "Americas", "North America only"
 - "apac"          : Base location or description mentions Asia, Singapore, Hong Kong, Japan, South Korea, Australia, "UTC+5 to UTC+12", APAC
 - "latam"         : Base location or description mentions Latin America, Brazil, Mexico, UTC-3 to UTC-5 (excluding US)
@@ -299,6 +306,10 @@ Detection signals:
 - "Fluent in [language]" / "[language] required"
 - "Deutschkenntnisse erforderlich" → german
 - "Maîtrise du français" → french
+- Description written entirely in Russian / "Знание русского языка" /
+  "Требуется свободное владение русским языком" → russian
+- Description written entirely in Turkish / "Türkçe" /
+  "İyi derecede Türkçe" → turkish
 - Job description written entirely in non-English with no English version → that language
 - Multiple languages explicitly required → "multiple"
 - No language mentioned and description is in English → "english"
@@ -306,6 +317,7 @@ Detection signals:
 
 ## Summary
 Write 2-3 sentences covering: company mission, key responsibilities, tech stack/context.
+Always write the summary in English, regardless of the language of the description.
 If description is empty → summary = "Description non disponible — consulter l'offre directement."
 
 ## Company summary
@@ -329,7 +341,10 @@ Look for explicit salary or compensation signals in the description:
   - €1 = EUR 1 (no conversion)
   - CHF 1 ≈ EUR 1 (treat as 1:1 for rough parity)
   - $1 USD ≈ EUR 0.92 (multiply by 0.92, round to int)
+  - ₽1 RUB ≈ EUR 0.0115 (divide by 87, round to int)
   - "80k" or "80,000" with € or EUR context → 80000
+- Salaries stated per month (common on hh.ru) MUST be multiplied by 12
+  before normalizing to comp_annual_eur.
 - If no salary signal is present, set both to null.
 
 Return ONLY the JSON object — no preamble, no explanation, no markdown."""
@@ -391,7 +406,8 @@ _VALID_SECTORS = {
     "consulting", "education", "media", "energy", "other",
 }
 _VALID_LANGUAGES = {
-    "english", "french", "german", "italian", "spanish", "multiple", "unknown",
+    "english", "french", "german", "italian", "spanish",
+    "russian", "turkish", "multiple", "unknown",
 }
 
 

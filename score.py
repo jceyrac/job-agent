@@ -129,6 +129,44 @@ MOCK_JOBS = [
         "base_location": "Zurich, Switzerland",
         "description": "6-month product internship, Swiss startup.",
     },
+    # ── Spec 023: hh_network mock cases ──
+    {
+        # Russian-language-required → Tier-0 language reject (new vocab)
+        "title": "Product Manager",
+        "company": "YandexLike",
+        "location": "Moscow, Russia (Hybrid)",
+        "base_location": "Moscow, Russia",
+        "description": "Требуется свободное владение русским языком. "
+                       "Продуктовая роль в крупной технологической компании.",
+    },
+    {
+        # English-speaking, well-paid Moscow remote → passes gates, LLM decides
+        "title": "Senior Product Manager — DeFi",
+        "company": "MoscowChain",
+        "location": "Remote (Russia)",
+        "base_location": "Moscow, Russia",
+        "description": "Russian DeFi platform, English-speaking team. Fully remote "
+                       "within Russia. Compensation: 1,000,000 RUB per month. "
+                       "Series B, 150 employees.",
+    },
+    {
+        # Moscow on-site → Tier-0 per-mode geography reject
+        "title": "Senior Product Manager",
+        "company": "MoscowBank",
+        "location": "Moscow, Russia (On-site)",
+        "base_location": "Moscow, Russia",
+        "description": "On-site product role, 5 days a week in our Moscow office. "
+                       "English-speaking international team.",
+    },
+    {
+        # English-speaking Kazakh Web3 remote → passes, scores on merit
+        "title": "Senior Product Manager — Web3",
+        "company": "AstanaChain",
+        "location": "Remote (Kazakhstan)",
+        "base_location": "Astana, Kazakhstan",
+        "description": "English-speaking Web3 infrastructure company in Astana. "
+                       "Fully remote. Compensation in USDC. Series A, 40 employees.",
+    },
 ]
 
 
@@ -146,6 +184,23 @@ def _run_mock(profile) -> None:
     """Score test jobs using the real production path: extract → evaluate. No DB writes."""
     from models import JobPosting
 
+    # ── Spec 023: temporarily add CIS countries to the mock profile ──────
+    # The seed profile doesn't include Russia/CIS in work_mode_geography
+    # (those are Part C prose-path edits, not code). Patch for mock runs only.
+    wmg = profile.work_mode_geography or {}
+    remote = dict(wmg.get("remote", {}) or {})
+    remote_countries = list(remote.get("countries", []) or [])
+    for c in ["Russia", "Kazakhstan", "Georgia", "Armenia", "Uzbekistan"]:
+        if c not in remote_countries:
+            remote_countries.append(c)
+    remote["countries"] = remote_countries
+    geo_zones = list(remote.get("geo_zones", []) or [])
+    if "russia_cis" not in geo_zones:
+        geo_zones.append("russia_cis")
+    remote["geo_zones"] = geo_zones
+    wmg["remote"] = remote
+    profile.work_mode_geography = wmg
+
     expectations = [
         (5, 7, "FELFEL — food-tech hybrid, CH employer → tier 4–5"),
         (6, 8, "Consensys MetaMask — pure Web3 remote → CV stretch"),
@@ -158,6 +213,11 @@ def _run_mock(profile) -> None:
         (1, 2, "USRemoteCo — US remote, no banned_countries rule → per-mode geography reject (score 2)"),
         (1, 1, "BerlinBank — German required, not spoken → Tier-0 language reject (score 1)"),
         (1, 1, "InternCo — internship not in allowed_contract_types → Tier-0 contract reject (score 1)"),
+        # ── Spec 023: hh_network cases ──
+        (1, 1, "YandexLike — russian required, not spoken → Tier-0 language reject"),
+        (4, 8, "MoscowChain — EN remote RU, ~€138k/yr parsed → gates pass, LLM decides"),
+        (1, 2, "MoscowBank — on-site RU → per-mode geography reject"),
+        (4, 8, "AstanaChain — Web3 remote KZ → gates pass, LLM decides"),
     ]
 
     print(f"\n=== MOCK TEST: {profile.name} ({profile.id}) ===")
