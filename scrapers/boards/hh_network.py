@@ -12,7 +12,7 @@ Spec 023.
 
 import re
 import time
-from urllib.parse import quote_plus
+import re
 
 import requests
 from bs4 import BeautifulSoup
@@ -140,7 +140,8 @@ class HhNetworkScraper(BaseScraper):
 
         for domain, country in HH_DOMAINS.items():
             for query in titles:
-                search_url = f"https://{domain}/vacancies/{quote_plus(query)}"
+                # hh.ru uses underscores in URL paths (not %20)
+                search_url = f"https://{domain}/vacancies/{query.replace(' ', '_')}"
                 try:
                     resp = requests.get(search_url, headers=HEADERS, timeout=30)
                     if resp.status_code != 200:
