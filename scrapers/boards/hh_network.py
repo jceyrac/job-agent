@@ -1,8 +1,8 @@
-"""HeadHunter network scraper — hh.ru, hh.kz, hh.by, hh.uz, headhunter.ge, headhunter.kg.
+"""HeadHunter scraper — hh.ru, Moscow-only.
 
-Scrapes the server-side rendered (SSR) search pages using stable data-qa
-attributes. The legacy public REST API at api.hh.ru returned 403 on first
-run; the web frontend is the viable data source (confirmed via HAR).
+Scrapes the server-side rendered (SSR) search page using stable data-qa
+attributes. The search/vacancy endpoint supports query params (area, page,
+search_field, items_on_page) — confirmed working 2026-07-09.
 
 Read-only discovery — the applicant-side API was closed Dec 2024.
 No auth required. Egress via existing gluetun-scrape proxy.
@@ -12,7 +12,6 @@ Spec 023.
 
 import re
 import time
-import re
 
 import requests
 from bs4 import BeautifulSoup
@@ -22,17 +21,10 @@ from scrapers.base import BaseScraper
 
 # ── Config ─────────────────────────────────────────────────────────────────
 HEADERS = {"User-Agent": "job-agent/1.0 (jceyrac@pm.me)"}
-DETAIL_SLEEP = 0.5  # seconds between detail calls
-
-# Country-level domains for each area in the HeadHunter network.
-HH_DOMAINS = {
-    "hh.ru":          "Russia",
-    "hh.kz":          "Kazakhstan",
-    "hh.by":          "Belarus",
-    "headhunter.ge":  "Georgia",
-    "hh.uz":          "Uzbekistan",
-    "headhunter.kg":  "Kyrgyzstan",
-}
+DETAIL_SLEEP = 0.5       # seconds between detail calls
+ITEMS_PER_PAGE = 50       # max per SERP page
+MAX_PAGES = 3             # 150 results max per query
+MOSCOW_AREA = "1"         # hh.ru area ID for Moscow
 
 # Latin PM keywords for the Option-A counter (observability only).
 _LATIN_PM_KEYWORDS = [
@@ -53,7 +45,7 @@ class HhNetworkScraper(BaseScraper):
             if any(kw in p.title.lower() for kw in _LATIN_PM_KEYWORDS)
         )
 
-    def _parse_serp(self, html: str, domain: str, country: str) -> list[dict]:
+    def _parse_serp(self, html: str) -> list[dict]:
         """Parse SSR search results page into a list of raw job dicts.
 
         Uses the stable data-qa attributes that hh.ru renders server-side.
@@ -81,7 +73,7 @@ class HhNetworkScraper(BaseScraper):
             if title_el.name == "a" and title_el.get("href"):
                 url = title_el["href"]
             if url and url.startswith("/"):
-                url = f"https://{domain}{url}"
+                url = f"https://hh.ru{url}"
             if not url or "adsrv.hh.ru" in url:
                 continue
 
@@ -99,10 +91,10 @@ class HhNetworkScraper(BaseScraper):
                 work_mode_hint = "remote"
 
             # Location with country context
-            if location_raw and country:
-                full_location = f"{location_raw}, {country}"
+            if location_raw:
+                full_location = f"{location_raw}, Russia"
             else:
-                full_location = location_raw or country
+                full_location = "Moscow, Russia"
 
             results.append({
                 "title": title,
@@ -132,26 +124,36 @@ class HhNetworkScraper(BaseScraper):
             return ""
 
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
-        """Fetch vacancies across all configured hh network domains × title queries."""
+        """Fetch Moscow vacancies from hh.ru via SSR search.
+
+        Uses the /search/vacancy endpoint which supports area filtering
+        (area=1 = Moscow) and title-only search (search_field=name).
+        """
         titles = list(job_filter.titles) if job_filter.titles else ["product manager"]
         postings: list[JobPosting] = []
         seen_urls: set[str] = set()
         n_fetched = 0
 
-        for domain, country in HH_DOMAINS.items():
-            for query in titles:
-                # hh.ru uses underscores in URL paths (not %20)
-                search_url = f"https://{domain}/vacancies/{query.replace(' ', '_')}"
+        for query in titles:
+            for page in range(MAX_PAGES):
+                search_url = (
+                    f"https://hh.ru/search/vacancy"
+                    f"?area={MOSCOW_AREA}"
+                    f"&text={requests.utils.quote(query)}"
+                    f"&search_field=name"
+                    f"&items_on_page={ITEMS_PER_PAGE}"
+                    f"&page={page}"
+                )
                 try:
                     resp = requests.get(search_url, headers=HEADERS, timeout=30)
                     if resp.status_code != 200:
-                        print(f"  ⚠️  [HeadHunter] {domain} returned {resp.status_code} "
-                              f"for query '{query}' — skipping")
-                        continue
+                        print(f"  ⚠️  [HeadHunter] returned {resp.status_code} "
+                              f"for '{query}' page {page} — stopping")
+                        break
 
-                    jobs = self._parse_serp(resp.text, domain, country)
+                    jobs = self._parse_serp(resp.text)
                     n_fetched += len(jobs)
-                    print(f"  [HeadHunter] {domain}/{query}: {len(jobs)} results")
+                    print(f"  [HeadHunter] '{query}' page {page}: {len(jobs)} results")
 
                     for j in jobs:
                         if j["url"] in seen_urls:
@@ -176,9 +178,15 @@ class HhNetworkScraper(BaseScraper):
                             tags=[],
                         ))
 
+                    # Stop if fewer results than page size
+                    if len(jobs) < ITEMS_PER_PAGE:
+                        break
+
+                    time.sleep(0.3)  # courtesy delay between pages
+
                 except Exception as e:
-                    print(f"  ⚠️  [HeadHunter] {domain} error for '{query}': {e}")
-                    continue
+                    print(f"  ⚠️  [HeadHunter] error for '{query}' page {page}: {e}")
+                    break
 
         n_latin = self._latin_title_count(postings)
         n_cyrillic = len(postings) - n_latin
