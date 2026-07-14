@@ -211,6 +211,7 @@ def _render_list():
     all_sizes = sorted({j.get("company_size", "unknown") for j in jobs_raw})
     all_sectors = sorted({j.get("industry_sector", "other") for j in jobs_raw})
     all_languages = sorted({j.get("language_required", "unknown") for j in jobs_raw})
+    all_contract_types = sorted({j.get("contract_type", "unknown") for j in jobs_raw})
     all_sources = sorted({j.get("source", "") for j in jobs_raw if j.get("source")})
 
     with st.sidebar:
@@ -222,6 +223,7 @@ def _render_list():
         sector_filter = st.multiselect("Sector", all_sectors, key="jobs_sector",
                                         format_func=lambda c: sector_label(c))
         language_filter = st.multiselect("Language", all_languages, key="jobs_lang")
+        contract_type_filter = st.multiselect("Contract type", all_contract_types, key="jobs_ct")
 
         st.markdown("---")
 
@@ -255,6 +257,7 @@ def _render_list():
         company_size_filter=company_size_filter,
         sector_filter=sector_filter,
         language_filter=language_filter,
+        contract_type_filter=contract_type_filter,
         source_filter=source_filter,
         source_type_filter=source_type,
         status_filter=status_filter,
@@ -268,6 +271,7 @@ def _render_list():
         tuple(geo_zone_filter or ()), tuple(country_code_filter or ()),
         tuple(company_size_filter or ()),
         tuple(sector_filter or ()), tuple(language_filter or ()),
+        tuple(contract_type_filter or ()),
         tuple(source_filter or ()), source_type, tuple(status_filter or ()),
         show_archived, per_page,
     )

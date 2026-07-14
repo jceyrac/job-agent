@@ -270,6 +270,7 @@ def apply_filters(
     company_size_filter: list[str] | None = None,
     sector_filter: list[str] | None = None,
     language_filter: list[str] | None = None,
+    contract_type_filter: list[str] | None = None,
     source_filter: list[str] | None = None,
     source_type_filter: str = "All",
     status_filter: list[str] | None = None,
@@ -320,6 +321,8 @@ def apply_filters(
         result = [j for j in result if (j.get("industry_sector") or "other") in sector_filter]
     if language_filter:
         result = [j for j in result if (j.get("language_required") or "unknown") in language_filter]
+    if contract_type_filter:
+        result = [j for j in result if (j.get("contract_type") or "unknown") in contract_type_filter]
     if source_filter:
         result = [j for j in result if j.get("source") in source_filter]
     if source_type_filter == "Monitored companies":
