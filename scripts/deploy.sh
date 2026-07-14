@@ -8,8 +8,23 @@ cd "$DEPLOY_DIR"
 echo "=== Pulling latest code ==="
 git pull origin main
 
-echo "=== Rebuilding image ==="
-docker compose build
+echo "=== Rebuilding images (all services) ==="
+# Build every service by name — not by profile.
+# Profiles (e.g. "manual" on agent/email-monitor) bypass `docker compose build`
+# with no args, so listing names explicitly guarantees nothing is skipped.
+docker compose build tracker agent email-monitor
+
+echo "=== Verifying images are current ==="
+# Check that the agent image was built within the last 5 minutes (this run).
+# If it's older, something went wrong — abort before restarting.
+AGENT_CREATED=$(docker image inspect job-agent-agent --format '{{.Created}}' 2>/dev/null)
+if [ -z "$AGENT_CREATED" ]; then
+    echo "ERROR: job-agent-agent image not found after build!"
+    exit 1
+fi
+echo "  agent image built: $AGENT_CREATED"
+TRACKER_CREATED=$(docker image inspect job-agent-tracker --format '{{.Created}}' 2>/dev/null)
+echo "  tracker image built: $TRACKER_CREATED"
 
 echo "=== Restarting tracker ==="
 docker compose up -d tracker
