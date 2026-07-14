@@ -12,6 +12,7 @@ Spec 023.
 
 import re
 import time
+from datetime import date
 
 import requests
 from bs4 import BeautifulSoup
@@ -172,6 +173,7 @@ class HhNetworkScraper(BaseScraper):
                             location=j["location"],
                             url=j["url"],
                             description=description or None,
+                            posted_date=date.today(),
                             salary=j.get("salary_text"),
                             work_mode=j["work_mode_hint"],
                             base_location=base_location,
