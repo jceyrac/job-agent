@@ -41,7 +41,7 @@ def _render_list():
         exclude_bl = st.checkbox("Exclude blacklisted", value=True, key="co_exclude_bl")
         status_filter = st.multiselect(
             "Status", COMPANY_STATUSES, key="co_status",
-            default=[s for s in COMPANY_STATUSES if s != "blacklisted"],
+            default=[],
         )
         search = st.text_input("Search by name", key="co_search")
 
@@ -79,13 +79,14 @@ def _render_list():
             key="co_sort",
         )
 
-    st.markdown("---")
-    st.markdown("**Monitoring**")
-    mon_status = st.radio(
-        "Monitoring status",
-        ["📡 Any monitored", "All", "🔍 watch_pending", "⏸ watch_ready", "✅ watching", "⛔ unsuitable"],
-        key="co_mon_status",
-    )
+        st.markdown("---")
+        st.markdown("**Monitoring**")
+        mon_status_filter = st.multiselect(
+            "Monitoring status",
+            ["unmonitored", "watch_pending", "watch_ready", "watching", "watch_unsuitable"],
+            default=[],
+            key="co_mon_status",
+        )
 
     last_ix_days = _LAST_IX_DAYS.get(last_ix_choice)
     only_never = (last_ix_choice == "Never interacted")
@@ -102,18 +103,9 @@ def _render_list():
     )
 
     # Filter by monitoring_status in-memory
-    mon_status_map = {
-        "🔍 watch_pending": "watch_pending",
-        "⏸ watch_ready":   "watch_ready",
-        "✅ watching":      "watching",
-        "⛔ unsuitable":    "watch_unsuitable",
-    }
-    if mon_status in mon_status_map:
+    if mon_status_filter:
         companies = [c for c in companies
-                     if c.get("monitoring_status") == mon_status_map[mon_status]]
-    elif mon_status == "📡 Any monitored":
-        companies = [c for c in companies
-                     if c.get("monitoring_status") in ("watch_pending", "watch_ready", "watching", "watch_unsuitable")]
+                     if c.get("monitoring_status") in mon_status_filter]
 
     if only_never:
         companies = [c for c in companies if not c.get("last_interaction_at")]
