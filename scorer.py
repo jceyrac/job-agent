@@ -696,7 +696,6 @@ _EVAL_PASSTHROUGH_KEYS = [
     "country_code",
 ]
 
-
 def _evaluation_result(score: int, reason: str, scored_by: str, job: JobPosting,
                        profile, comp_flag: int = 0) -> dict:
     """Build a result dict from evaluation outcome + job's pre-extracted fields."""
