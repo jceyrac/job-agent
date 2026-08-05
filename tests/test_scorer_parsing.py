@@ -224,21 +224,27 @@ EXTRACTION_TESTS = [
 
 
 class _EvalProfile:
-    excluded_languages  = ["german"]
-    excluded_sectors    = ["pharma", "retail"]
-    allowed_countries   = ["Switzerland"]
-    banned_countries    = ["United States", "Canada"]
-    hybrid_ok_countries = ["Switzerland"]
-    allowed_work_modes  = ["remote", "hybrid", "unknown"]
-    scoring_context     = "Test profile with strict filters."
+    excluded_languages     = ["german"]
+    excluded_sectors       = ["pharma", "retail"]
+    allowed_work_modes     = ["remote", "hybrid", "unknown"]
+    allowed_contract_types = ["permanent", "freelance", "contract", "unknown"]
+    languages_spoken       = ["english", "french"]
+    scoring_context        = "Test profile with strict filters."
+    work_mode_geography = {
+        "remote": {"countries": ["Switzerland"], "geo_zones": ["europe"]},
+        "hybrid": {"countries": ["Switzerland"], "geo_zones": []},
+        "on-site": {"countries": ["Switzerland"], "geo_zones": []},
+    }
 
 
 class _EvalProfileNoFilters:
-    excluded_languages = []
-    excluded_sectors   = []
-    allowed_countries  = None
-    allowed_work_modes = ["remote", "hybrid", "unknown", "on-site"]
-    scoring_context    = ""
+    excluded_languages     = []
+    excluded_sectors       = []
+    allowed_countries      = None
+    allowed_work_modes     = ["remote", "hybrid", "unknown", "on-site"]
+    allowed_contract_types = []
+    languages_spoken       = []
+    scoring_context        = ""
 
 
 def _eval_job(**overrides) -> JobPosting:
@@ -276,11 +282,12 @@ def test_eval_tier0_sector_exclusion():
 
 
 def test_eval_tier0_country_filter():
+    """Remote job in United States blocked by Swiss-only work_mode_geography allowlist."""
     job = _eval_job(company_country="United States")
     r = evaluate_for_profile(job, _EvalProfile())
     assert r["score"] == 2
     assert r["scored_by"] == "tier_0"
-    assert "country" in r["reason"]
+    assert "not available" in r["reason"]
 
 
 def test_eval_tier0_country_unknown_passes():
@@ -341,21 +348,21 @@ def test_eval_tier0_allowed_countries_none_means_no_restriction():
 
 
 def test_eval_tier0_banned_country():
-    """global_remote job with company_country='United States' is blocked by denylist."""
+    """Remote job in United States blocked by geography allowlist (old banned_countries model replaced by work_mode_geography)."""
     job = _eval_job(company_country="United States", geo_zone="global_remote")
     r = evaluate_for_profile(job, _EvalProfileBannedOnly())
-    assert r["score"] == 1
+    assert r["score"] == 2
     assert r["scored_by"] == "tier_0"
-    assert "banned country" in r["reason"]
+    assert "not available" in r["reason"]
 
 
 def test_eval_tier0_hybrid_outside_ch():
-    """Hybrid role in Ireland → score 2 with reason mentioning hybrid outside allowed countries."""
+    """Hybrid role in Ireland → score 2 with geography filter (old hybrid_ok_countries replaced by work_mode_geography)."""
     job = _eval_job(work_mode="hybrid", company_country="Ireland")
     r = evaluate_for_profile(job, _EvalProfileHybridGate())
     assert r["score"] == 2
     assert r["scored_by"] == "tier_0"
-    assert "hybrid outside allowed countries" in r["reason"]
+    assert "not available" in r["reason"]
 
 
 def test_eval_tier0_hybrid_in_ch_passes():
@@ -389,43 +396,57 @@ def test_eval_tier0_unknown_country_passes_both():
 
 
 class _EvalProfileNoRestrictions:
-    excluded_languages  = []
-    excluded_sectors    = []
-    allowed_countries   = None
-    banned_countries    = []
-    hybrid_ok_countries = []
-    allowed_work_modes  = ["remote", "hybrid", "unknown", "on-site"]
-    scoring_context     = ""
+    excluded_languages     = []
+    excluded_sectors       = []
+    allowed_countries      = None
+    banned_countries       = []
+    hybrid_ok_countries    = []
+    allowed_work_modes     = ["remote", "hybrid", "unknown", "on-site"]
+    allowed_contract_types = []
+    languages_spoken       = []
+    scoring_context        = ""
 
 
 class _EvalProfileBannedOnly:
-    excluded_languages  = []
-    excluded_sectors    = []
-    allowed_countries   = None
-    banned_countries    = ["United States", "Canada"]
-    hybrid_ok_countries = []
-    allowed_work_modes  = ["remote", "hybrid", "unknown"]
-    scoring_context     = ""
+    excluded_languages     = []
+    excluded_sectors       = []
+    allowed_work_modes     = ["remote", "hybrid", "unknown"]
+    allowed_contract_types = []
+    languages_spoken       = ["english"]
+    scoring_context        = ""
+    # New geography model: allow remote only in European countries (not US/Canada)
+    work_mode_geography = {
+        "remote": {"countries": ["Germany", "France", "UK", "Ireland"], "geo_zones": ["europe"]},
+        "hybrid": {"countries": [], "geo_zones": []},
+        "on-site": {"countries": [], "geo_zones": []},
+    }
 
 
 class _EvalProfileHybridGate:
-    excluded_languages  = []
-    excluded_sectors    = []
-    allowed_countries   = None
-    banned_countries    = []
-    hybrid_ok_countries = ["Switzerland"]
-    allowed_work_modes  = ["remote", "hybrid", "unknown"]
-    scoring_context     = ""
+    excluded_languages     = []
+    excluded_sectors       = []
+    allowed_work_modes     = ["remote", "hybrid", "unknown"]
+    allowed_contract_types = []
+    languages_spoken       = ["english"]
+    scoring_context        = ""
+    # New geography model: hybrid only in Switzerland
+    work_mode_geography = {
+        "remote": {"countries": [], "geo_zones": []},
+        "hybrid": {"countries": ["Switzerland"], "geo_zones": []},
+        "on-site": {"countries": [], "geo_zones": []},
+    }
 
 
 class _EvalProfileEU:
-    excluded_languages  = []
-    excluded_sectors    = []
-    allowed_countries   = ["Switzerland", "France", "Spain", "Germany", "Ireland"]
-    banned_countries    = []
-    hybrid_ok_countries = []
-    allowed_work_modes  = ["remote", "hybrid", "unknown"]
-    scoring_context     = ""
+    excluded_languages     = []
+    excluded_sectors       = []
+    allowed_countries      = ["Switzerland", "France", "Spain", "Germany", "Ireland"]
+    banned_countries       = []
+    hybrid_ok_countries    = []
+    allowed_work_modes     = ["remote", "hybrid", "unknown"]
+    allowed_contract_types = []
+    languages_spoken       = ["english"]
+    scoring_context        = ""
 
 
 def test_eval_tier0_empty_lists_noop():
@@ -439,14 +460,16 @@ def test_eval_tier0_empty_lists_noop():
 
 
 class _EvalProfileWithDenylist:
-    excluded_languages    = []
-    excluded_sectors      = []
-    allowed_countries     = None
-    banned_countries      = []
-    hybrid_ok_countries   = []
-    denylisted_companies  = ["EWOR", "EWOR GmbH", "Mercor"]
-    allowed_work_modes    = ["remote", "hybrid", "unknown"]
-    scoring_context       = ""
+    excluded_languages     = []
+    excluded_sectors       = []
+    allowed_countries      = None
+    banned_countries       = []
+    hybrid_ok_countries    = []
+    denylisted_companies   = ["EWOR", "EWOR GmbH", "Mercor"]
+    allowed_work_modes     = ["remote", "hybrid", "unknown"]
+    allowed_contract_types = []
+    languages_spoken       = ["english"]
+    scoring_context        = ""
 
 
 def test_eval_tier0_denylist_company_blocked():
