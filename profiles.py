@@ -46,7 +46,7 @@ class SearchProfile:
     # ── Canonical search fields (spec 017) ─────────────────────────────────
     job_titles: list[str] = field(default_factory=list)           # single include list — gate + jobspy query + scrape net + pre_filter
     title_exclude: list[str] = field(default_factory=list)         # single exclude list — scrape exclude + pre_filter exclude
-    allowed_contract_types: list[str] = field(default_factory=list)# empty = no restriction; allowlist over extraction vocab {permanent, freelance, contract, internship, unknown}
+    allowed_contract_types: list[str] = field(default_factory=list)# empty = no restriction; allowlist over extraction vocab {permanent, freelance, contract, regie, internship, unknown}
     languages_spoken: list[str] = field(default_factory=list)      # positive allowlist; empty = no language restriction
 
     # ── Search inputs (relocated from scrape.py + scraper modules) ──────────
@@ -128,7 +128,7 @@ class SearchProfile:
             ls = ["french", "english"]
         act = criteria.get("allowed_contract_types")
         if act is None:
-            act = ["permanent", "freelance", "contract", "unknown"]
+            act = ["permanent", "freelance", "contract", "regie", "unknown"]
         return cls(
             id=id,
             name=name,
@@ -358,7 +358,7 @@ Geneva, headcount ~150 — strong Web2-Web3 bridge fit" is useful.""",
         "product lead",
     ],
     title_exclude=["junior", "intern", "stage", "apprentice"],
-    allowed_contract_types=["permanent", "freelance", "contract", "unknown"],
+    allowed_contract_types=["permanent", "freelance", "contract", "regie", "unknown"],
     languages_spoken=["french", "english"],
     # Companies repeatedly archived in past digests — extend when a recruiter
     # or aggregator keeps wasting reviewer time.

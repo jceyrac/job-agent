@@ -168,7 +168,7 @@ Respond with JSON only:
   "summary": "<2-3 sentences>",
   "work_mode": "<remote|hybrid|on-site|unknown>",
   "company_size": "<startup|scaleup|sme|large|unknown>",
-  "contract_type": "<permanent|freelance|contract|internship|unknown>",
+  "contract_type": "<permanent|freelance|contract|regie|internship|unknown>",
   "geo_zone": "<europe|russia_cis|us_only|global_remote|apac|latam|unknown>",
   "country_code": "<ISO 3166-1 alpha-2 country code, e.g. CH, DE, FR, US — or null if fully remote/unknown>",
   "company_country": "<country name or unknown>",
@@ -189,7 +189,7 @@ Given the job below, return ONLY a JSON object with these fields:
   "geo_zone": "<europe|russia_cis|us_only|global_remote|apac|latam|unknown>",
   "country_code": "<ISO 3166-1 alpha-2 country code, e.g. CH, DE, FR, US — or null if fully remote/unknown>",
   "company_size": "<startup|scaleup|sme|large|unknown>",
-  "contract_type": "<permanent|freelance|contract|unknown>",
+  "contract_type": "<permanent|freelance|contract|regie|unknown>",
   "summary": "<2-3 sentences>",
   "company_summary": "<1-2 sentences about the company, or null>",
   "company_website": "<URL or null>",
@@ -671,6 +671,14 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         job.country_code      = result.get("country_code")
         job.company_size      = result["company_size"]
         job.contract_type     = result["contract_type"]
+        # ── Authoritative contract_type override (spec 024b, FR-008) ───────
+        # When a scraper sets contract_type from source data, the LLM-inferred
+        # value is overridden.  Currently a no-op (empty set).
+        if (job.source in AUTHORITATIVE_CONTRACT_SOURCES
+                and job.contract_type
+                and job.contract_type != "unknown"):
+            result["contract_type"] = job.contract_type
+        # ───────────────────────────────────────────────────────────────────
         job.summary           = result["summary"]
         job.company_summary   = result.get("company_summary")
         job.company_website   = result.get("company_website")
@@ -695,6 +703,12 @@ _EVAL_PASSTHROUGH_KEYS = [
     "geo_zone", "company_country", "industry_sector", "language_required",
     "country_code",
 ]
+
+# Sources whose contract_type takes authority over Groq inference.
+# When a scraper populates contract_type from source data, add its
+# SOURCE_NAME here. See spec 024b, FR-008.
+AUTHORITATIVE_CONTRACT_SOURCES: set[str] = set()
+
 
 def _evaluation_result(score: int, reason: str, scored_by: str, job: JobPosting,
                        profile, comp_flag: int = 0) -> dict:

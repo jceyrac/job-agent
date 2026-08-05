@@ -50,7 +50,7 @@ def _build_html(jobs: list[dict], today: str) -> str:
         wm_badge = {"remote": "🌍 Remote", "hybrid": "🏢 Hybrid", "on-site": "🏙️ On-site", "unknown": "❓"}
         geo_badge_map = {"europe": "🇪🇺 Europe", "global_remote": "🌍 Global Remote", "us_only": "🇺🇸 US Only", "apac": "🌏 APAC", "latam": "🌎 LATAM", "unknown": "❓ Zone inconnue"}
         size_badge_map = {"startup":"🚀","scaleup":"⚡","sme":"🏢","large":"🏦","unknown":""}
-        contract_badge_map = {"permanent":"💼","freelance":"🔄","contract":"📋","internship":"🎓","unknown":""}
+        contract_badge_map = {"permanent":"💼","freelance":"🔄","contract":"📋","regie":"🤝","internship":"🎓","unknown":""}
         for j in items:
             posted = j.get("posted_date") or ""
             wm = j.get("work_mode") or "unknown"
@@ -169,6 +169,7 @@ def export_joplin(jobs: list[dict]) -> None:
         "permanent":  "💼 Permanent",
         "freelance":  "🔄 Freelance",
         "contract":   "📋 Contract",
+        "regie":      "🤝 Régie",
         "internship": "🎓 Internship",
         "unknown":    "",
     }

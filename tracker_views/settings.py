@@ -562,7 +562,7 @@ def _render_profile_editor(db):
         c1, c2, c3 = st.columns(3)
         WORK_MODES = ["remote", "hybrid", "on-site", "unknown"]
         COMPANY_SIZES = ["startup", "scaleup", "sme", "large"]
-        CONTRACT_TYPES = ["permanent", "freelance", "contract", "internship", "unknown"]
+        CONTRACT_TYPES = ["permanent", "freelance", "contract", "regie", "internship", "unknown"]
 
         with c1:
             allowed_work_modes = st.multiselect(
