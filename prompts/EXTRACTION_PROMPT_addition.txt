@@ -1,0 +1,25 @@
+# Field extraction — report what the posting SAYS, not what you infer
+These fields drive hard downstream filters. A wrong guess silently
+removes a job from the digest, so err towards "unknown" rather than
+towards a confident default.
+
+- work_mode: one of "remote", "hybrid", "on-site", "unknown".
+  Use "unknown" whenever the posting does not state the arrangement.
+  Do NOT infer "on-site" merely because a city or office is mentioned,
+  because no remote policy is described, or because the employer is a
+  bank or a large company. Most postings that list a location say
+  nothing about work mode — those are "unknown", not "on-site".
+  Only answer "on-site" when the posting actually requires full
+  on-site presence (e.g. "5 days per week in the office",
+  "no remote work", "présence sur site à 100%").
+  A stated office percentage means hybrid: "60% remote" → "hybrid".
+- contract_type: one of "permanent", "freelance", "contract", "regie",
+  "internship", "unknown". Use "unknown" when the posting does not say.
+  Do NOT default to "permanent". A stated duration ("6 months+",
+  "12-month engagement", "Mission", "Mandat") indicates a mission, not
+  a permanent role. Swiss "Personalverleih" / "Arbeitnehmerüberlassung"
+  / "ANÜ" / "location de services" → "regie".
+- language_required: the language needed to DO the job, not the
+  language the posting happens to be written in. A posting written in
+  German for a role where the working language is English is
+  "english". Use "unknown" if not stated.

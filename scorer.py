@@ -41,12 +41,19 @@ Infer from description, company name, funding stage, or context:
 - "unknown"  : not enough information
 
 ## Contract type
-Infer from title, description, or job type indicators:
-- "permanent"   : full-time, CDI, employee, long-term
+Infer from title, description, or job type indicators. One of "permanent",
+"freelance", "contract", "regie", "internship", "unknown".
+
+- "permanent"   : full-time, CDI, employee, long-term — only when explicitly stated.
+                  Do NOT default to "permanent".
 - "freelance"   : freelance, consultant, contractor, independent
-- "contract"    : CDD, fixed-term, 6-month contract, temporary
+- "contract"    : CDD, fixed-term, 6-month contract, temporary.
+                  A stated duration ("6 months+", "12-month engagement", "Mission",
+                  "Mandat") indicates a mission, not a permanent role.
+- "regie"       : Swiss "Personalverleih" / "Arbeitnehmerüberlassung" / "ANÜ" /
+                  "location de services"
 - "internship"  : intern, stage, apprentice
-- "unknown"     : not specified
+- "unknown"     : Use "unknown" when the posting does not say
 
 ## Geographic zone
 Infer geo_zone from the Base location field, then the Location field, then the description.
@@ -190,27 +197,37 @@ Given the job below, return ONLY a JSON object with these fields:
   "comp_annual_eur": <normalized annual EUR as integer, or null>
 }
 
-## Work mode
-Detect work mode from title, location, description, and the source-detected hint:
+## Field extraction — report what the posting SAYS, not what you infer
+These fields drive hard downstream filters. A wrong guess silently removes a job
+from the digest, so err towards "unknown" rather than towards a confident default.
+
+### Work mode
+Detect work mode from title, location, description, and the source-detected hint.
+Set work_mode to exactly one of: "remote", "hybrid", "on-site", "unknown".
 
 - "remote"   : the role is fully remote, no office presence required. Description says
                "remote", "work from home", "distributed", or "anywhere".
 - "hybrid"   : the role requires some office presence (1-3 days/week) or is described
-               as "hybrid", "flexible", "partly remote".
-- "on-site"  : the role requires full-time office presence at a specific location.
-- "unknown"  : not enough information to determine.
+               as "hybrid", "flexible", "partly remote". A stated office percentage
+               means hybrid: "60% remote" → "hybrid".
+- "on-site"  : Only answer "on-site" when the posting actually requires full on-site
+               presence (e.g. "5 days per week in the office", "no remote work",
+               "présence sur site à 100%").
+- "unknown"  : Use "unknown" whenever the posting does not state the arrangement.
+               Do NOT infer "on-site" merely because a city or office is mentioned,
+               because no remote policy is described, or because the employer is a
+               bank or a large company. Most postings that list a location say nothing
+               about work mode — those are "unknown", not "on-site".
 
 **IMPORTANT — how to use the source-detected hint**:
-- When the hint is "remote", "hybrid", or "on-site": TRUST it unless the
-  description EXPLICITLY contradicts it (hint "remote" but "in office 3
-  days/week" → "hybrid"; hint "hybrid" but "fully remote, work from anywhere"
-  → "remote").
-- When the hint is "unknown": do NOT default to "remote". Classify from Base
-  location + description. A concrete city/country in Base location with no
-  explicit remote language means office presence is expected → "on-site" (or
-  "hybrid" if any flexibility / partial-remote is mentioned). Choose "remote"
-  only when the location literally says Remote/Worldwide or the description
-  explicitly signals fully-remote / distributed / work-from-anywhere.
+- When the hint is "remote", "hybrid": TRUST it unless the description EXPLICITLY
+  contradicts it (hint "remote" but "in office 3 days/week" → "hybrid";
+  hint "hybrid" but "fully remote, work from anywhere" → "remote").
+- When the hint is "on-site" or "unknown": do NOT trust it blindly. Classify from the
+  description text. A city/country in Base location with no explicit work-mode language
+  is NOT enough for "on-site" — that's "unknown". Choose "remote" only when the
+  location literally says Remote/Worldwide or the description explicitly signals
+  fully-remote / distributed / work-from-anywhere.
 
 Set work_mode to exactly one of: "remote", "hybrid", "on-site", "unknown"
 
@@ -223,12 +240,19 @@ Infer from description, company name, funding stage, or context:
 - "unknown"  : not enough information
 
 ## Contract type
-Infer from title, description, or job type indicators:
-- "permanent"   : full-time, CDI, employee, long-term
+Infer from title, description, or job type indicators. One of "permanent",
+"freelance", "contract", "regie", "internship", "unknown".
+
+- "permanent"   : full-time, CDI, employee, long-term — only when explicitly stated.
+                  Do NOT default to "permanent".
 - "freelance"   : freelance, consultant, contractor, independent
-- "contract"    : CDD, fixed-term, 6-month contract, temporary
+- "contract"    : CDD, fixed-term, 6-month contract, temporary.
+                  A stated duration ("6 months+", "12-month engagement", "Mission",
+                  "Mandat") indicates a mission, not a permanent role.
+- "regie"       : Swiss "Personalverleih" / "Arbeitnehmerüberlassung" / "ANÜ" /
+                  "location de services"
 - "internship"  : intern, stage, apprentice
-- "unknown"     : not specified
+- "unknown"     : Use "unknown" when the posting does not say
 
 ## Geographic zone
 Infer geo_zone from the Base location field, then the Location field, then the description.
@@ -301,7 +325,7 @@ Pick exactly one from this controlled list:
 - other: anything that doesn't fit cleanly above
 
 ## language_required
-The primary language a candidate must speak fluently for this role.
+The language needed to DO the job, not the language the posting happens to be written in.
 Detection signals:
 - "Fluent in [language]" / "[language] required"
 - "Deutschkenntnisse erforderlich" → german
@@ -310,9 +334,9 @@ Detection signals:
   "Требуется свободное владение русским языком" → russian
 - Description written entirely in Turkish / "Türkçe" /
   "İyi derecede Türkçe" → turkish
+- A posting written in German for a role where the working language is English → "english"
 - Job description written entirely in non-English with no English version → that language
 - Multiple languages explicitly required → "multiple"
-- No language mentioned and description is in English → "english"
 - No clear signal → "unknown"
 
 ## Summary
@@ -600,18 +624,20 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         return job
 
     base_loc = job.base_location or ""
-    # Forward scraper-detected work mode as an authoritative hint.
-    # The scraper may misclassify (Scenario B: JobSpy doesn't populate
-    # work_from_home_type for LinkedIn, so is_remote=True drives a false
-    # "remote" for hybrid/on-site roles). The LLM is instructed to trust
-    # this hint UNLESS the description explicitly contradicts it.
+    # Forward scraper-detected work mode as a hint ONLY when the scraper made a
+    # positive detection (remote/hybrid).  Scrapers default to "on-site" as a
+    # fallback (else-branch / hardcoded) with no signal — that is fabrication,
+    # not observation, so suppress it to avoid anchoring the LLM.
     source_mode = job.work_mode or "unknown"
+    hint_line = ""
+    if source_mode in ("remote", "hybrid"):
+        hint_line = f"Source-detected work mode: {source_mode}\n"
     prompt = (
         f"Title: {job.title}\n"
         f"Company: {job.company}\n"
         f"Location: {job.location}\n"
         f"Base location: {base_loc}\n"
-        f"Source-detected work mode: {source_mode}\n"
+        f"{hint_line}"
         f"Description: {job.description or ''}"
     )
     messages = [
