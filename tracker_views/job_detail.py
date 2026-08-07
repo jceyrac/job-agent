@@ -9,7 +9,7 @@ from tracker_views.shared import (
 )
 from tracker_views.job_helpers import (
     _source_label, _source_link,
-    _render_action_bar,
+    _render_action_bar, _request_archive,
 )
 from tracker_views.forms import log_interaction_dialog
 
@@ -100,22 +100,9 @@ def _render_detail(job_id: str):
     st.subheader("Actions")
     _render_action_bar(job, "detail", scores=scores, app=app)
 
-    # Archive confirmation
+    # Archive confirmation — delegated to shared helper
     if st.session_state.get(f"pending_detail_archive_{job_id}"):
-        st.warning("Please add a note before marking this job as not relevant.")
-        archive_note = st.text_area("Note", key=f"detail_archive_note_{job_id}", height=60)
-        c1, c2 = st.columns(2)
-        if c1.button("Confirm archive", key=f"detail_confirm_archive_{job_id}"):
-            if archive_note.strip():
-                db.set_status(job_id, "archived", notes=archive_note.strip())
-                st.session_state.pop(f"pending_detail_archive_{job_id}")
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.error("Note is required.")
-        if c2.button("Cancel", key=f"detail_cancel_archive_{job_id}"):
-            st.session_state.pop(f"pending_detail_archive_{job_id}")
-            st.rerun()
+        _request_archive(job, "detail")
 
     st.divider()
 

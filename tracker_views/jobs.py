@@ -14,7 +14,7 @@ from tracker_views.shared import (
     apply_filters,
 )
 from tracker_views.job_helpers import (
-    _source_label, _derive_state, _run_score, _render_action_bar,
+    _source_label, _derive_state, _run_score, _render_action_bar, _request_archive,
 )
 
 
@@ -472,22 +472,9 @@ def _render_card(job: dict, apps_index: dict[str, dict]):
         app = apps_index.get(job_id)
         _render_action_bar(job, "card", scores=None, app=app)
 
-        # Archive confirmation
+        # Archive confirmation — delegated to shared helper
         if st.session_state.get(f"pending_archive_{job_id}"):
-            st.warning("Please add a note before marking this job as not relevant.")
-            archive_note = st.text_area("Note", key=f"archive_note_{job_id}", height=60)
-            c1, c2 = st.columns(2)
-            if c1.button("Confirm archive", key=f"confirm_archive_{job_id}"):
-                if archive_note.strip():
-                    db.set_status(job_id, "archived", notes=archive_note.strip())
-                    st.session_state.pop(f"pending_archive_{job_id}")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error("Note is required.")
-            if c2.button("Cancel", key=f"cancel_archive_{job_id}"):
-                st.session_state.pop(f"pending_archive_{job_id}")
-                st.rerun()
+            _request_archive(job, "card")
 
         # Notes
         with st.expander("Notes", expanded=False):
