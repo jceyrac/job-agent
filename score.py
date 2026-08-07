@@ -14,7 +14,7 @@ from paths import DB_PATH
 from profiles import SearchProfile
 from job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
 from scorer import extract_job_fields, evaluate_for_profile
-from title_gate import is_product_management_title
+from title_gate import title_matches_profile
 from storage import JobStorage
 
 MOCK_JOBS = [
@@ -472,12 +472,12 @@ def main():
             company = job_dict.get("company", "")
             print(f"  Evaluating {i}/{len(jobs_to_score)}: {title[:50]} @ {company[:30]}")
 
-            # ── Title gate: skip non-PM jobs from monitored companies ──
+            # ── Title gate: skip jobs whose title doesn't match the profile ──
             if job_dict.get("monitored_company_id"):
-                if not is_product_management_title(title, profile.job_titles):
+                if not title_matches_profile(title, profile.job_titles):
                     db.set_job_filtered_non_product(job_dict["id"])
                     gate_filtered += 1
-                    print(f"    → filtered (non-PM title from monitored company)")
+                    print(f"    → filtered (title not in profile list, monitored company)")
                     continue
 
             result = score_one(job_dict["id"], profile.id)
@@ -505,7 +505,7 @@ def main():
                 time.sleep(4)
 
         print(f"\nScoring complete: {scored_count} scored, {error_count} errors"
-              + (f", {gate_filtered} filtered (non-PM title)" if gate_filtered else ""))
+              + (f", {gate_filtered} filtered (title not in profile list)" if gate_filtered else ""))
         if tier0_count:
             details = ", ".join(f"{k}: {v}" for k, v in sorted(tier0_details.items()))
             print(f"  Tier 0 (deterministic): {tier0_count} filtered  ({details})")

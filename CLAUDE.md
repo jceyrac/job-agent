@@ -60,6 +60,11 @@ scrape.py  →  SQLite (data/jobs.db)  →  score.py --extract  →  score.py (p
 
 **Scrapers** live in `scrapers/`, discovered automatically via `scrape.discover_scrapers()`. Each extends `BaseScraper` and declares `SOURCE_NAME` and `ENABLED`.
 
+Scrapers (boards d'agrégation) : le scope de source est une liste statique curée
+à la main. NE JAMAIS le dériver de job_filter.titles par matching dynamique —
+jugement de fit = scorer seul (Constitution I). Passer les titres en query à une
+vraie recherche texte (hh.ru ?text=) est OK ; élaguer une liste curée ne l'est pas.
+
 ---
 
 ## NEVER modify these files
@@ -170,8 +175,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **HeadHunter Network Scraper** (`specs/023-hh-network-scraper/`)
-- Spec: `specs/023-hh-network-scraper/spec.md`
-- Plan: `specs/023-hh-network-scraper/plan.md`
-- Tasks: `specs/023-hh-network-scraper/tasks.md`
+Current feature: **Free-Work.com scraper** (`specs/025-free work scraper/`)
+- Spec: `specs/025-free work scraper/025 - free-work-scraper-spec.md`
+- Plan: `specs/025-free work scraper/plan.md`
+- Tasks: *(not yet generated)*
 <!-- SPECKIT END -->

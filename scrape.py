@@ -14,7 +14,7 @@ from filters import JobFilterEngine
 from models import JobFilter, JobPosting
 from paths import DB_PATH
 from storage import JobStorage
-from title_gate import is_product_management_title
+from title_gate import title_matches_profile
 
 
 def discover_scrapers():
@@ -369,9 +369,9 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
 
         before_count = db.get_stats(profile.id)["total"]
         for job in unique_batch:
-            if not is_product_management_title(job.title, profile.job_titles):
+            if not title_matches_profile(job.title, profile.job_titles):
                 total_excluded_title += 1
-                print(f"  → skipped (non-PM title): {job.title[:60]}")
+                print(f"  → skipped (title not in profile list): {job.title[:60]}")
                 continue
             company_id = None
             if job.company and job.company.strip():
@@ -391,7 +391,7 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
     if total_excluded_title:
-        print(f"🔤 {total_excluded_title} jobs excluded (non-PM title)")
+        print(f"🔤 {total_excluded_title} jobs excluded (title not in profile list)")
 
     db.log_run(
         profile_id=profile.id,

@@ -1,48 +1,25 @@
 """
-title_gate.py — Deterministic PM-family title filter for monitored-company jobs.
+title_gate.py — Deterministic title filter driven by the active profile.
 
-Gate runs BEFORE any LLM call in score.py, protecting the Groq daily quota
-(1000 req/day).  Case-insensitive substring matching against an inclusion list.
-Never uses exact equality.  Errs on inclusion: false positive costs one LLM
-call, false negative loses a target.
+Case-insensitive substring matching against the profile's job_titles.
+When no titles are configured (empty/None), the gate is open — every title
+passes (wide net, the scorer decides).
 
-Known regression: "Senior Tech Product Owner" (FELFEL) MUST pass.
+Never uses exact equality.  Errs on inclusion: false positive costs one
+scoring call, false negative loses a target.
 """
 
-# Inclusion list — generous, ordered by interest (C1).
-_PM_TITLES = [
-    "product manager",
-    "senior product manager",
-    "staff product manager",
-    "principal product manager",
-    "lead product manager",
-    "group product manager",
-    "director of product",
-    "head of product",
-    "vp product",
-    "chief product officer",
-    "product owner",
-    "technical product owner",
-]
 
-
-def is_product_management_title(title: str, titles: list[str] | None = None) -> bool:
-    """Return True if *title* matches the PM family inclusion list.
+def title_matches_profile(title: str, search_titles: list[str] | None = None) -> bool:
+    """Return True if *title* matches any keyword in *search_titles*.
 
     Case-insensitive substring match — never exact equality.
-    When *titles* is provided, it replaces the built-in _PM_TITLES
-    (e.g. driven by profile.job_titles).
+    An empty or None *search_titles* means "no filter configured" → return True
+    (wide net per Constitution principles I & IX).
     """
     if not title:
         return False
-    keywords = titles if titles else _PM_TITLES
+    if not search_titles:
+        return True
     t = title.lower().strip()
-    return any(kw.lower() in t for kw in keywords)
-
-
-# ---------------------------------------------------------------------------
-# Regression guard — executed at module load so import-time errors are caught
-# by any test or script that imports this module.
-# ---------------------------------------------------------------------------
-assert is_product_management_title("Senior Tech Product Owner"), \
-    "FELFEL regression: 'Senior Tech Product Owner' MUST pass the title gate"
+    return any(kw.lower() in t for kw in search_titles)

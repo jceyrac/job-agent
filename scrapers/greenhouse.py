@@ -7,7 +7,7 @@ import httpx
 from scrapers.base import BaseScraper
 from models import JobFilter, JobPosting
 from storage import JobStorage
-from title_gate import is_product_management_title
+from title_gate import title_matches_profile
 
 BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
 HEADERS = {
@@ -165,12 +165,12 @@ class GreenhouseScraper(BaseScraper):
 
                     data = r.json()
                     raw_jobs = data.get("jobs", [])
-                    pm_jobs = [j for j in raw_jobs if is_product_management_title(j.get("title", ""), profile_titles)]
+                    matched_jobs = [j for j in raw_jobs if title_matches_profile(j.get("title", ""), profile_titles)]
 
-                    if pm_jobs:
-                        board_summary.append(f"{token}: {len(pm_jobs)} PM job{'s' if len(pm_jobs) > 1 else ''}")
+                    if matched_jobs:
+                        board_summary.append(f"{token}: {len(matched_jobs)} matching job{'s' if len(matched_jobs) > 1 else ''}")
 
-                    for item in pm_jobs:
+                    for item in matched_jobs:
                         # Extract company from absolute_url or fall back to token
                         abs_url = item.get("absolute_url", "")
                         company = token.capitalize()
@@ -220,5 +220,5 @@ class GreenhouseScraper(BaseScraper):
 
         if board_summary:
             print(f"[{self.SOURCE_NAME}] {' | '.join(board_summary)}")
-        print(f"[{self.SOURCE_NAME}] {len(jobs)} PM jobs fetched across {len(board_tokens)} boards")
+        print(f"[{self.SOURCE_NAME}] {len(jobs)} matching jobs fetched across {len(board_tokens)} boards")
         return jobs
