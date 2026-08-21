@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — Onglet Reports (tracker.py)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.31.0/tabler-icons.min.css">
+<style>
+  :root{
+    --surface-0:#f5f4ef; --surface-1:#edece4; --surface-2:#ffffff;
+    --text-primary:#1a1a18; --text-secondary:#5f5e5a; --text-muted:#888780;
+    --border:rgba(0,0,0,.12); --border-strong:rgba(0,0,0,.22);
+    --radius:8px;
+    --border-accent:#378ADD; --bg-accent:#E6F1FB; --text-accent:#185FA5;
+    --bg-danger:#FCEBEB; --text-danger:#A32D2D;
+    --bg-warning:#FAEEDA; --text-warning:#854F0B;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --surface-0:#1c1c1a; --surface-1:#26262a; --surface-2:#2c2c2f;
+      --text-primary:#ececec; --text-secondary:#b4b2a9; --text-muted:#888780;
+      --border:rgba(255,255,255,.14); --border-strong:rgba(255,255,255,.26);
+      --border-accent:#85B7EB; --bg-accent:#0C447C; --text-accent:#B5D4F4;
+      --bg-danger:#501313; --text-danger:#F09595;
+      --bg-warning:#412402; --text-warning:#FAC775;
+    }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--surface-0); color:var(--text-primary);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6; padding:2rem;}
+  .wrap{max-width:720px; margin:0 auto;}
+  .sr-only{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0);}
+  table{width:100%; border-collapse:collapse;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2 class="sr-only">Maquette de l'onglet Reports du tracker : sélecteur de type d'export (preset ORP), période, statuts, aperçu et téléchargement CSV</h2>
+
+  <div style="display:flex; gap:24px; border-bottom:0.5px solid var(--border); margin-bottom:1.5rem;">
+    <span style="padding:8px 2px; color:var(--text-secondary); font-size:14px;">Jobs</span>
+    <span style="padding:8px 2px; color:var(--text-secondary); font-size:14px;">Settings</span>
+    <span style="padding:8px 2px; color:var(--text-primary); font-size:14px; font-weight:500; border-bottom:2px solid var(--border-accent);">Reports</span>
+  </div>
+
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:1.25rem;">
+    <i class="ti ti-file-export" style="font-size:20px; color:var(--text-secondary);" aria-hidden="true"></i>
+    <span style="font-size:18px; font-weight:500;">Reports</span>
+  </div>
+
+  <div style="margin-bottom:1.25rem; max-width:340px;">
+    <p style="font-size:13px; color:var(--text-secondary); margin:0 0 6px;">Type d'export</p>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; height:36px; background:var(--surface-2); border:0.5px solid var(--border); border-radius:var(--radius); padding:0 10px;">
+      <span style="font-size:14px;">Candidatures ORP (716.007)</span>
+      <i class="ti ti-chevron-down" style="font-size:16px; color:var(--text-muted);" aria-hidden="true"></i>
+    </div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:1rem;">
+    <div>
+      <p style="font-size:13px; color:var(--text-secondary); margin:0 0 6px;">Période</p>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <span style="font-size:13px; padding:4px 12px; border-radius:var(--radius); background:var(--bg-accent); color:var(--text-accent);">Mois</span>
+        <span style="font-size:13px; padding:4px 12px; border-radius:var(--radius); border:0.5px solid var(--border);">Plage de dates</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; height:36px; background:var(--surface-2); border:0.5px solid var(--border); border-radius:var(--radius); padding:0 10px; max-width:180px;">
+        <i class="ti ti-calendar" style="font-size:16px; color:var(--text-muted);" aria-hidden="true"></i>
+        <span style="font-size:14px;">2026-08</span>
+      </div>
+    </div>
+    <div>
+      <p style="font-size:13px; color:var(--text-secondary); margin:0 0 6px;">Statuts</p>
+      <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        <span style="font-size:13px; padding:4px 10px; border-radius:var(--radius); background:var(--bg-accent); color:var(--text-accent);">applied <i class="ti ti-x" style="font-size:13px;" aria-hidden="true"></i></span>
+        <span style="font-size:13px; padding:4px 10px; border-radius:var(--radius); border:0.5px solid var(--border); color:var(--text-secondary);">rejected</span>
+        <span style="font-size:13px; padding:4px 10px; border-radius:var(--radius); border:0.5px solid var(--border); color:var(--text-secondary);">archived</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-bottom:1.5rem;">
+    <span style="display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:500; padding:8px 16px; border-radius:var(--radius); border:2px solid var(--border-accent); color:var(--text-accent);">
+      <i class="ti ti-refresh" style="font-size:16px;" aria-hidden="true"></i>Générer l'aperçu
+    </span>
+  </div>
+
+  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:1rem;">
+    <div style="background:var(--surface-1); border-radius:var(--radius); padding:0.75rem 1rem;">
+      <p style="font-size:13px; color:var(--text-secondary); margin:0;">Entrées</p>
+      <p style="font-size:24px; font-weight:500; margin:2px 0 0;">9</p>
+    </div>
+    <div style="background:var(--surface-1); border-radius:var(--radius); padding:0.75rem 1rem;">
+      <p style="font-size:13px; color:var(--text-secondary); margin:0;">En suspens</p>
+      <p style="font-size:24px; font-weight:500; margin:2px 0 0;">6</p>
+    </div>
+    <div style="background:var(--surface-1); border-radius:var(--radius); padding:0.75rem 1rem;">
+      <p style="font-size:13px; color:var(--text-secondary); margin:0;">Négatif</p>
+      <p style="font-size:24px; font-weight:500; margin:2px 0 0;">3</p>
+    </div>
+  </div>
+
+  <div style="border:0.5px solid var(--border); border-radius:12px; overflow:hidden; margin-bottom:1rem;">
+    <table style="font-size:13px; table-layout:fixed;">
+      <thead>
+        <tr style="background:var(--surface-1);">
+          <th style="text-align:left; padding:8px 10px; color:var(--text-secondary); font-weight:500; width:56px;">Date</th>
+          <th style="text-align:left; padding:8px 10px; color:var(--text-secondary); font-weight:500;">Entreprise</th>
+          <th style="text-align:left; padding:8px 10px; color:var(--text-secondary); font-weight:500;">Poste</th>
+          <th style="text-align:left; padding:8px 10px; color:var(--text-secondary); font-weight:500; width:90px;">Résultat</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-top:0.5px solid var(--border);">
+          <td style="padding:8px 10px; color:var(--text-secondary);">04/08</td>
+          <td style="padding:8px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Crypto Finance AG</td>
+          <td style="padding:8px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Senior PM (hybrid)</td>
+          <td style="padding:8px 10px;"><span style="font-size:12px; padding:2px 8px; border-radius:var(--radius); background:var(--bg-danger); color:var(--text-danger);">négatif</span></td>
+        </tr>
+        <tr style="border-top:0.5px solid var(--border);">
+          <td style="padding:8px 10px; color:var(--text-secondary);">12/08</td>
+          <td style="padding:8px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Taurus SA</td>
+          <td style="padding:8px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Product Manager (remote)</td>
+          <td style="padding:8px 10px;"><span style="font-size:12px; padding:2px 8px; border-radius:var(--radius); background:var(--bg-warning); color:var(--text-warning);">en suspens</span></td>
+        </tr>
+        <tr style="border-top:0.5px solid var(--border);">
+          <td style="padding:8px 10px; color:var(--text-secondary);">18/08</td>
+          <td style="padding:8px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Metaco</td>
+          <td style="padding:8px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Senior PM API (hybrid)</td>
+          <td style="padding:8px 10px;"><span style="font-size:12px; padding:2px 8px; border-radius:var(--radius); background:var(--bg-warning); color:var(--text-warning);">en suspens</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+    <span style="display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:500; padding:8px 16px; border-radius:var(--radius); border:0.5px solid var(--border-strong);">
+      <i class="ti ti-download" style="font-size:16px;" aria-hidden="true"></i>Télécharger orp_2026-08.csv
+    </span>
+    <span style="font-size:13px; color:var(--text-muted);"><i class="ti ti-info-circle" style="font-size:14px; vertical-align:-2px;" aria-hidden="true"></i> colonne « Personne contactée / Tél. » à compléter à la main</span>
+  </div>
+</div>
+</body>
+</html>

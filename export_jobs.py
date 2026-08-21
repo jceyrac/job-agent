@@ -1,17 +1,18 @@
 """
-export_orp.py — Export des recherches d'emploi pour le formulaire ORP suisse
+export_jobs.py — Export CSV des candidatures (formulaire 716.007)
 
 Usage:
-    python export_orp.py                          # mois courant, statut=applied
-    python export_orp.py --month 2026-05          # mois spécifique
-    python export_orp.py --from 2026-05-01 --to 2026-05-31
-    python export_orp.py --statuses applied rejected archived
+    python export_jobs.py                          # mois courant, statut=applied
+    python export_jobs.py --month 2026-05          # mois spécifique
+    python export_jobs.py --from 2026-05-01 --to 2026-05-31
+    python export_jobs.py --statuses applied rejected archived
 
-Output: CSV dans data/orp_YYYY-MM.csv (utf-8-sig, compatible Excel/LibreOffice)
+Output: CSV dans data/jobs_YYYY-MM.csv (utf-8-sig, compatible Excel/LibreOffice)
 """
 
 import argparse
 import csv
+import io
 import sqlite3
 import sys
 from calendar import monthrange
@@ -25,7 +26,7 @@ OUTPUT_DIR = Path(__file__).parent / "data"
 STATUSES_DEFAULT = ["applied"]
 STATUSES_ALL = ["new", "queued", "ready", "applied", "rejected", "archived", "expired"]
 
-# Mapping statut DB → résultat formulaire ORP
+# Mapping statut DB → résultat du formulaire 716.007
 STATUS_TO_RESULTAT = {
     "applied":  "en suspens",
     "queued":   "en suspens",
@@ -40,7 +41,7 @@ STATUS_TO_RESULTAT = {
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Export recherches d'emploi pour le formulaire ORP suisse"
+        description="Export CSV des candidatures (formulaire 716.007)"
     )
     parser.add_argument("--month", help="Mois au format YYYY-MM (ex: 2026-05)")
     parser.add_argument("--from", dest="date_from", help="Date de début YYYY-MM-DD")
@@ -81,14 +82,18 @@ def resolve_date_range(args):
     return date_from, date_to
 
 
-def fetch_jobs(db_path: Path, date_from: str, date_to: str, statuses: list[str]):
-    """Interroge la DB : jobs JOIN job_tracking, filtré par statut et date.
+def build_export_rows(db_path, date_from: str, date_to: str, statuses: list[str]) -> list[dict]:
+    """Construit les lignes d'export (7 colonnes) à partir de la DB.
 
-    Utilise job_tracking.changed_at (pas updated_at — corrigé du script existant).
+    Joint jobs + job_tracking, filtre `status IN statuses` et
+    `date(jt.changed_at) BETWEEN date_from AND date_to`, puis formate chaque
+    ligne (mapping statut→résultat, entreprise+lieu, suffixe work_mode).
+
+    Lève FileNotFoundError si db_path n'existe pas (jamais sys.exit — l'appelant
+    décide du comportement CLI vs UI).
     """
-    if not db_path.exists():
-        print(f"[ERROR] DB introuvable : {db_path}", file=sys.stderr)
-        sys.exit(1)
+    if not Path(db_path).exists():
+        raise FileNotFoundError(db_path)
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -97,6 +102,7 @@ def fetch_jobs(db_path: Path, date_from: str, date_to: str, statuses: list[str])
     placeholders = ",".join("?" * len(statuses))
     query = f"""
         SELECT
+            j.id,
             j.title,
             j.company,
             j.location,
@@ -104,37 +110,25 @@ def fetch_jobs(db_path: Path, date_from: str, date_to: str, statuses: list[str])
             j.source,
             j.work_mode,
             jt.status,
-            date(jt.changed_at) AS status_date,
-            jt.notes
+            date(jt.changed_at) AS status_date
         FROM jobs j
         JOIN job_tracking jt ON j.id = jt.job_id
         WHERE jt.status IN ({placeholders})
           AND date(jt.changed_at) BETWEEN ? AND ?
         ORDER BY jt.changed_at ASC
     """
-    rows = conn.execute(query, [*statuses, date_from, date_to]).fetchall()
+    raw_rows = conn.execute(query, [*statuses, date_from, date_to]).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
 
-
-def format_for_orp(jobs: list[dict]) -> list[dict]:
-    """Formate les données pour correspondre aux colonnes du formulaire ORP 716.007.
-
-    Colonnes (10) :
-      Jour | Mois | Entreprise / Adresse | Personne contactée / Tél. |
-      Description du poste | Assignation ORP | Activité | Résultat |
-      Motif si négatif | URL
-    """
     out = []
-    for job in jobs:
-        # Date au format jour/mois
+    for job in (dict(r) for r in raw_rows):
+        # Date au format JJ/MM/AAAA
         raw_date = job.get("status_date") or ""
         try:
             d = date.fromisoformat(raw_date)
-            day = str(d.day)
-            month = str(d.month)
+            date_str = d.strftime("%d/%m/%Y")
         except (ValueError, TypeError):
-            day, month = "", ""
+            date_str = ""
 
         # Entreprise + localisation
         company = job.get("company") or ""
@@ -149,44 +143,32 @@ def format_for_orp(jobs: list[dict]) -> list[dict]:
         else:
             description = title
 
-        # Résultat mappé depuis le statut
+        # Statut brut du job
         status = job.get("status") or ""
-        resultat = STATUS_TO_RESULTAT.get(status, "en suspens")
-
-        # Motif : notes uniquement pour les résultats négatifs
-        is_negatif = resultat == "négatif"
-        motif = (job.get("notes") or "") if is_negatif else ""
 
         out.append({
-            "Jour": day,
-            "Mois": month,
+            "Date": date_str,
             "Entreprise / Adresse": entreprise_adresse,
-            "Personne contactée / Tél.": "",
             "Description du poste": description,
-            "Assignation ORP": "Non",
-            "Activité": "par lettre / électronique",
-            "Résultat": resultat,
-            "Motif si négatif": motif,
+            "Status": status,
             "URL": job.get("url") or "",
+            "ID": job.get("id"),
         })
     return out
 
 
-def write_csv(rows: list[dict], output_path: Path):
-    """Écrit le CSV en utf-8-sig (BOM pour compatibilité Excel/LibreOffice).
+def rows_to_csv_bytes(rows: list[dict]) -> bytes:
+    """Sérialise les lignes en octets CSV encodés utf-8-sig (BOM inclus).
 
-    Ne crée pas de fichier si rows est vide (pas de CSV vide).
+    Retourne b"" si rows est vide (jamais de CSV vide).
     """
     if not rows:
-        return
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"[OK] {len(rows)} entrée(s) exportée(s) → {output_path}")
+        return b""
+    buf = io.StringIO(newline="")
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue().encode("utf-8-sig")
 
 
 def print_summary(rows: list[dict]):
@@ -196,7 +178,7 @@ def print_summary(rows: list[dict]):
         return
 
     # Résumé par statut DB
-    status_counts = Counter(r.get("Résultat", "?") for r in rows)
+    status_counts = Counter(r.get("Status", "?") for r in rows)
     print(f"\n--- Résumé par statut ---")
     for label, count in status_counts.items():
         print(f"  {label}: {count}")
@@ -204,11 +186,10 @@ def print_summary(rows: list[dict]):
     # Aperçu
     print(f"\n--- Aperçu ---")
     for r in rows:
-        jour = r["Jour"]
-        mois = r["Mois"]
+        date_str = r["Date"]
         ent = r["Entreprise / Adresse"][:40]
-        res = r["Résultat"]
-        print(f"  {jour:>2}/{mois:>2}  {ent:<40}  [{res}]")
+        res = r["Status"]
+        print(f"  {date_str:<10}  {ent:<40}  [{res}]")
 
 
 def main():
@@ -218,13 +199,20 @@ def main():
     print(f"Période : {date_from} → {date_to}")
     print(f"Statuts  : {args.statuses}")
 
-    jobs = fetch_jobs(DB_PATH, date_from, date_to, args.statuses)
-    rows = format_for_orp(jobs)
+    try:
+        rows = build_export_rows(DB_PATH, date_from, date_to, args.statuses)
+    except FileNotFoundError:
+        print(f"[ERROR] DB introuvable : {DB_PATH}", file=sys.stderr)
+        sys.exit(1)
 
     month_label = date_from[:7]  # YYYY-MM
-    output_path = OUTPUT_DIR / f"orp_{month_label}.csv"
+    output_path = OUTPUT_DIR / f"jobs_{month_label}.csv"
 
-    write_csv(rows, output_path)
+    if rows:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(rows_to_csv_bytes(rows))
+        print(f"[OK] {len(rows)} entrée(s) exportée(s) → {output_path}")
+
     print_summary(rows)
 
 

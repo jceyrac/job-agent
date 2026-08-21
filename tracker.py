@@ -88,6 +88,7 @@ else:
         st.Page("tracker_views/contacts.py",       title="Contacts",   icon="👥"),
         st.Page("tracker_views/settings.py",       title="Settings",    icon="⚙️"),
         st.Page("tracker_views/preferences.py",   title="Preferences",  icon="📈"),
+        st.Page("tracker_views/reports.py",       title="Reports",      icon="📤"),
         st.Page("tracker_views/job_detail.py",     title="Job",         icon="🔍", url_path="job_detail"),
         st.Page("tracker_views/company_detail.py", title="Company",    icon="🔍", url_path="company_detail"),
         st.Page("tracker_views/contact_detail.py", title="Contact",    icon="🔍", url_path="contact_detail"),
