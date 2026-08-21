@@ -52,8 +52,8 @@ def render():
     st.title("📤 Reports")
 
     # ── Controls ─────────────────────────────────────────────────────────────
-    preset_label = st.selectbox("Export type", list(PRESETS))
-    preset = PRESETS[preset_label]
+    # Un seul preset (« Applications ») — pas de sélecteur de type d'export.
+    preset = PRESETS["Applications"]
 
     mode = st.radio("Period", ["Month", "Date range"], horizontal=True)
 
