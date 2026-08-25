@@ -175,8 +175,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Onglet Reports — exports CSV téléchargeables** (`specs/025-reports-tab/`)
-- Spec: `specs/025-reports-tab/spec.md`
-- Plan: `specs/025-reports-tab/plan.md`
+Current feature: **Pagination de la liste Companies** (`specs/026-companies-pagination/`)
+- Spec: `specs/026-companies-pagination/spec.md`
+- Plan: `specs/026-companies-pagination/plan.md`
 - Tasks: *(not yet generated)*
 <!-- SPECKIT END -->

@@ -88,6 +88,12 @@ def _render_list():
             key="co_mon_status",
         )
 
+        per_page = st.selectbox(
+            "Per page", [25, 50, 100, 250, "All"],
+            index=1,
+            key="co_per_page",
+        )
+
     last_ix_days = _LAST_IX_DAYS.get(last_ix_choice)
     only_never = (last_ix_choice == "Never interacted")
 
@@ -111,6 +117,32 @@ def _render_list():
         companies = [c for c in companies if not c.get("last_interaction_at")]
 
     companies.sort(key=_SORTERS[sort_by])
+
+    # Reset page when any filter, search, sort, or per_page changes
+    sig = (
+        exclude_bl, tuple(status_filter or ()), search,
+        tuple(country_filter or ()), tuple(sector_filter or ()),
+        tuple(size_filter or ()), int(min_jobs),
+        last_ix_choice, sort_by, tuple(mon_status_filter or ()),
+        per_page,
+    )
+    if st.session_state.get("co_filter_sig") != sig:
+        st.session_state["co_page"] = 1
+        st.session_state["co_filter_sig"] = sig
+
+    # Paginate the final, sorted list
+    total = len(companies)
+    if per_page == "All":
+        page_companies = companies
+        n_pages = 1
+        current_page = 1
+    else:
+        n_pages = max(1, (total + per_page - 1) // per_page)
+        current_page = st.session_state.get("co_page", 1)
+        current_page = max(1, min(current_page, n_pages))
+        start = (current_page - 1) * per_page
+        end = start + per_page
+        page_companies = companies[start:end]
 
     # Header
     c1, c2 = st.columns([3, 1])
@@ -142,8 +174,30 @@ def _render_list():
             st.cache_data.clear()
             st.rerun()
 
+    # Pagination controls
+    if per_page != "All" and n_pages > 1:
+        pcols = st.columns([1, 2, 1, 1])
+        if pcols[0].button("◀ Prev", disabled=current_page <= 1):
+            st.session_state["co_page"] = current_page - 1
+            st.rerun()
+        pcols[1].caption(
+            f"Page {current_page} of {n_pages} · "
+            f"showing {len(page_companies)} of {total} companies"
+        )
+        if pcols[2].button("Next ▶", disabled=current_page >= n_pages):
+            st.session_state["co_page"] = current_page + 1
+            st.rerun()
+        jump = pcols[3].number_input(
+            "Go to", min_value=1, max_value=n_pages,
+            value=current_page, key="co_page_input",
+            label_visibility="collapsed",
+        )
+        if jump != current_page:
+            st.session_state["co_page"] = int(jump)
+            st.rerun()
+
     # Table
-    for c in companies:
+    for c in page_companies:
         with st.container(border=True):
             c1, c2 = st.columns([5, 3])
             with c1:
