@@ -8,10 +8,10 @@ class JobFilterEngine:
     def apply(jobs: list[JobPosting], job_filter: JobFilter) -> tuple[list[JobPosting], int, int]:
         results = []
         excluded_date = 0
-        cutoff = date.today() - timedelta(days=30)
+        cutoff = job_filter.date_from or (date.today() - timedelta(days=30))
 
         for job in jobs:
-            # Date filter: max 30 days (always applied, not configurable)
+            # Date filter: freshness window (configurable via date_from; 30d fallback)
             # None means undated — exclude so stale jobs can't slip through
             if not job.posted_date or job.posted_date < cutoff:
                 excluded_date += 1

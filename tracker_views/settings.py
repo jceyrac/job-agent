@@ -362,6 +362,27 @@ def _render_purge(db):
     )
 
 
+def _render_freshness(db):
+    """Freshness window widget — the posted_date admission cutoff."""
+    st.subheader("🕒 Freshness Window")
+
+    freshness = db.get_freshness_days()
+    new_freshness = st.number_input(
+        "Freshness window (days)",
+        min_value=7, max_value=180, value=freshness,
+        help="Only jobs posted within this many days are admitted (shown and "
+             "scored). Takes effect on the next pipeline run. Note: this keys "
+             "off the job's posting date (admission), whereas DB Purge keys off "
+             "first_seen (survival) — if freshness > purge, untouched jobs "
+             "still vanish at the purge horizon.",
+    )
+    if new_freshness != freshness:
+        if st.button("Save freshness", key="save_freshness"):
+            db.set_config("freshness_days", str(new_freshness))
+            st.success(f"Freshness window set to {new_freshness} days.")
+            st.rerun()
+
+
 def render():
     ensure_db()
     db = get_db()
@@ -374,6 +395,8 @@ def render():
     _render_broad_scraping(db)
     st.divider()
     _render_company_monitoring(db)
+    st.divider()
+    _render_freshness(db)
     st.divider()
     _render_purge(db)
     st.divider()

@@ -175,8 +175,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Pagination de la liste Companies** (`specs/026-companies-pagination/`)
-- Spec: `specs/026-companies-pagination/spec.md`
-- Plan: `specs/026-companies-pagination/plan.md`
+Current feature: **Configurable Freshness Window** (`specs/028-configurable-freshness-window/`)
+- Spec: `specs/028-configurable-freshness-window/spec.md`
+- Plan: `specs/028-configurable-freshness-window/plan.md`
 - Tasks: *(not yet generated)*
 <!-- SPECKIT END -->

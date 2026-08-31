@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -326,6 +326,7 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
         titles=profile.job_titles,
         exclude=profile.title_exclude,
         remote_or_hybrid=profile.scrape_remote_or_hybrid,
+        date_from=date.today() - timedelta(days=db.get_freshness_days()),
     )
 
     scraper_classes = discover_scrapers()
@@ -389,7 +390,7 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     already_count = total_fetched - total_new
     print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB")
     if total_excluded_date:
-        print(f"📅 {total_excluded_date} jobs excluded (posted > 30 days ago)")
+        print(f"📅 {total_excluded_date} jobs excluded (posted > {db.get_freshness_days()} days ago)")
     if total_excluded_title:
         print(f"🔤 {total_excluded_title} jobs excluded (title not in profile list)")
 

@@ -1352,8 +1352,9 @@ class JobStorage:
                 clauses.append(f"({not_parts})")
                 params += [f"%{kw.lower()}%" for kw in excl_title]
 
+        days = self.get_freshness_days()
         clauses.append(
-            "(j.posted_date >= date('now', '-30 days') OR j.posted_date IS NULL OR j.posted_date = '')"
+            f"(j.posted_date >= date('now', '-{days} days') OR j.posted_date IS NULL OR j.posted_date = '')"
         )
         where = " AND ".join(clauses)
         query = f"{base} WHERE {where}"
@@ -2328,6 +2329,19 @@ class JobStorage:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+
+    def get_freshness_days(self) -> int:
+        """Freshness window (posted_date admission cutoff) as an int.
+
+        Single source for the configurable 30-day default. Absent, malformed,
+        or non-positive config coerces to 30 (Constitution IX: pipeline runs
+        without config; the Settings widget enforces a 7-day minimum).
+        """
+        try:
+            days = int(self.get_config("freshness_days", default="30") or "30")
+        except (TypeError, ValueError):
+            return 30
+        return days if days > 0 else 30
 
     # ------------------------------------------------------------------
     # Contacts + interactions
