@@ -32,6 +32,7 @@ def _load_scrapers():
     from scrapers.boards.jobup           import JobupScraper
     from scrapers.boards.wellfound       import WellfoundScraper
     from scrapers.boards.linkedin        import LinkedInScraper
+    from scrapers.boards.joinup          import JoinupScraper
 
     # optional_fields: fields that are best-effort for this source.
     # A None/missing value raises ⚠️  instead of ❌ and does not cause FAIL.
@@ -50,6 +51,7 @@ def _load_scrapers():
         (JobupScraper,           "",               set()),
         (WellfoundScraper,       "X_RAPIDAPI_KEY", NO_LOC),
         (LinkedInScraper,        "",               NO_LOC),  # remote listings carry no city
+        (JoinupScraper,          "",               {"base_location", "work_mode"}),  # base_location unset; work_mode None for non-"Remote"
     ]
 
 
