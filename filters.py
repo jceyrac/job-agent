@@ -1,3 +1,4 @@
+import re
 from datetime import date, timedelta
 
 from models import JobFilter, JobPosting
@@ -25,8 +26,9 @@ class JobFilterEngine:
                 " ".join(job.tags),
             ]).lower()
 
-            # Exclude if any exclude word is present
-            if any(ex.lower() in searchable for ex in job_filter.exclude):
+            # Exclude if any exclude word is present (word-boundary match, so
+            # "intern" doesn't false-positive on "international"/"internet")
+            if any(re.search(rf"\b{re.escape(ex.lower())}\b", searchable) for ex in job_filter.exclude):
                 continue
 
             # Title is a hard requirement: job title must match at least one PM title term

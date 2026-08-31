@@ -68,3 +68,18 @@ def test_filter_falls_back_to_30_days_when_date_from_none():
     assert "Fresh PM" in titles
     assert "Old PM" not in titles
     assert excluded_date == 1
+
+
+# ── Exclude matcher (word-boundary — no substring false positives) ───────────
+
+def test_exclude_word_boundary_no_substring_false_positive():
+    job = _job("Product Lead", posted_days_ago=1)
+    job.description = "customers, investors and international growth"
+    results, _, _ = JobFilterEngine.apply([job], JobFilter(exclude=["intern"]))
+    assert [j.title for j in results] == ["Product Lead"]
+
+
+def test_exclude_word_boundary_matches_standalone_word():
+    job = _job("Product Manager Intern", posted_days_ago=1)
+    results, _, _ = JobFilterEngine.apply([job], JobFilter(exclude=["intern"]))
+    assert results == []
