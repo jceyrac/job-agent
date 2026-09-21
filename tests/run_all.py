@@ -41,7 +41,7 @@ def _load_scrapers():
     return [
         # (scraper_class,        env_key_required, optional_fields)
         (RemoteOKScraper,        "",               NO_LOC),  # global-remote jobs have no city
-        (Web3CareerScraper,      "",               NO_LOC),  # source doesn't populate city/country
+        (Web3CareerScraper,      "",               {"base_location", "work_mode"}),  # no city/country; work_mode deferred to LLM extraction
         (WeWorkRemotelyScraper,  "",               set()),
         (CryptoJobsComScraper,   "",               set()),
         (CryptoJobsListScraper,  "",               NO_LOC),  # some listings carry no location

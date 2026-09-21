@@ -15,6 +15,8 @@ HEADERS = {
     "Referer": "https://google.com",
 }
 
+MAX_PAGES = 3  # shallow pagination; a URL stops early once its own pages start recycling
+
 
 def _clean_text(text: str) -> str | None:
     text = re.sub(r"<[^>]+>", " ", text)
@@ -69,35 +71,45 @@ class Web3CareerScraper(BaseScraper):
     SOURCE_NAME = "Web3Career"
     ENABLED = True
 
+    # Static curated tag list (Constitution I: scrape broad, scorer is the single
+    # filter point). Every URL is AGGREGATED, not a fallback — one failing doesn't
+    # block the others. 2026-08-25 verification (browser-UA curl):
+    #   /product-manager-jobs          → 15/page, works
+    #   /product-manager+remote-jobs   → subset of base; adds 26 distinct over base's
+    #                                    3 pages (45 + 26 = 71 unique total)
+    #   /jobs/product-manager          → 404 (removed)
+    #   /product-owner+remote-jobs     → 0 offers (removed)
+    #   /product-manager+europe-jobs   → 0 offers, no region+tag grammar (removed)
+    #   /web3-jobs-europe              → generic roles only, ~0 distinct PM/PO EU
+    #                                    (location-agnostic base tag already covers
+    #                                     Europe) — Europe branch dropped.
     URLS = [
         f"{BASE_URL}/product-manager-jobs",
-        f"{BASE_URL}/jobs/product-manager",
+        f"{BASE_URL}/product-manager+remote-jobs",
     ]
 
     def fetch(self, job_filter: JobFilter) -> list[JobPosting]:
-        html = self._fetch_html()
-        if not html:
+        rows = self._collect_rows()
+        if not rows:
             print(f"[{self.SOURCE_NAME}] All URLs failed — scraper disabled for this run")
             return []
-        return self._parse(html)
+        return self._build_postings(rows)
 
-    def _fetch_html(self) -> str | None:
-        for url in self.URLS:
-            try:
-                r = requests.get(url, headers=HEADERS, timeout=10)
-                if r.status_code == 200:
-                    print(f"[{self.SOURCE_NAME}] Fetched {url}")
-                    return r.text
-                print(f"[{self.SOURCE_NAME}] {url} → HTTP {r.status_code}")
-            except Exception as e:
-                print(f"[{self.SOURCE_NAME}] {url} → Error: {e}")
+    def _fetch_one(self, url: str) -> str | None:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            if r.status_code == 200:
+                print(f"[{self.SOURCE_NAME}] Fetched {url}")
+                return r.text
+            print(f"[{self.SOURCE_NAME}] {url} → HTTP {r.status_code}")
+        except Exception as e:
+            print(f"[{self.SOURCE_NAME}] {url} → Error: {e}")
         return None
 
-    def _parse(self, html: str) -> list[JobPosting]:
+    def _extract_rows(self, html: str) -> list[dict]:
         soup = BeautifulSoup(html, "html.parser")
-        rows = soup.find_all("tr", class_="table_row")
-        jobs = []
-        for row in rows:
+        rows = []
+        for row in soup.find_all("tr", class_="table_row"):
             try:
                 title_tag = row.find("h2")
                 if not title_tag:
@@ -125,26 +137,73 @@ class Web3CareerScraper(BaseScraper):
                     except ValueError:
                         pass
 
-                description, detail_location = _fetch_detail(url) if url else (None, None)
-                time.sleep(0.3)
-
-                resolved = detail_location or listing_location or None
-                display_location = resolved or "Remote"
-
-                jobs.append(JobPosting(
-                    source=self.SOURCE_NAME,
-                    title=title,
-                    company=company,
-                    location=display_location,
-                    url=url,
-                    posted_date=posted_date,
-                    description=description,
-                    tags=[],
-                    salary=None,
-                    work_mode="remote",
-                    base_location=resolved,
-                ))
+                rows.append({
+                    "title": title,
+                    "company": company,
+                    "url": url,
+                    "listing_location": listing_location,
+                    "posted_date": posted_date,
+                })
             except Exception as e:
                 print(f"[{self.SOURCE_NAME}] Parse error on row: {e}")
                 continue
+        return rows
+
+    def _collect_rows(self) -> list[dict]:
+        """Aggregate rows across all URLs and pages, deduped by job URL.
+
+        Each URL is fetched independently and paginated up to MAX_PAGES. Dedup is
+        GLOBAL (a job may appear on more than one tag), but the recycling stop is
+        PER-URL: a subset tag (product-manager+remote ⊂ product-manager) can have a
+        page whose rows are all already seen globally while its NEXT page still adds
+        fresh jobs, so keying the stop on global dedup would truncate it. Instead we
+        stop a URL only when a page repeats that URL's own earlier pages (recycle) or
+        is empty/HTTP-failed.
+        """
+        seen_urls: set[str] = set()
+        rows: list[dict] = []
+        for url in self.URLS:
+            url_seen: set[str] = set()
+            for page in range(1, MAX_PAGES + 1):
+                page_url = f"{url}?page={page}" if page > 1 else url
+                html = self._fetch_one(page_url)
+                if html is None:
+                    break
+                page_rows = self._extract_rows(html)
+                if not page_rows:
+                    break  # empty page = past the end of this tag
+                fresh_for_url = [r for r in page_rows if r["url"] not in url_seen]
+                for r in fresh_for_url:
+                    url_seen.add(r["url"])
+                new_rows = [r for r in fresh_for_url if r["url"] not in seen_urls]
+                for r in new_rows:
+                    seen_urls.add(r["url"])
+                rows.extend(new_rows)
+                if not fresh_for_url:
+                    break  # this URL's own pages started recycling
+        return rows
+
+    def _build_postings(self, rows: list[dict]) -> list[JobPosting]:
+        jobs = []
+        for row in rows:
+            url = row["url"]
+            description, detail_location = _fetch_detail(url) if url else (None, None)
+            time.sleep(0.3)
+
+            resolved = detail_location or row["listing_location"] or None
+            display_location = resolved or "Remote"
+
+            jobs.append(JobPosting(
+                source=self.SOURCE_NAME,
+                title=row["title"],
+                company=row["company"],
+                location=display_location,
+                url=url,
+                posted_date=row["posted_date"],
+                description=description,
+                tags=[],
+                salary=None,
+                work_mode=None,  # deferred to LLM extraction (remote/hybrid/on-site/unknown)
+                base_location=resolved,
+            ))
         return jobs
