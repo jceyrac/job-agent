@@ -175,8 +175,8 @@ Changes in scope:
 No new DB tables. No new dependencies. Preserve all existing logic.
 
 <!-- SPECKIT START -->
-Current feature: **Configurable Freshness Window** (`specs/028-configurable-freshness-window/`)
-- Spec: `specs/028-configurable-freshness-window/spec.md`
-- Plan: `specs/028-configurable-freshness-window/plan.md`
-- Tasks: *(not yet generated)*
+Current feature: **CV + Cover Letter Agent** (`specs/029-cv-cover-letter-agent/`)
+- Spec: `specs/029-cv-cover-letter-agent/spec.md`
+- Plan: `specs/029-cv-cover-letter-agent/plan.md`
+- Tasks: `specs/029-cv-cover-letter-agent/tasks.md`
 <!-- SPECKIT END -->

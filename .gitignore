@@ -1,6 +1,10 @@
 data/jobs.db
 data/jobs.db-wal
 data/jobs.db-shm
+data/cv_agent_checkpoints.sqlite
+data/cv_agent_checkpoints.sqlite-wal
+data/cv_agent_checkpoints.sqlite-shm
+data/cv_outputs/
 data/jobs_live_snapshot.db
 data/jobs_live_snapshot.db-wal
 data/jobs_live_snapshot.db-shm

@@ -10,3 +10,5 @@ feedparser>=6.0.0
 python-jobspy>=0.1.0
 python-docx>=1.0.0
 pypdf>=3.0.0
+langgraph>=1.2,<2
+langgraph-checkpoint-sqlite>=3.0,<4
