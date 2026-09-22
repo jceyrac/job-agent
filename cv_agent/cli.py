@@ -67,7 +67,31 @@ def _interrupt_payload(snapshot):
 
 # ── gate prompts ────────────────────────────────────────────────────────────
 
+def _require_field(label, current="", allow_keep=False):
+    """Return a non-blank value for ``label``.
+
+    - Blank ``current`` → prompt until a non-blank value is entered (forced input).
+    - Non-blank ``current`` and ``allow_keep=False`` → return it untouched
+      (fast-path for "proceed" when the field is already filled).
+    - Non-blank ``current`` and ``allow_keep=True`` → prompt an override, Enter keeps it.
+    """
+    value = (current or "").strip()
+    if value:
+        if not allow_keep:
+            return value
+        answer = input(f"{label} override [Enter to keep]: ").strip()
+        return answer or value
+    while True:
+        answer = input(f"{label}: ").strip()
+        if answer:
+            return answer
+        print(f"   ⚠️ {label} is required — please enter a non-blank value.")
+
+
 def prompt_analysis_gate(payload) -> dict:
+    job_title = (payload.get("job_title") or "").strip()
+    job_company = (payload.get("job_company") or "").strip()
+
     print("\n" + "=" * 64)
     print("GATE 1 — ANALYSIS")
     print("=" * 64)
@@ -79,22 +103,33 @@ def prompt_analysis_gate(payload) -> dict:
           f"(confidence {payload.get('profile_confidence')})")
     if fa.get("gaps"):
         print("Gaps:   " + "; ".join(fa["gaps"]))
+    print(f"Title:   {job_title or '(missing)'}")
+    print(f"Company: {job_company or '(missing)'}")
+    if not job_title or not job_company:
+        print("\n⚠️ Title/Company missing — required before proceeding.")
     print("\n[1] proceed   [2] adjust (directives)   [3] abort")
     while True:
         choice = input("> ").strip().lower()
         if choice in ("1", "proceed", "p"):
-            return {"decision": "proceed", "user_directives": ""}
+            title = _require_field("Job title", job_title)
+            company = _require_field("Company", job_company)
+            out = {"decision": "proceed", "user_directives": ""}
+            if title != job_title:
+                out["title"] = title
+            if company != job_company:
+                out["company"] = company
+            return out
         if choice in ("2", "adjust", "a"):
             directives = input("Directives (free text): ").strip()
             out = {"decision": "proceed", "user_directives": directives}
             profile = input("Override profile [swiss/french, Enter to keep]: ").strip().lower()
             if profile in ("swiss", "french"):
                 out["proposed_profile"] = profile
-            company = input("Company override [Enter to keep]: ").strip()
-            if company:
+            company = _require_field("Company", job_company, allow_keep=True)
+            if company != job_company:
                 out["company"] = company
-            title = input("Job title override [Enter to keep]: ").strip()
-            if title:
+            title = _require_field("Job title", job_title, allow_keep=True)
+            if title != job_title:
                 out["title"] = title
             cv_title = input("CV header title [Enter to keep 'Senior Product Manager | AI | Web3']: ").strip()
             if cv_title:

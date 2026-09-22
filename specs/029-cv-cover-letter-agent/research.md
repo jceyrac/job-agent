@@ -200,6 +200,18 @@ is idempotent.
 - `paste` → text from stdin; title/company left minimal (or minimal heuristic),
   `description` = pasted text, `source="paste"`. Extraction fills the rest.
 
+**Note (title/company guard at Gate 1, not an extraction fix)**: `extract_job_fields`
+deliberately does **not** fill `title`/`company` — in the main pipeline the scrapers
+supply them upstream, so the extractor only back-fills `summary`/`work_mode`/
+`geo_zone`/`company_country` and the like. A `--paste` entry therefore starts with
+both blank and would otherwise render into `Company - Role` / `Jerome_Ceyrac_CV_Job`.
+Rather than change `scorer.py` (shared with the main pipeline, out of scope), the
+`analysis_gate` payload now surfaces `job_title`/`job_company`, and `cli.py` forces
+non-blank values for both before `proceed` — in the direct `[1] proceed` branch as
+well as `[2] adjust`. The corrected values are patched back onto the job downstream
+(the existing closed-board company/title override), so the slug, render folder and
+LLM context all see them.
+
 **Alternatives considered**:
 - Re-implement extraction/scoring in the agent. Rejected: violates "scorer is the
   sole fit judge" (Constitution I) and FR-002.

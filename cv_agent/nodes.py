@@ -380,14 +380,19 @@ def analysis_gate(state: dict) -> dict:
     the user, and resumes with ``Command(resume=<decision>)`` whose value is
     returned here. ``decision`` ∈ {"proceed", "abort"}; "adjust" is "proceed" plus
     ``user_directives``, an optional ``proposed_profile`` override, and optional
-    ``company``/``title`` overrides (closed-board correction).
+    ``company``/``title`` overrides (closed-board correction). The payload also
+    surfaces ``job_title``/``job_company`` so the CLI can require them when empty
+    (``--paste`` entries start with both blank — the scorer never fills them).
     """
+    job = state.get("job") or {}
     payload = {
         "score": state.get("score"),
         "score_reason": state.get("score_reason"),
         "fit_analysis": state.get("fit_analysis"),
         "proposed_profile": state.get("proposed_profile"),
         "profile_confidence": state.get("profile_confidence"),
+        "job_title": job.get("title"),
+        "job_company": job.get("company"),
     }
     decision = interrupt(payload)
     if not isinstance(decision, dict):
@@ -410,7 +415,7 @@ def analysis_gate(state: dict) -> dict:
         ) if v and v.strip()
     }
     if patches:
-        out["job"] = {**(state.get("job") or {}), **patches}
+        out["job"] = {**job, **patches}
     return out
 
 
