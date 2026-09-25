@@ -265,3 +265,34 @@ every LLM call on the unified path (FR-014). The agent's own nodes
 
 **Alternatives considered**: LangChain `ChatOpenAI` (used by a past standalone
 exercise) — explicitly rejected by the spec.
+
+---
+
+## 11. Hardening source: the Jobgether analytics job (2026-09-25)
+
+**Decision**: `tailor_cv` and `self_critique` prompts were hardened after a
+real run exposed three defects on the Jobgether "Senior Product Manager,
+Analytics Features" posting.
+
+**Rationale** (observed failures, each now a rule):
+1. **Header/body incoherence** — the header subtitle was `Senior Product
+   Manager | AI | Web3` on a non-Web3 analytics role, even though the Web3
+   line had been trimmed from the body. Cause: the title was deterministic
+   (master default only), so it could not track the re-angled body. Fix: the
+   LLM now emits an adapted `title`; `renderer.py` resolves it as
+   `title_override > cv_content.title > master default` (still never the
+   posting's title verbatim, still human-overridable at the gate).
+2. **Bullets untouched** — only `profile`/`competencies` were re-angled; role
+   bullets were copied verbatim, so announced skills ("dashboards",
+   "data-quality") had no supporting bullet. Fix: `TAILOR_CV_PROMPT` now
+   re-angles bullet vocabulary/emphasis with the integrity guardrails (only
+   material a role really contained; figures/dates/locations immutable; no
+   JD keyword injected without material).
+3. **Role order bug** — ascending dates (ADEO 2021 → Powens 2022 → Vaudoise
+   2024) with the current role buried 3rd. Fix: anti-chronological default,
+   the "Present" role always first, deviation only for a strong relevance gain.
+
+`SELF_CRITIQUE_PROMPT` gained four blocking controls from the same case —
+SKILLS-SANS-PREUVE, MOT-CLÉ NON ANCRÉ, ÉTIREMENT DE DOMAINE, COHÉRENCE
+EN-TÊTE/CORPS — each forcing `needs_revision` with the offender named. The
+master `_note` TITLE and role-order rules were reconciled to match.

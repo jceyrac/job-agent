@@ -131,7 +131,7 @@ def prompt_analysis_gate(payload) -> dict:
             title = _require_field("Job title", job_title, allow_keep=True)
             if title != job_title:
                 out["title"] = title
-            cv_title = input("CV header title [Enter to keep 'Senior Product Manager | AI | Web3']: ").strip()
+            cv_title = input("CV header title [Enter to let the agent adapt it to the role]: ").strip()
             if cv_title:
                 out["title_override"] = cv_title
             return out

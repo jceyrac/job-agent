@@ -54,10 +54,9 @@ TAILOR_CV_PROMPT = """You re-angle a master CV for a specific job, preserving FA
 reword emphasis and reorder, but NEVER invent a domain, metric, tool, achievement,
 or role the master CV does not contain.
 
-Output STRICT JSON matching the master CV's shape exactly (NOTE: no "title" —
-the header title is deterministic, set by the renderer from the master or a
-user override, never by you):
+Output STRICT JSON matching the master CV's shape exactly:
 {
+  "title": "...",
   "profile": "...",
   "competencies": [["Name", "items separated by commas"], ...],
   "roles": [{"title": "...", "dates": "...", "sub": "...", "bullets": ["...", "..."]}, ...],
@@ -66,11 +65,26 @@ user override, never by you):
   "interests": [["Theme", "items"], ...]
 }
 Rules:
+- title: the header subtitle, ADAPTED to the job's domain (e.g. "Senior Product
+  Manager | Data & Analytics", "| Fintech & Payments"). It must be defendable from
+  the candidate's real profile (drawn from real strengths), stay coherent with the
+  re-angled body (if a domain is trimmed or de-emphasised in the body, do not show
+  it here), and NEVER copy the posting's own job title verbatim.
 - profile: 3–5 sentence summary angled to the role and its critical requirements.
 - competencies: 4–6 competency groups, re-worded/re-ordered to lead with what the
   posting rewards. Keep each group's items as a single comma-separated string.
-- roles: keep dates/sub factual (locations/companies never change); re-angle bullet
-  wording and REORDER roles to lead with the most relevant one.
+- roles: title/dates/sub/employer/figures are FACTUAL — never change them. The
+  BULLETS are prose: actively re-angle their vocabulary and emphasis (as with
+  profile + competencies) so each bullet leads with the existing material that
+  answers the posting. Do NOT copy bullets verbatim when a re-angle would surface
+  relevant material — shift emphasis and word choice, keep the facts. Integrity
+  limits: re-angle only what a role REALLY contained (never attribute a
+  domain/tool/result it lacked); never alter figures, dates, locations or employer
+  names; if a JD keyword has material in no role, do NOT inject it into a bullet —
+  at most assume it as "concept/awareness" in competencies, or drop it.
+  ORDER: default anti-chronological, with the CURRENT role (dates ending "Present")
+  ALWAYS first. Reorder away from this only for a STRONG relevance gain, never
+  burying the current role and never producing a run of ASCENDING dates at the top.
 - languages: keep factual (levels may only be adjusted within the master's stated levels).
 - interests: always include (from the master)."""
 
@@ -103,7 +117,18 @@ Return STRICT JSON:
 - factuality_violations MUST be empty for approval: list any claim in the tailored
   CV NOT present in the master CV (an invented role, domain, metric, or credential).
 - If any critical requirement is unaddressed, or any claim is invented, set needs_revision true.
-Be strict about factuality: re-angling wording is fine; inventing a fact is not."""
+Be strict about factuality: re-angling wording is fine; inventing a fact is not.
+
+Each of the following also forces needs_revision true, with notes naming exactly
+what is wrong:
+- SKILLS-SANS-PREUVE: a competency/skill claimed that no role bullet actually
+  demonstrates (re-angle a bullet that has the material, or drop the skill).
+- MOT-CLÉ NON ANCRÉ: a JD keyword added to competencies without a role that really
+  carried it (e.g. "benchmarking" injected with no supporting experience).
+- ÉTIREMENT DE DOMAINE: a domain claim in the profile not supported by the roles
+  (e.g. "data science" when the roles are data-infrastructure).
+- COHÉRENCE EN-TÊTE/CORPS: the header subtitle showing a domain the body trimmed
+  or de-emphasised."""
 
 # ── Templates: master-CV anchor + job context (injected at call time) ──────
 MASTER_ANCHOR = "The factual master CV (source of truth — never contradict it):\n{master_json}"

@@ -9,11 +9,12 @@ is a separate, host-agnostic WebDAV step (``nextcloud_publish.py``), so the agen
 no longer depends on the Mac's desktop-sync client.
 
 ⚠️ FACTUAL FIREWALL (research §4, contracts node-io-contract.md): this module
-imports **no** ``llm``. Every field it writes is deterministic — fixed master
-fields (``photo``, ``relocation``) plus derived ``contact`` (CH/FR from
-``proposed_profile``) and ``filename`` (from ``slug``). The LLM never controls
-output naming, the contact header, or the photo/relocation fields (Constitution
-§IV: structure is deterministic, prose is LLM).
+imports **no** ``llm``. The fields it derives are deterministic — fixed master
+fields (``photo``, ``relocation``), ``contact`` (CH/FR from ``proposed_profile``)
+and ``filename`` (from ``slug``). The LLM never controls output naming, the
+contact block, or the photo/relocation fields (Constitution §IV: structure is
+deterministic, prose is LLM). The header *subtitle* is prose: it prefers the
+human override, then the LLM-adapted title, then the master default.
 """
 
 import json
@@ -48,8 +49,8 @@ def default_output_root() -> str:
 # Fixed-content fields carried from the master into every tailored data file.
 _FIXED_FIELDS = ("_note", "photo", "relocation")
 # Content fields the LLM may re-angle (with master fallback). "title" is
-# deliberately absent: it is deterministic (master default, or the user's
-# title_override), never LLM-controlled — see render_documents().
+# handled separately (human override > LLM-adapted title > master default), not
+# via this tuple — see render_documents().
 _CONTENT_FIELDS = (
     "profile", "competencies", "roles",
     "education", "languages", "interests",
@@ -109,10 +110,10 @@ def render_documents(cv_content: dict, proposed_profile: str, slug: str, job: di
     that assembles the final data file, layering fixed fields + derived fields
     on top of it (never trusting the LLM to name files or set the header).
 
-    The header ``title`` is deterministic: ``title_override`` when the human set
-    one at the analysis gate, else the master's standard title. The LLM's own
-    ``cv_content.title`` is intentionally ignored so the header title can never
-    drift from the default (or from an explicit override).
+    The header ``title`` (subtitle) resolution order: the human's
+    ``title_override`` when set at the analysis gate, else the LLM-adapted
+    ``cv_content.title``, else the master's standard title — so the subtitle can
+    be re-angled to the job's domain while a human override always wins.
     """
     master = load_master()
 
@@ -126,8 +127,11 @@ def render_documents(cv_content: dict, proposed_profile: str, slug: str, job: di
     for key in _CONTENT_FIELDS:
         # Fall back to the master's own content when the LLM left a field empty.
         data[key] = cv_content.get(key) if cv_content.get(key) else master.get(key)
-    # Title is deterministic: explicit human override wins, else master default.
-    data["title"] = (title_override or "").strip() or master.get("title", "")
+    # Title (subtitle): human override wins, else the LLM-adapted title, else
+    # the master default.
+    data["title"] = ((title_override or "").strip()
+                     or (cv_content.get("title") or "").strip()
+                     or master.get("title", ""))
 
     # The working folder holds all three deliverables (.json/.docx/.pdf); the
     # publish step then pushes them to Nextcloud via WebDAV (host-agnostic).

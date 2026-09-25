@@ -163,8 +163,18 @@ resolve_reference (det)         # job_id | url | pasted text  → JobPosting
   correction seam for unreliable closed-board extraction.
 - **FR-008** `tailor_cv` (LLM): ALWAYS runs. Re-angles `cv_data_master.json` into
   `cv_data_<slug>.json` content per requirements + directives. Content only; it
-  MUST NOT fabricate facts absent from the master. The `slug` is the **title
-  alone** (e.g. `chief-product-officer-head-of-product-payments`), so the derived
+  MUST NOT fabricate facts absent from the master. Re-angling happens at BULLET
+  level too (vocabulary + emphasis of role bullets, not just profile +
+  competencies), surfacing only material a role really contained — never invent
+  a domain/tool/result, never alter figures/dates/locations/employer names, and
+  never inject a JD keyword that has material in no role (at most assume it as
+  "concept/awareness" in competencies, or drop it). It also emits the header
+  subtitle ADAPTED to the job's domain (defendable from the real profile,
+  coherent with the re-angled body, never the posting's title verbatim). Role
+  ORDER defaults to anti-chronological with the CURRENT role ("Present") always
+  first; reorder only for a STRONG relevance gain, never burying the current
+  role or producing a run of ascending dates. The `slug` is the **title alone**
+  (e.g. `chief-product-officer-head-of-product-payments`), so the derived
   filename is `Jerome_Ceyrac_CV_<Title>` while the output folder stays
   `<Company> - <Title>`.
 - **FR-009** `draft_cover_letter` / recruiter message (LLM, CONDITIONAL): only
@@ -172,7 +182,12 @@ resolve_reference (det)         # job_id | url | pasted text  → JobPosting
   only when a named `recruiter_contact` exists.
 - **FR-010** `self_critique` (LLM): checks requirement coverage, keyword match,
   factual accuracy vs master, and tone; emits `needs_revision` + notes. Bounded
-  revise loop back to `tailor_cv`, `revision_count` ≤ 3.
+  revise loop back to `tailor_cv`, `revision_count` ≤ 3. Four blocking controls
+  (each forces `needs_revision` true with the specific offender named):
+  SKILLS-SANS-PREUVE (a claimed skill no role bullet demonstrates), MOT-CLÉ NON
+  ANCRÉ (a JD keyword added without a supporting role), ÉTIREMENT DE DOMAINE (a
+  domain claim unsupported by the roles), and COHÉRENCE EN-TÊTE/CORPS (subtitle
+  showing a domain the body trimmed/de-emphasised).
 - **FR-011** `render` (deterministic, NO LLM): write `cv_data_<slug>.json` into
   the job's local working folder, shell out to `node render_cv.js <data> <outdir>`,
   produce `.docx` + PDF (LibreOffice). `renderer.py` imports no `llm`.

@@ -49,7 +49,7 @@ class CVAgentState(TypedDict, total=False):
     # ── analysis_gate ──────────────────────────────────────────────────────
     decision: str           # "proceed" | "abort"
     user_directives: str    # free-text directives merged into tailor/draft prompts
-    title_override: str     # deterministic CV header title; wins over the master title when set
+    title_override: str     # CV header title (subtitle); wins over the LLM-adapted and master title when set
 
     # ── tailor_cv ──────────────────────────────────────────────────────────
     slug: str               # "company-title" ASCII slug; names cv_data_<slug>.json
