@@ -29,7 +29,7 @@ from storage import normalize_url
 # helpers
 # ---------------------------------------------------------------------------
 
-NON_NEW_STATUSES = frozenset({"queued", "ready", "applied", "rejected", "archived", "expired"})
+NON_NEW_STATUSES = frozenset({"queued", "ready", "applied", "interviewing", "offer", "rejected", "withdrawn", "archived", "expired"})
 
 
 

@@ -13,12 +13,12 @@ import os
 import dataclasses
 import sqlite3
 import traceback
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from models import JobPosting
-from storage import JobStorage, _normalize_company_name, COMPANY_STATUSES
+from storage import JobStorage, _normalize_company_name, COMPANY_STATUSES, _now
 from tracker_views.shared import (
     score_badge, company_status_badge, relationship_badge,
     sector_label, unverified_badge, apply_filters,
@@ -2179,6 +2179,446 @@ def test_save_scored_without_comp_flag():
     assert digest[0]["comp_flag"] == 0
 
 
+# ── Lifecycle (spec 030) tests ────────────────────────────────────────────────
+
+
+def _lifecycle_db():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    return db
+
+
+def _apply(db, url, company="Acme Corp", app_date="2026-08-20"):
+    """Create a job + company, record application_submitted, return the job.
+
+    `source=url` makes each fixture unique so storage dedup (source+norm title/company)
+    doesn't collapse distinct test jobs into a single row.
+    """
+    job = _job(url=url, company=company, source=url)
+    cid = db.upsert_company(company)
+    db.save_scored(job, _score(), PROFILE_ID, company_id=cid)
+    db.record_lifecycle_event(
+        job.id, event="application_submitted", occurred_at=app_date, new_status="applied"
+    )
+    return job
+
+
+def test_lifecycle_derived_labels():
+    db = _lifecycle_db()
+
+    # Applied
+    j1 = _apply(db, "https://example.com/lc1")
+    assert db.get_lifecycle_summary(j1.id)["label"] == "Applied"
+
+    # Interviewing · round 1
+    j2 = _apply(db, "https://example.com/lc2")
+    db.record_lifecycle_event(j2.id, event="interview", occurred_at="2026-08-25",
+                              new_status="interviewing")
+    assert db.get_lifecycle_summary(j2.id)["label"] == "Interviewing · round 1"
+
+    # Interviewing · round 2 · next (one held, one future)
+    j3 = _apply(db, "https://example.com/lc3", app_date="2026-09-01")
+    db.record_lifecycle_event(j3.id, event="interview", occurred_at="2026-09-10",
+                              new_status="interviewing")
+    db.record_lifecycle_event(j3.id, event="interview", occurred_at="2099-01-05",
+                              new_status="interviewing")
+    s3 = db.get_lifecycle_summary(j3.id)
+    assert s3["label"] == "Interviewing · round 2 · next 05/01", s3["label"]
+    assert s3["interviews_held"] == 1
+
+    # Offer
+    j4 = _apply(db, "https://example.com/lc4")
+    db.record_lifecycle_event(j4.id, event="decision_received", occurred_at="2026-09-01",
+                              outcome="positive", new_status="offer")
+    assert db.get_lifecycle_summary(j4.id)["label"] == "Offer"
+
+    # Rejected — no interview
+    j5 = _apply(db, "https://example.com/lc5")
+    db.record_lifecycle_event(j5.id, event="decision_received", occurred_at="2026-09-04",
+                              outcome="negative", new_status="rejected")
+    assert db.get_lifecycle_summary(j5.id)["label"] == "Rejected — no interview"
+
+    # Rejected — after N interview(s)
+    j6 = _apply(db, "https://example.com/lc6")
+    db.record_lifecycle_event(j6.id, event="interview", occurred_at="2026-08-25",
+                              new_status="interviewing")
+    db.record_lifecycle_event(j6.id, event="interview", occurred_at="2026-08-28",
+                              new_status="interviewing")
+    db.record_lifecycle_event(j6.id, event="decision_received", occurred_at="2026-09-04",
+                              outcome="negative", new_status="rejected")
+    assert db.get_lifecycle_summary(j6.id)["label"] == "Rejected — after 2 interviews"
+
+    # Rejected — offer withdrawn by employer
+    j7 = _apply(db, "https://example.com/lc7")
+    db.record_lifecycle_event(j7.id, event="decision_received", occurred_at="2026-09-01",
+                              outcome="positive", new_status="offer")
+    db.record_lifecycle_event(j7.id, event="decision_received", occurred_at="2026-09-04",
+                              outcome="negative", new_status="rejected")
+    assert db.get_lifecycle_summary(j7.id)["label"] == "Rejected — offer withdrawn by employer"
+
+    # Withdrawn — no interview
+    j8 = _apply(db, "https://example.com/lc8")
+    db.record_lifecycle_event(j8.id, event="withdrawn", occurred_at="2026-09-01",
+                              new_status="withdrawn")
+    assert db.get_lifecycle_summary(j8.id)["label"] == "Withdrawn — no interview"
+
+    # Withdrawn — after N interview(s)
+    j9 = _apply(db, "https://example.com/lc9")
+    db.record_lifecycle_event(j9.id, event="interview", occurred_at="2026-08-25",
+                              new_status="interviewing")
+    db.record_lifecycle_event(j9.id, event="withdrawn", occurred_at="2026-09-01",
+                              new_status="withdrawn")
+    assert db.get_lifecycle_summary(j9.id)["label"] == "Withdrawn — after 1 interview"
+
+    # Withdrawn — offer declined
+    j10 = _apply(db, "https://example.com/lc10")
+    db.record_lifecycle_event(j10.id, event="decision_received", occurred_at="2026-09-01",
+                              outcome="positive", new_status="offer")
+    db.record_lifecycle_event(j10.id, event="withdrawn", occurred_at="2026-09-05",
+                              new_status="withdrawn")
+    assert db.get_lifecycle_summary(j10.id)["label"] == "Withdrawn — offer declined"
+
+
+def test_lifecycle_round_numbering_and_held():
+    db = _lifecycle_db()
+    job = _apply(db, "https://example.com/lc-round", app_date="2026-09-01")
+    db.record_lifecycle_event(job.id, event="interview", occurred_at="2026-09-10",
+                              new_status="interviewing")
+    db.record_lifecycle_event(job.id, event="interview", occurred_at="2099-03-01",
+                              new_status="interviewing")
+
+    s = db.get_lifecycle_summary(job.id)
+    assert s["round"] == 2, s["round"]
+    assert s["interviews_held"] == 1, s["interviews_held"]
+    assert s["next_interview"] == "2099-03-01", s["next_interview"]
+
+
+def test_lifecycle_reasons_unprefixed():
+    db = _lifecycle_db()
+
+    j1 = _apply(db, "https://example.com/lc-r1")
+    db.record_lifecycle_event(j1.id, event="decision_received", occurred_at="2026-09-04",
+                              outcome="negative", notes="Not enough crypto experience",
+                              new_status="rejected")
+    events1 = db.get_lifecycle_events(j1.id)
+    dec1 = next(e for e in events1 if e["type"] == "decision_received")
+    assert dec1["notes"] == "Not enough crypto experience", dec1["notes"]
+    assert db.get_lifecycle_summary(j1.id)["reason"] == "Employer: Not enough crypto experience"
+
+    j2 = _apply(db, "https://example.com/lc-r2")
+    db.record_lifecycle_event(j2.id, event="withdrawn", occurred_at="2026-09-04",
+                              notes="Accepted another offer", new_status="withdrawn")
+    events2 = db.get_lifecycle_events(j2.id)
+    wd = next(e for e in events2 if e["type"] == "withdrawn")
+    assert wd["notes"] == "Accepted another offer", wd["notes"]
+    assert db.get_lifecycle_summary(j2.id)["reason"] == "Me: Accepted another offer"
+
+
+def test_lifecycle_transition_guards():
+    # scraped -> interviewing (no application yet)
+    db = _lifecycle_db()
+    job = _job(url="https://example.com/lc-guard1")
+    db.save_scored(job, _score(), PROFILE_ID)
+    try:
+        db.record_lifecycle_event(job.id, event="interview", occurred_at="2026-08-25",
+                                  new_status="interviewing")
+        raise AssertionError("scraped -> interviewing should be rejected")
+    except ValueError:
+        pass
+
+    # rejected -> offer
+    db2 = _lifecycle_db()
+    j2 = _apply(db2, "https://example.com/lc-guard2")
+    db2.record_lifecycle_event(j2.id, event="decision_received", occurred_at="2026-09-04",
+                               outcome="negative", new_status="rejected")
+    try:
+        db2.record_lifecycle_event(j2.id, event="decision_received", occurred_at="2026-09-05",
+                                   outcome="positive", new_status="offer")
+        raise AssertionError("rejected -> offer should be rejected")
+    except ValueError:
+        pass
+
+    # interviewing -> applied
+    db3 = _lifecycle_db()
+    j3 = _apply(db3, "https://example.com/lc-guard3")
+    db3.record_lifecycle_event(j3.id, event="interview", occurred_at="2026-08-25",
+                               new_status="interviewing")
+    try:
+        db3.record_lifecycle_event(j3.id, event="application_submitted",
+                                   occurred_at="2026-08-26", new_status="applied")
+        raise AssertionError("interviewing -> applied should be rejected")
+    except ValueError:
+        pass
+
+
+def test_lifecycle_date_validation():
+    today = date.today()
+    future = (today + timedelta(days=10)).isoformat()
+
+    # future application refused
+    db = _lifecycle_db()
+    job = _job(url="https://example.com/lc-date1")
+    db.save_scored(job, _score(), PROFILE_ID)
+    try:
+        db.record_lifecycle_event(job.id, event="application_submitted",
+                                  occurred_at=future, new_status="applied")
+        raise AssertionError("future application should be refused")
+    except ValueError as e:
+        assert "future" in str(e)
+
+    # future decision refused
+    db2 = _lifecycle_db()
+    j2 = _apply(db2, "https://example.com/lc-date2")
+    try:
+        db2.record_lifecycle_event(j2.id, event="decision_received",
+                                   occurred_at=future, outcome="negative", new_status="rejected")
+        raise AssertionError("future decision should be refused")
+    except ValueError as e:
+        assert "future" in str(e)
+
+    # future interview allowed
+    db3 = _lifecycle_db()
+    j3 = _apply(db3, "https://example.com/lc-date3")
+    db3.record_lifecycle_event(j3.id, event="interview", occurred_at=future,
+                               new_status="interviewing")
+    assert db3.get_lifecycle_summary(j3.id)["next_interview"] == future
+
+    # event before application refused
+    db4 = _lifecycle_db()
+    j4 = _apply(db4, "https://example.com/lc-date4", app_date="2026-09-01")
+    try:
+        db4.record_lifecycle_event(j4.id, event="interview", occurred_at="2026-08-20",
+                                   new_status="interviewing")
+        raise AssertionError("interview before application should be refused")
+    except ValueError as e:
+        assert "before the application" in str(e)
+
+    # interview after decision refused
+    db5 = _lifecycle_db()
+    j5 = _apply(db5, "https://example.com/lc-date5")
+    db5.record_lifecycle_event(j5.id, event="decision_received", occurred_at="2026-09-04",
+                               outcome="negative", new_status="rejected")
+    try:
+        db5.record_lifecycle_event(j5.id, event="interview", occurred_at="2026-09-10",
+                                   new_status="rejected")
+        raise AssertionError("interview after decision should be refused")
+    except ValueError as e:
+        assert "after the terminal" in str(e)
+
+
+def test_lifecycle_provenance_idempotent():
+    db = _lifecycle_db()
+    job = _apply(db, "https://example.com/lc-prov")
+
+    # Agent write with source_ref is stored once; a repeat is a no-op.
+    db.record_lifecycle_event(job.id, event="interview", occurred_at="2026-08-25",
+                              new_status="interviewing", source="agent:test",
+                              source_ref="<msg-123>")
+    db.record_lifecycle_event(job.id, event="interview", occurred_at="2026-08-25",
+                              new_status="interviewing", source="agent:test",
+                              source_ref="<msg-123>")
+    interviews = [e for e in db.get_lifecycle_events(job.id) if e["type"] == "interview"]
+    assert len(interviews) == 1, interviews
+    assert interviews[0]["source"] == "agent:test"
+
+    # Non-manual edit/delete of a manual event refused.
+    app = next(e for e in db.get_lifecycle_events(job.id) if e["type"] == "application_submitted")
+    try:
+        db.update_lifecycle_event(app["id"], occurred_at="2026-08-21", source="agent:test")
+        raise AssertionError("non-manual edit of manual event should be refused")
+    except ValueError:
+        pass
+    try:
+        db.delete_lifecycle_event(app["id"], source="agent:test")
+        raise AssertionError("non-manual delete of manual event should be refused")
+    except ValueError:
+        pass
+
+    # Manual edit of an agent event flips source to manual.
+    db.update_lifecycle_event(interviews[0]["id"], notes="great chat", source="manual")
+    iv = next(e for e in db.get_lifecycle_events(job.id) if e["type"] == "interview")
+    assert iv["source"] == "manual", iv["source"]
+    assert iv["notes"] == "great chat"
+
+
+def test_lifecycle_migration_backfill_idempotent():
+    db = JobStorage(":memory:")
+
+    # Simulate a pre-migration job: applied status + history, no interaction.
+    cid = db.upsert_company("Acme Corp")
+    job = _job(url="https://example.com/lc-mig")
+    with db._conn() as conn:
+        conn.execute(
+            """INSERT INTO jobs (id, title, company, company_id, url, source, first_seen, last_seen)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (job.id, job.title, job.company, cid, job.url, job.source, _now(), _now()),
+        )
+        conn.execute(
+            "INSERT INTO job_tracking (job_id, status, changed_at) VALUES (?, 'applied', '2026-08-20')",
+            (job.id,),
+        )
+        conn.execute(
+            "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, 'applied', '2026-08-20')",
+            (job.id,),
+        )
+        # Drop the guard so the backfill re-runs.
+        conn.execute("DELETE FROM migrations WHERE name = 'backfill_lifecycle_events'")
+
+    with db._conn() as conn:
+        db._migrate_application_lifecycle(conn)
+
+    events = db.get_lifecycle_events(job.id)
+    apps = [e for e in events if e["type"] == "application_submitted"]
+    assert len(apps) == 1, apps
+    assert apps[0]["source"] == "migration"
+    assert apps[0]["occurred_at"][:10] == "2026-08-20"
+
+    # Idempotent: running again adds nothing (guard now present).
+    with db._conn() as conn:
+        db._migrate_application_lifecycle(conn)
+    assert len(db.get_lifecycle_events(job.id)) == 1
+
+
+def test_lifecycle_report_by_application_date():
+    db = _lifecycle_db()
+    job = _apply(db, "https://example.com/lc-report", app_date="2026-08-20")
+    db.record_lifecycle_event(job.id, event="decision_received", occurred_at="2026-09-04",
+                              outcome="negative", new_status="rejected")
+
+    august = db.build_application_rows("2026-08-01", "2026-08-31")
+    assert any(r["ID"] == job.id for r in august), august
+    row = next(r for r in august if r["ID"] == job.id)
+    assert row["Current stage"] == "Rejected — no interview"
+    assert row["Decision date"] == "2026-09-04"
+    assert row["Interview held"] == "no"
+    assert row["ORP result"] == "negative"
+
+    september = db.build_application_rows("2026-09-01", "2026-09-30")
+    assert not any(r["ID"] == job.id for r in september), september
+
+
+def test_lifecycle_notes_edit_invariance():
+    db = _lifecycle_db()
+    job = _apply(db, "https://example.com/lc-inv", app_date="2026-08-20")
+    db.record_lifecycle_event(job.id, event="decision_received", occurred_at="2026-09-04",
+                              outcome="negative", notes="role filled", new_status="rejected")
+
+    before = db.build_application_rows("2026-08-01", "2026-08-31")
+    before_row = next(r for r in before if r["ID"] == job.id)
+
+    # Edit job_tracking.notes only — must not change report output or event date.
+    db.set_status(job.id, "rejected", notes="job-level note")
+    after_notes = db.build_application_rows("2026-08-01", "2026-08-31")
+    after_row = next(r for r in after_notes if r["ID"] == job.id)
+    assert before_row == after_row, (before_row, after_row)
+
+    # Edit the reason alone — no event date change, still in August.
+    dec = next(e for e in db.get_lifecycle_events(job.id) if e["type"] == "decision_received")
+    db.update_lifecycle_event(dec["id"], notes="role filled (updated)")
+    assert db.get_lifecycle_summary(job.id)["decision_date"] == "2026-09-04"
+    assert any(r["ID"] == job.id for r in db.build_application_rows("2026-08-01", "2026-08-31"))
+    assert not any(r["ID"] == job.id for r in db.build_application_rows("2026-09-01", "2026-09-30"))
+
+
+def test_lifecycle_backdated_out_of_order():
+    db = _lifecycle_db()
+
+    # Out-of-order entry on "today": applied 03/09, rejected 18/09, then add interview 10/09.
+    job = _apply(db, "https://example.com/lc-ooo", app_date="2026-09-03")
+    db.record_lifecycle_event(job.id, event="decision_received", occurred_at="2026-09-18",
+                              outcome="negative", new_status="rejected")
+    db.record_lifecycle_event(job.id, event="interview", occurred_at="2026-09-10",
+                              new_status="rejected")  # status unchanged
+
+    s = db.get_lifecycle_summary(job.id)
+    assert s["label"] == "Rejected — after 1 interview", s["label"]
+    assert s["application_date"] == "2026-09-03"
+
+    # Day-logged equivalent (chronological order) produces the same output.
+    db2 = _lifecycle_db()
+    job2 = _apply(db2, "https://example.com/lc-ooo2", app_date="2026-09-03")
+    db2.record_lifecycle_event(job2.id, event="interview", occurred_at="2026-09-10",
+                               new_status="interviewing")
+    db2.record_lifecycle_event(job2.id, event="decision_received", occurred_at="2026-09-18",
+                               outcome="negative", new_status="rejected")
+
+    assert db.get_lifecycle_summary(job.id)["label"] == db2.get_lifecycle_summary(job2.id)["label"]
+    a = db.build_application_rows("2026-09-01", "2026-09-30")
+    b = db2.build_application_rows("2026-09-01", "2026-09-30")
+    ra = next(r for r in a if r["ID"] == job.id)
+    rb = next(r for r in b if r["ID"] == job2.id)
+    for key in ("Current stage", "Interviews held", "Decision date", "Interview held", "ORP result"):
+        assert ra[key] == rb[key], (key, ra[key], rb[key])
+
+
+def test_lifecycle_application_date_missing():
+    db = _lifecycle_db()
+    cid = db.upsert_company("Acme Corp")
+    job = _job(url="https://example.com/lc-missing")
+    db.save_scored(job, _score(), PROFILE_ID, company_id=cid)
+    # Set rejected without any application event (simulating undatable legacy data).
+    db.set_status(job.id, "rejected")
+
+    missing = db.application_date_missing()
+    assert any(r["id"] == job.id for r in missing), missing
+
+
+def test_lifecycle_action_sets_match_fr009():
+    """FR-009 (T021): per-state action sets match the spec table for every state."""
+    from tracker_views.action_sets import ACTION_LABELS, ACTION_SETS
+
+    expected = {
+        "scraped":      ("extract",      ("applied",),                    ("expired", "not_relevant")),
+        "extracted":    ("score",        ("queue", "prepare", "applied"), ("expired", "not_relevant")),
+        "scored":       ("queue",        ("prepare", "applied"),          ("expired", "not_relevant")),
+        "queued":       ("prepare",      ("applied",),                    ("expired", "not_relevant")),
+        "prepared":     ("applied",      (),                              ("expired", "not_relevant")),
+        "applied":      ("interviewing", ("rejected",),                   ("withdrawn", "not_relevant")),
+        "interviewing": ("interview",    ("offer", "rejected"),           ("withdrawn",)),
+        "offer":        (None,           (),                              ("withdrawn", "rejected")),
+        "rejected":     (None,           (),                              ("not_relevant",)),
+        "withdrawn":    (None,           (),                              ("not_relevant",)),
+        "archived":     (None,           (),                              ()),
+        "expired":      (None,           (),                              ()),
+    }
+
+    assert set(ACTION_SETS.keys()) == set(expected.keys())
+    for state, (primary, secondaries, more) in expected.items():
+        got = ACTION_SETS[state]
+        assert got[0] == primary, f"{state} primary: {got[0]!r} != {primary!r}"
+        assert tuple(got[1]) == tuple(secondaries), f"{state} secondaries: {got[1]!r} != {secondaries!r}"
+        assert tuple(got[2]) == tuple(more), f"{state} ⋯ menu: {got[2]!r} != {more!r}"
+
+    # Every referenced action must have a label.
+    for _p, secs, more in ACTION_SETS.values():
+        for a in list(secs) + list(more) + ([_p] if _p else []):
+            assert a in ACTION_LABELS, f"missing label for action {a!r}"
+
+
+def test_lifecycle_reconcile_status_after_delete():
+    """FR-015: deleting the only interview reconciles interviewing -> applied."""
+    db = _lifecycle_db()
+    job = _apply(db, "https://example.com/lc-reconcile")
+    db.record_lifecycle_event(job.id, event="interview", occurred_at="2026-08-25",
+                              new_status="interviewing")
+    assert db.get_job_for_prepare(job.id)["status"] == "interviewing"
+
+    interview_id = next(
+        e["id"] for e in db.get_lifecycle_events(job.id) if e["type"] == "interview"
+    )
+    db.delete_lifecycle_event(interview_id)
+    assert db.reconcile_lifecycle_status(job.id) == "applied"
+    assert db.get_job_for_prepare(job.id)["status"] == "applied"
+
+    # Deleting the application leaves no derived stage -> status left untouched.
+    app_id = next(
+        e["id"] for e in db.get_lifecycle_events(job.id) if e["type"] == "application_submitted"
+    )
+    db.delete_lifecycle_event(app_id)
+    assert db.reconcile_lifecycle_status(job.id) is None
+    assert db.get_job_for_prepare(job.id)["status"] == "applied"
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -2314,6 +2754,20 @@ TESTS = [
     test_job_scores_has_comp_flag_column,
     test_save_scored_with_comp_flag,
     test_save_scored_without_comp_flag,
+    # Lifecycle (spec 030)
+    test_lifecycle_derived_labels,
+    test_lifecycle_round_numbering_and_held,
+    test_lifecycle_reasons_unprefixed,
+    test_lifecycle_transition_guards,
+    test_lifecycle_date_validation,
+    test_lifecycle_provenance_idempotent,
+    test_lifecycle_migration_backfill_idempotent,
+    test_lifecycle_report_by_application_date,
+    test_lifecycle_notes_edit_invariance,
+    test_lifecycle_backdated_out_of_order,
+    test_lifecycle_application_date_missing,
+    test_lifecycle_action_sets_match_fr009,
+    test_lifecycle_reconcile_status_after_delete,
 ]
 
 

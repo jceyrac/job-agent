@@ -60,7 +60,7 @@ from storage import (
     INTERACTION_TYPES, INTERACTION_DIRECTIONS, INTERACTION_OUTCOMES,
 )
 
-_ENGAGED_STATUSES = {"applied", "rejected", "archived", "saved", "queued", "ready"}
+_ENGAGED_STATUSES = {"applied", "interviewing", "offer", "rejected", "withdrawn", "archived", "saved", "queued", "ready"}
 _STALE_CUTOFF_DAYS = 30
 
 _DATE_FILTER_DAYS = {

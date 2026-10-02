@@ -99,11 +99,13 @@ def render():
     stats = db.get_stats(None) if hasattr(db, 'get_stats') else {}
     by_status = stats.get("by_status", {}) if stats else {}
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    status_order = ["new", "queued", "ready", "applied", "rejected", "archived"]
+    m = st.columns(9)
+    status_order = ["new", "queued", "ready", "applied", "interviewing",
+                    "offer", "rejected", "withdrawn", "archived"]
     status_icons = {"new": "🆕", "queued": "📋", "ready": "✅", "applied": "📤",
-                    "rejected": "❌", "archived": "🗄"}
-    for col, s in zip([m1, m2, m3, m4, m5, m6], status_order):
+                    "interviewing": "🎤", "offer": "🎉", "rejected": "❌",
+                    "withdrawn": "🏳️", "archived": "🗄"}
+    for col, s in zip(m, status_order):
         col.metric(f"{status_icons.get(s,'')} {s.title()}", by_status.get(s, 0))
 
     st.divider()

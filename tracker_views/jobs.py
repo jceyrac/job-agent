@@ -187,7 +187,8 @@ def _render_list():
 
         if view == "Active jobs":
             status_filter = st.multiselect(
-                "Status", ["new", "queued", "ready", "applied", "rejected", "expired", "unscored"],
+                "Status", ["new", "queued", "ready", "applied", "interviewing",
+                           "offer", "rejected", "withdrawn", "expired", "unscored"],
                 default=["new", "queued", "ready"], key="jobs_status_filter")
         else:
             status_filter = None

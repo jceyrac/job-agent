@@ -61,7 +61,7 @@ def propose_context_update(
                  FROM jobs j
                  JOIN job_tracking t ON j.id = t.job_id
                  JOIN job_scores s   ON j.id = s.job_id
-                WHERE t.status IN ('applied', 'rejected') AND s.score <= 6
+                WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
                   AND s.profile_id = ?
                 ORDER BY s.score ASC
                 LIMIT 10""",
@@ -82,7 +82,7 @@ def propose_context_update(
                 f"""SELECT COUNT(*) FROM jobs j
                      JOIN job_tracking t ON j.id = t.job_id
                      JOIN job_scores s ON j.id = s.job_id
-                    WHERE t.status IN ('applied', 'rejected')
+                    WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
                       AND s.profile_id = ?
                       AND {cond}
                       AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)""",

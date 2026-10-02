@@ -20,7 +20,7 @@ import logging
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -51,7 +51,8 @@ INTERACTION_TYPES = frozenset({
     "discovered_on_posting", "discovered_manual",
     "outreach_sent", "reply_received", "intro_received",
     "call", "meeting",
-    "application_submitted", "interview", "decision_received",
+    "application_submitted", "interview_invited", "interview",
+    "decision_received", "withdrawn",
     "note",
 })
 INTERACTION_DIRECTIONS = frozenset({"inbound", "outbound", "none"})
@@ -302,6 +303,9 @@ CREATE TABLE IF NOT EXISTS interactions (
     occurred_at       TEXT NOT NULL,
     follow_up_due_at  TEXT,
     created_at        TEXT NOT NULL,
+    notes             TEXT,
+    source            TEXT,
+    source_ref        TEXT,
     FOREIGN KEY (company_id) REFERENCES companies(id),
     FOREIGN KEY (contact_id) REFERENCES contacts(id),
     FOREIGN KEY (job_id)     REFERENCES jobs(id)
@@ -311,6 +315,9 @@ CREATE INDEX IF NOT EXISTS idx_interactions_contact  ON interactions (contact_id
 CREATE INDEX IF NOT EXISTS idx_interactions_job      ON interactions (job_id);
 CREATE INDEX IF NOT EXISTS idx_interactions_followup ON interactions (follow_up_due_at)
     WHERE follow_up_due_at IS NOT NULL;
+-- idx_interactions_source_ref is created in _migrate_application_lifecycle after
+-- the source_ref column exists (the SCHEMA must not reference it: on an existing
+-- DB the column is added by migration, after executescript has already run).
 
 -- Pipeline run log — one row per main.py invocation
 CREATE TABLE IF NOT EXISTS runs (
@@ -838,6 +845,9 @@ class JobStorage:
                         occurred_at       TEXT NOT NULL,
                         follow_up_due_at  TEXT,
                         created_at        TEXT NOT NULL,
+                        notes             TEXT,
+                        source            TEXT,
+                        source_ref        TEXT,
                         FOREIGN KEY (company_id) REFERENCES companies(id),
                         FOREIGN KEY (contact_id) REFERENCES contacts(id),
                         FOREIGN KEY (job_id)     REFERENCES jobs(id)
@@ -865,6 +875,9 @@ class JobStorage:
             # ── Monitored Companies — Phase A: data model ──
             self._migrate_monitored_companies(conn)
 
+            # ── Application Lifecycle — columns + event backfill (spec 030) ──
+            self._migrate_application_lifecycle(conn)
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     def _migration_applied(self, conn, name: str) -> bool:
@@ -879,6 +892,99 @@ class JobStorage:
             "INSERT INTO migrations (name, applied_at) VALUES (?, ?)",
             (name, _now()),
         )
+
+    def _migrate_application_lifecycle(self, conn) -> None:
+        """Add provenance/notes columns to interactions and backfill lifecycle events.
+
+        Part A (idempotent, not recorded in `migrations`): add `notes`, `source`,
+        `source_ref` columns and the partial unique index enforcing idempotency.
+        Part B (recorded as `backfill_lifecycle_events`): reconstruct
+        `application_submitted` / `decision_received` events for existing
+        applied/rejected jobs from `status_history`.
+        """
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(interactions)").fetchall()}
+        for col in ("notes", "source", "source_ref"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE interactions ADD COLUMN {col} TEXT")
+                logger.info(f"[Storage] Lifecycle migration: added {col} to interactions")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_interactions_source_ref "
+            "ON interactions (job_id, type, source_ref) WHERE source_ref IS NOT NULL"
+        )
+
+        # Provenance backfill for pre-existing rows (idempotent by construction).
+        conn.execute("UPDATE interactions SET source = 'manual' WHERE source IS NULL")
+
+        if self._migration_applied(conn, "backfill_lifecycle_events"):
+            return
+
+        # Application events: earliest `applied` history row for applied/rejected
+        # jobs without an existing application_submitted interaction.
+        rows = conn.execute("""
+            SELECT j.id AS job_id, j.company_id, j.title, j.company, t.status,
+                   (SELECT MIN(h.changed_at) FROM status_history h
+                     WHERE h.job_id = j.id AND h.status = 'applied') AS applied_at
+            FROM jobs j
+            JOIN job_tracking t ON j.id = t.job_id
+            WHERE t.status IN ('applied', 'rejected')
+              AND NOT EXISTS (
+                  SELECT 1 FROM interactions i
+                  WHERE i.job_id = j.id AND i.type = 'application_submitted')
+        """).fetchall()
+
+        undatable = []
+        backfilled_app = 0
+        for r in rows:
+            if not r["applied_at"]:
+                undatable.append((r["job_id"], r["company"], r["title"], r["status"]))
+                continue
+            conn.execute(
+                """INSERT INTO interactions
+                   (company_id, job_id, type, direction, occurred_at, created_at, source)
+                   VALUES (?, ?, 'application_submitted', 'outbound', ?, ?, 'migration')""",
+                (r["company_id"], r["job_id"], r["applied_at"], _now()),
+            )
+            backfilled_app += 1
+
+        # Decision events: negative decision for rejected jobs with a prior applied row.
+        dec_rows = conn.execute("""
+            SELECT j.id AS job_id, j.company_id,
+                   (SELECT MIN(h.changed_at) FROM status_history h
+                     WHERE h.job_id = j.id AND h.status = 'rejected') AS rejected_at
+            FROM jobs j
+            JOIN job_tracking t ON j.id = t.job_id
+            WHERE t.status = 'rejected'
+              AND EXISTS (
+                  SELECT 1 FROM status_history h
+                  WHERE h.job_id = j.id AND h.status = 'applied')
+              AND NOT EXISTS (
+                  SELECT 1 FROM interactions i
+                  WHERE i.job_id = j.id AND i.type = 'decision_received')
+        """).fetchall()
+        backfilled_dec = 0
+        for r in dec_rows:
+            if not r["rejected_at"]:
+                continue
+            conn.execute(
+                """INSERT INTO interactions
+                   (company_id, job_id, type, direction, outcome, occurred_at, created_at, source)
+                   VALUES (?, ?, 'decision_received', 'inbound', 'negative', ?, ?, 'migration')""",
+                (r["company_id"], r["job_id"], r["rejected_at"], _now()),
+            )
+            backfilled_dec += 1
+
+        if undatable:
+            logger.info(
+                f"[Storage] Lifecycle backfill: {len(undatable)} undatable jobs "
+                f"(no 'applied' history) — see application_date_missing(): {undatable}"
+            )
+        if backfilled_app or backfilled_dec:
+            logger.info(
+                f"[Storage] Lifecycle backfill: {backfilled_app} application + "
+                f"{backfilled_dec} decision events created"
+            )
+
+        self._record_migration(conn, "backfill_lifecycle_events")
 
     def _migrate_monitored_companies(self, conn) -> None:
         """Phase A: extend companies, jobs, runs for monitored companies feature."""
@@ -1329,14 +1435,14 @@ class JobStorage:
                     " LEFT JOIN companies c ON j.company_id = c.id"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
                     " LEFT JOIN job_tracking t ON j.id = t.job_id")
-            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired'))")
+            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired', 'interviewing', 'offer', 'withdrawn'))")
         else:
             base = (f"SELECT {_job_columns}, {_company_fields} FROM jobs j"
                     " LEFT JOIN companies c ON j.company_id = c.id"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
                     " LEFT JOIN job_tracking t ON j.id = t.job_id")
             clauses.append("(s.job_id IS NULL OR s.score IS NULL)")
-            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired'))")
+            clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired', 'interviewing', 'offer', 'withdrawn'))")
         clauses.append("(c.id IS NULL OR c.status != 'blacklisted')")
 
         if pre_filter:
@@ -1558,7 +1664,8 @@ class JobStorage:
                 """SELECT j.id, j.title, j.company
                    FROM jobs j
                    JOIN job_tracking t ON j.id = t.job_id
-                   WHERE t.status IN ('applied', 'ready', 'queued', 'archived')
+                   WHERE t.status IN ('applied', 'ready', 'queued', 'archived',
+                                      'interviewing', 'offer', 'withdrawn')
                 """
             ).fetchall()
             return [dict(r) for r in rows]
@@ -1578,7 +1685,10 @@ class JobStorage:
     # Tracker — mise à jour de statut
     # ------------------------------------------------------------------
 
-    VALID_STATUSES = {"new", "queued", "ready", "applied", "rejected", "archived", "expired"}
+    VALID_STATUSES = {
+        "new", "queued", "ready", "applied", "interviewing", "offer",
+        "rejected", "withdrawn", "archived", "expired",
+    }
 
     def set_status(self, job_id: str, status: str, notes: str = None) -> None:
         if status not in self.VALID_STATUSES:
@@ -1617,6 +1727,522 @@ class JobStorage:
                     (job_id, status, now),
                 )
                 self._auto_log_status_interaction(job_id, status, _conn=conn)
+
+    # ------------------------------------------------------------------
+    # Application lifecycle (spec 030) — single entry point + derived view
+    # ------------------------------------------------------------------
+
+    _LIFECYCLE_EVENT_TYPES = frozenset({
+        "application_submitted", "interview_invited", "interview",
+        "decision_received", "withdrawn",
+    })
+
+    _LIFECYCLE_DIRECTION = {
+        "application_submitted": "outbound",
+        "interview_invited": "inbound",
+        "interview": "none",
+        "decision_received": "inbound",
+        "withdrawn": "none",
+    }
+
+    # Current derived status -> allowed next statuses (FR-001).
+    _LIFECYCLE_TRANSITIONS = {
+        None: {"applied"},
+        "new": {"applied"},
+        "queued": {"applied"},
+        "ready": {"applied"},
+        "applied": {"interviewing", "offer", "rejected", "withdrawn"},
+        "interviewing": {"interviewing", "offer", "rejected", "withdrawn"},
+        "offer": {"withdrawn", "rejected"},
+        "rejected": set(),
+        "withdrawn": set(),
+        "archived": set(),
+        "expired": set(),
+    }
+
+    # Event -> status it implies when the write changes state (FR-012 consistency).
+    _STATUS_BY_EVENT = {
+        "application_submitted": "applied",
+        "interview_invited": "interviewing",
+        "interview": "interviewing",
+        "withdrawn": "withdrawn",
+    }
+
+    @staticmethod
+    def _implied_status(event: str, outcome: str | None) -> str:
+        if event == "decision_received":
+            return "offer" if outcome == "positive" else "rejected"
+        return JobStorage._STATUS_BY_EVENT[event]
+
+    def _resolve_job_company_id(self, job_id: str) -> int:
+        """Return a job's company_id, resolving/creating one from jobs.company if absent (FR-004)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT company_id, company FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown job id: {job_id!r}")
+        if row["company_id"] is not None:
+            return row["company_id"]
+        if not row["company"]:
+            raise ValueError(f"Job {job_id!r} has no company_id and no company name")
+        cid = self.upsert_company(name=row["company"])
+        with self._conn() as conn:
+            conn.execute("UPDATE jobs SET company_id = ? WHERE id = ?", (cid, job_id))
+        return cid
+
+    def _validate_lifecycle_date(self, conn, job_id: str, event: str,
+                                 occurred_at: str, exclude_id=None) -> None:
+        """Enforce FR-027 on a pending event write (read from `conn`)."""
+        d = _date_prefix(occurred_at)
+        if not d:
+            raise ValueError("occurred_at is required")
+        today = date.today().isoformat()
+
+        if event != "interview" and d > today:
+            raise ValueError(f"{event} date {d} is in the future (today {today})")
+
+        excl = " AND id != ?" if exclude_id is not None else ""
+        params: list = [job_id]
+        if exclude_id is not None:
+            params.append(exclude_id)
+
+        app_row = conn.execute(
+            f"SELECT MIN(occurred_at) AS d FROM interactions "
+            f"WHERE job_id = ? AND type = 'application_submitted'{excl}",
+            params,
+        ).fetchone()
+        app_date = _date_prefix(app_row["d"]) if app_row and app_row["d"] else ""
+        if event != "application_submitted" and app_date and d < app_date:
+            raise ValueError(f"Event {event} date {d} is before the application date {app_date}")
+
+        if event == "interview":
+            term_row = conn.execute(
+                f"SELECT MIN(occurred_at) AS d FROM interactions "
+                f"WHERE job_id = ? AND type IN ('decision_received', 'withdrawn'){excl}",
+                params,
+            ).fetchone()
+            term_date = _date_prefix(term_row["d"]) if term_row and term_row["d"] else ""
+            if term_date and d > term_date:
+                raise ValueError(f"Interview date {d} is after the terminal event date {term_date}")
+
+    def record_lifecycle_event(self, job_id, *, event, occurred_at, new_status,
+                               outcome=None, notes=None, source="manual",
+                               source_ref=None) -> None:
+        """Record one lifecycle event and update the job's tracking status atomically.
+
+        This is the single write path for the application lifecycle (FR-006). It is
+        a plain ``storage.py`` API with **no Streamlit dependency**, callable by the
+        UI, CLI scripts, and a future email agent alike (FR-030).
+
+        Contract for agents (US8):
+          * ``event`` — one of ``application_submitted`` | ``interview_invited`` |
+            ``interview`` | ``decision_received`` | ``withdrawn``.
+          * ``occurred_at`` — the event date (ISO ``YYYY-MM-DD`` or full timestamp),
+            always explicit; the call time is never used as the event date (FR-026).
+          * ``new_status`` — the resulting ``job_tracking.status`` (``applied`` |
+            ``interviewing`` | ``offer`` | ``rejected`` | ``withdrawn``). A value equal
+            to the current status records a back-dated/out-of-order event without
+            flipping state (US7); otherwise the transition must be allowed by FR-001
+            and implied by the event.
+          * ``outcome`` — required ``positive``/``negative`` for ``decision_received``.
+          * ``notes`` — un-prefixed free text (employer's reason on a rejection, my
+            reason on a withdrawal). The ``Employer:``/``Me:`` prefix is added only at
+            display/export (FR-002/018).
+          * ``source`` — ``manual`` | ``migration`` | ``agent:<name>``.
+          * ``source_ref`` — optional external id (e.g. email Message-ID) for idempotency.
+
+        Guarantees: FR-001 transition guard, FR-027 date validation, FR-031 idempotency
+        (non-manual writes with a ``source_ref`` are no-ops when repeated), FR-004 company
+        resolution. Raises ``ValueError`` on any refused write, naming the conflict.
+        """
+        if event not in self._LIFECYCLE_EVENT_TYPES:
+            raise ValueError(
+                f"Invalid lifecycle event: {event!r}. Valid: {sorted(self._LIFECYCLE_EVENT_TYPES)}"
+            )
+        if new_status not in self.VALID_STATUSES:
+            raise ValueError(f"Invalid status: {new_status!r}. Valid: {sorted(self.VALID_STATUSES)}")
+        if event == "decision_received":
+            if outcome not in ("positive", "negative"):
+                raise ValueError(
+                    f"decision_received requires outcome 'positive' or 'negative', got {outcome!r}"
+                )
+        else:
+            outcome = None
+
+        direction = self._LIFECYCLE_DIRECTION[event]
+        now = _now()
+
+        # FR-031 idempotency: a non-manual write carrying the same source_ref is a no-op.
+        if source != "manual" and source_ref is not None:
+            with self._conn() as conn:
+                dup = conn.execute(
+                    "SELECT id FROM interactions WHERE job_id = ? AND type = ? AND source_ref = ?",
+                    (job_id, event, source_ref),
+                ).fetchone()
+            if dup:
+                return
+
+        # FR-004: resolve/create company before writing (defensive — D1 shows none live).
+        company_id = self._resolve_job_company_id(job_id)
+
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            current_status = row["status"] if row else None
+
+            if new_status != current_status:
+                allowed = self._LIFECYCLE_TRANSITIONS.get(current_status, set())
+                if new_status not in allowed:
+                    raise ValueError(
+                        f"Disallowed transition: {current_status or 'none'} -> {new_status} (event {event!r})"
+                    )
+                implied = self._implied_status(event, outcome)
+                if new_status != implied:
+                    raise ValueError(
+                        f"Event {event!r} implies status {implied!r}, not {new_status!r}"
+                    )
+
+            self._validate_lifecycle_date(conn, job_id, event, occurred_at)
+
+            conn.execute(
+                """INSERT INTO interactions
+                   (company_id, job_id, type, direction, outcome,
+                    occurred_at, created_at, notes, source, source_ref)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (company_id, job_id, event, direction, outcome,
+                 occurred_at, now, notes, source, source_ref),
+            )
+
+            if current_status != new_status:
+                conn.execute(
+                    "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
+                    (job_id, new_status, now),
+                )
+            conn.execute(
+                """INSERT INTO job_tracking (job_id, status, changed_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(job_id) DO UPDATE SET
+                       status = excluded.status, changed_at = excluded.changed_at""",
+                (job_id, new_status, now),
+            )
+
+    def get_lifecycle_events(self, job_id: str) -> list[dict]:
+        """Return the job's lifecycle events in chronological order (FR-014)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, type, direction, outcome, occurred_at, created_at,
+                          notes, source, source_ref
+                   FROM interactions
+                   WHERE job_id = ? AND type IN ('application_submitted','interview_invited',
+                                                 'interview','decision_received','withdrawn')
+                   ORDER BY occurred_at ASC, id ASC""",
+                (job_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_lifecycle_summary(self, job_id: str) -> dict:
+        """Compute the derived lifecycle view (FR-003) from events — never stored."""
+        events = self.get_lifecycle_events(job_id)
+        today = date.today().isoformat()
+
+        application_date = None
+        decision = None
+        withdrawn = None
+        interviews = []
+        invites = []
+
+        for e in events:
+            t = e["type"]
+            if t == "application_submitted" and application_date is None:
+                application_date = _date_prefix(e["occurred_at"])
+            elif t == "interview_invited":
+                invites.append(e)
+            elif t == "interview":
+                interviews.append(e)
+            elif t == "decision_received":
+                decision = e
+            elif t == "withdrawn":
+                withdrawn = e
+
+        interviews_held = sum(1 for i in interviews if _date_prefix(i["occurred_at"]) <= today)
+        next_interview = next(
+            (i for i in interviews if _date_prefix(i["occurred_at"]) > today), None
+        )
+        offer_received = any(
+            e["type"] == "decision_received" and e["outcome"] == "positive" for e in events
+        )
+
+        stage = ""
+        if withdrawn is not None:
+            stage = "Withdrawn"
+        elif decision is not None:
+            stage = "Offer" if decision.get("outcome") == "positive" else "Rejected"
+        elif interviews or invites:
+            stage = "Interviewing"
+        elif application_date:
+            stage = "Applied"
+
+        label = ""
+        reason = ""
+        if withdrawn is not None:
+            wd_notes = withdrawn.get("notes") or ""
+            if offer_received:
+                label = "Withdrawn — offer declined"
+            elif interviews_held == 0:
+                label = "Withdrawn — no interview"
+            else:
+                label = f"Withdrawn — after {interviews_held} interview" + ("s" if interviews_held != 1 else "")
+            reason = f"Me: {wd_notes}" if wd_notes else ""
+        elif decision is not None:
+            if decision.get("outcome") == "positive":
+                label = "Offer"
+            elif offer_received:
+                label = "Rejected — offer withdrawn by employer"
+            elif interviews_held == 0:
+                label = "Rejected — no interview"
+            else:
+                label = f"Rejected — after {interviews_held} interview" + ("s" if interviews_held != 1 else "")
+            d_notes = decision.get("notes") or ""
+            if decision.get("outcome") == "negative" and d_notes:
+                reason = f"Employer: {d_notes}"
+        elif interviews:
+            label = f"Interviewing · round {len(interviews)}"
+            if next_interview is not None:
+                label += f" · next {_fmt_dm(next_interview['occurred_at'])}"
+        elif invites:
+            label = "Interviewing"
+        elif application_date:
+            label = "Applied"
+
+        if decision is None and withdrawn is None:
+            orp_result = "pending"
+        elif withdrawn is not None:
+            orp_result = "negative (withdrawn by me)"
+        elif decision.get("outcome") == "positive":
+            orp_result = "hired"
+        else:
+            orp_result = "negative"
+
+        return {
+            "application_date": application_date,
+            "stage": stage,
+            "label": label,
+            "reason": reason,
+            "interviews_held": interviews_held,
+            "round": len(interviews) if interviews else None,
+            "next_interview": _date_prefix(next_interview["occurred_at"]) if next_interview else None,
+            "decision_outcome": decision.get("outcome") if decision else None,
+            "decision_date": _date_prefix(decision["occurred_at"]) if decision else None,
+            "withdrawn_date": _date_prefix(withdrawn["occurred_at"]) if withdrawn else None,
+            "last_event_date": _date_prefix(events[-1]["occurred_at"]) if events else None,
+            "orp_result": orp_result,
+        }
+
+    def update_lifecycle_event(self, event_id, *, occurred_at=None, notes=None,
+                               source="manual") -> None:
+        """Edit a lifecycle event's date and/or notes (manual timeline edit — FR-015).
+
+        FR-031: a non-manual caller may not edit a manual event; a manual edit of an
+        agent-created event flips its ``source`` to ``manual``.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT job_id, type, source FROM interactions WHERE id = ?", (event_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown interaction id: {event_id}")
+            if row["source"] == "manual" and source != "manual":
+                logger.warning(
+                    f"[Storage] Refused non-manual edit of manual interaction {event_id}"
+                )
+                raise ValueError(f"Cannot modify manual event {event_id} from source {source!r}")
+
+            if occurred_at is not None:
+                self._validate_lifecycle_date(
+                    conn, row["job_id"], row["type"], occurred_at, exclude_id=event_id
+                )
+
+            new_source = "manual" if source == "manual" else row["source"]
+            sets = ["source = ?"]
+            params: list = [new_source]
+            if occurred_at is not None:
+                sets.append("occurred_at = ?")
+                params.append(occurred_at)
+            if notes is not None:
+                sets.append("notes = ?")
+                params.append(notes)
+            params.append(event_id)
+            conn.execute(
+                f"UPDATE interactions SET {', '.join(sets)} WHERE id = ?", params
+            )
+
+    def delete_lifecycle_event(self, event_id, *, source="manual") -> None:
+        """Delete a lifecycle event from the timeline (FR-015). FR-031 applies."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT source FROM interactions WHERE id = ?", (event_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown interaction id: {event_id}")
+            if row["source"] == "manual" and source != "manual":
+                logger.warning(
+                    f"[Storage] Refused non-manual delete of manual interaction {event_id}"
+                )
+                raise ValueError(f"Cannot delete manual event {event_id} from source {source!r}")
+            conn.execute("DELETE FROM interactions WHERE id = ?", (event_id,))
+
+    def reconcile_lifecycle_status(self, job_id: str) -> str | None:
+        """Reconcile ``job_tracking.status`` with the derived stage after an edit/delete.
+
+        After a timeline edit or delete the tracking status can drift from what the
+        events imply (e.g. deleting the only interview should revert ``interviewing``
+        to ``applied``). This recomputes the derived stage and updates the status when
+        it differs (FR-015 — the caller prompts before a state-affecting change).
+
+        A job left with no application event is left untouched (we can't guess the
+        pre-application state). Returns the new status, or ``None`` when unchanged.
+        """
+        summary = self.get_lifecycle_summary(job_id)
+        stage = summary.get("stage") or ""
+        if not stage:
+            return None
+        new_status = stage.lower()
+        now = _now()
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            if row["status"] == new_status:
+                return new_status
+            conn.execute(
+                "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
+                (job_id, new_status, now),
+            )
+            conn.execute(
+                "UPDATE job_tracking SET status = ?, changed_at = ? WHERE job_id = ?",
+                (new_status, now, job_id),
+            )
+        return new_status
+
+    def _get_job_basics(self, job_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, title, company, location, url FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def _application_row(self, job: dict, app_date: str, summary: dict) -> dict:
+        company = job.get("company") or ""
+        location = job.get("location") or ""
+        company_location = f"{company} — {location}" if location else company
+        interviews_held = summary["interviews_held"]
+        return {
+            "Application date": app_date,
+            "Company / location": company_location,
+            "Title": job.get("title") or "",
+            "Current stage": summary["label"],
+            "Interviews held": interviews_held,
+            "Last event date": summary["last_event_date"] or "",
+            "Decision date": summary["decision_date"] or "",
+            "Reason": summary["reason"],
+            "URL": job.get("url") or "",
+            "ID": job.get("id"),
+            "Interview held": "yes" if interviews_held > 0 else "no",
+            "ORP result": summary["orp_result"],
+        }
+
+    def build_application_rows(self, date_from: str, date_to: str, *,
+                               current_stage: str | None = None) -> list[dict]:
+        """Applications whose application date falls in [date_from, date_to] (FR-016).
+
+        Returns one row per application with derived current stage, reason, and the
+        ORP-helper columns (FR-018/022). Optional ``current_stage`` filters on the
+        coarse derived stage (Applied / Interviewing / Offer / Rejected / Withdrawn).
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT i.job_id, MIN(i.occurred_at) AS app_date
+                   FROM interactions i
+                   WHERE i.type = 'application_submitted'
+                     AND date(i.occurred_at) BETWEEN ? AND ?
+                   GROUP BY i.job_id
+                   ORDER BY app_date ASC""",
+                (date_from, date_to),
+            ).fetchall()
+
+        out = []
+        for r in rows:
+            job_id = r["job_id"]
+            summary = self.get_lifecycle_summary(job_id)
+            if current_stage and summary["stage"] != current_stage:
+                continue
+            job = self._get_job_basics(job_id)
+            if job is None:
+                continue
+            out.append(self._application_row(job, _date_prefix(r["app_date"]), summary))
+        return out
+
+    def build_activity_rows(self, date_from: str, date_to: str) -> list[dict]:
+        """Every lifecycle event dated in [date_from, date_to] (FR-020)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT i.id, i.job_id, i.type, i.outcome, i.occurred_at, i.notes,
+                          j.company, j.title, j.url
+                   FROM interactions i
+                   JOIN jobs j ON i.job_id = j.id
+                   WHERE i.type IN ('application_submitted','interview_invited',
+                                    'interview','decision_received','withdrawn')
+                     AND date(i.occurred_at) BETWEEN ? AND ?
+                   ORDER BY i.occurred_at ASC, i.id ASC""",
+                (date_from, date_to),
+            ).fetchall()
+
+        # Precompute per-event labels (round + as-of decision/withdrawal labels).
+        label_by_id: dict[int, str] = {}
+        for job_id in {r["job_id"] for r in rows}:
+            events = self.get_lifecycle_events(job_id)
+            for i, e in enumerate(events):
+                label_by_id[e["id"]] = _lifecycle_event_label(events, i)
+
+        out = []
+        for r in rows:
+            summary = self.get_lifecycle_summary(r["job_id"])
+            reason = ""
+            if r["type"] == "decision_received" and r["outcome"] == "negative" and r["notes"]:
+                reason = f"Employer: {r['notes']}"
+            elif r["type"] == "withdrawn" and r["notes"]:
+                reason = f"Me: {r['notes']}"
+            out.append({
+                "Event date": _date_prefix(r["occurred_at"]),
+                "Event": label_by_id.get(r["id"], ""),
+                "Company": r["company"] or "",
+                "Title": r["title"] or "",
+                "Application date": summary["application_date"] or "",
+                "Current stage": summary["label"],
+                "Reason": reason,
+                "URL": r["url"] or "",
+                "ID": r["job_id"],
+            })
+        return out
+
+    def application_date_missing(self) -> list[dict]:
+        """Jobs in a lifecycle status with no application event (FR-021)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT j.id, j.company, j.title, t.status
+                   FROM jobs j
+                   JOIN job_tracking t ON j.id = t.job_id
+                   WHERE t.status IN ('applied','interviewing','offer','rejected','withdrawn')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM interactions i
+                         WHERE i.job_id = j.id AND i.type = 'application_submitted')
+                   ORDER BY t.status, j.company""",
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Requêtes pour digest / tracker
@@ -3252,3 +3878,53 @@ class JobStorage:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _date_prefix(ts) -> str:
+    """Return the YYYY-MM-DD prefix of an ISO timestamp/date string."""
+    return (ts or "")[:10]
+
+
+def _fmt_dm(ts) -> str:
+    """Format an ISO date/timestamp prefix as dd/mm (e.g. '14/10')."""
+    d = _date_prefix(ts)
+    return f"{d[8:10]}/{d[5:7]}" if len(d) == 10 else d
+
+
+def _lifecycle_event_label(events: list[dict], i: int) -> str:
+    """Human label for events[i], given the job's full chronological event list (FR-020)."""
+    e = events[i]
+    t = e["type"]
+    if t == "application_submitted":
+        return "Applied"
+    if t == "interview_invited":
+        return "Interview invited"
+    if t == "interview":
+        round_no = sum(1 for x in events[: i + 1] if x["type"] == "interview")
+        return f"Interview · round {round_no}"
+
+    prior = events[:i]
+    edate = _date_prefix(e["occurred_at"])
+    interviews_before = sum(
+        1 for x in prior
+        if x["type"] == "interview" and _date_prefix(x["occurred_at"]) <= edate
+    )
+    prior_offer = any(
+        x["type"] == "decision_received" and x["outcome"] == "positive" for x in prior
+    )
+    suffix = "s" if interviews_before != 1 else ""
+
+    if t == "decision_received":
+        if e["outcome"] == "positive":
+            return "Offer"
+        if prior_offer:
+            return "Rejected — offer withdrawn by employer"
+        if interviews_before == 0:
+            return "Rejected — no interview"
+        return f"Rejected — after {interviews_before} interview{suffix}"
+    # withdrawn
+    if prior_offer:
+        return "Withdrawn — offer declined"
+    if interviews_before == 0:
+        return "Withdrawn — no interview"
+    return f"Withdrawn — after {interviews_before} interview{suffix}"

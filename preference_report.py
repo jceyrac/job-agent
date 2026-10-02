@@ -95,7 +95,7 @@ def _get_classified_jobs(conn, profile_id: str):
              JOIN job_tracking t ON j.id = t.job_id
              LEFT JOIN companies c ON j.company_id = c.id
              LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-            WHERE t.status IN ('applied', 'rejected', 'archived')""",
+            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'archived')""",
         (profile_id,),
     ).fetchall()
 
@@ -107,7 +107,7 @@ def _get_classified_jobs(conn, profile_id: str):
         score = d.get("score")
         is_tier0_reject = sb.startswith("tier_0") and score is not None and score <= 3
 
-        if status in ("applied", "rejected"):
+        if status in ("applied", "interviewing", "offer", "rejected", "withdrawn"):
             if is_tier0_reject:
                 us.append(d)
             else:
@@ -417,7 +417,7 @@ def _section_calibration_deltas(conn) -> list[str]:
              FROM jobs j
              JOIN job_tracking t ON j.id = t.job_id
              JOIN job_scores s   ON j.id = s.job_id
-            WHERE t.status IN ('applied', 'rejected') AND s.score <= 6
+            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
             ORDER BY s.score ASC"""
     ).fetchall()
 
@@ -459,7 +459,7 @@ def _section_archive_themes(conn) -> list[str]:
 
 def _section_title_keywords(conn) -> list[str]:
     lines = ["## Title Keyword Frequency Deltas", ""]
-    rel = _get_cohort_jobs(conn, ["applied", "rejected"])
+    rel = _get_cohort_jobs(conn, ["applied", "interviewing", "offer", "rejected", "withdrawn"])
     nrel = _get_cohort_jobs(conn, ["archived"])
 
     rel_words = Counter()
@@ -640,7 +640,7 @@ def export_few_shot_anchors(profile_id: str | None = None) -> str:
              JOIN job_tracking t ON j.id = t.job_id
              JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
              LEFT JOIN companies c ON j.company_id = c.id
-            WHERE t.status IN ('applied', 'rejected', 'ready', 'queued')
+            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'ready', 'queued')
               AND s.score IS NOT NULL
             ORDER BY s.score DESC""",
         (pid,),
@@ -834,7 +834,7 @@ def generate_action_items(
              FROM jobs j
              JOIN job_tracking t ON j.id = t.job_id
              JOIN job_scores s   ON j.id = s.job_id
-            WHERE t.status IN ('applied', 'rejected') AND s.score <= 6
+            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
               AND s.profile_id = ?
             ORDER BY s.score ASC""",
         (pid,),
@@ -852,7 +852,7 @@ def generate_action_items(
               AND j.company NOT IN (
                   SELECT DISTINCT j2.company FROM jobs j2
                   JOIN job_tracking t2 ON j2.id = t2.job_id
-                  WHERE t2.status IN ('applied', 'rejected')
+                  WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
               )
             GROUP BY j.company
             HAVING COUNT(*) >= 3
@@ -871,7 +871,7 @@ def generate_action_items(
                   FROM jobs j2
                   JOIN job_tracking t2 ON j2.id = t2.job_id
                   LEFT JOIN companies c2 ON j2.company_id = c2.id
-                  WHERE t2.status IN ('applied', 'rejected')
+                  WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
               )
             GROUP BY 1
             HAVING COUNT(*) >= 5
@@ -889,7 +889,7 @@ def generate_action_items(
               AND j.company_country NOT IN (
                   SELECT DISTINCT j2.company_country FROM jobs j2
                   JOIN job_tracking t2 ON j2.id = t2.job_id
-                  WHERE t2.status IN ('applied', 'rejected')
+                  WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
                     AND j2.company_country IS NOT NULL
               )
             GROUP BY 1

@@ -1,4 +1,4 @@
-"""tracker_views/reports.py — Onglet Reports : exports CSV téléchargeables via un registre de presets."""
+"""tracker_views/reports.py — Onglet Reports : candidatures (par date de candidature) + activité (spec 030)."""
 
 from calendar import monthrange
 from collections import Counter
@@ -6,37 +6,19 @@ from datetime import date
 
 import streamlit as st
 
-from export_jobs import (
-    DB_PATH,
-    STATUSES_ALL,
-    STATUSES_DEFAULT,
-    STATUS_TO_RESULTAT,
-    build_export_rows,
-    rows_to_csv_bytes,
-)
-from tracker_views.shared import is_active_page
+from export_jobs import CURRENT_STAGES, DB_PATH, rows_to_csv_bytes
+from storage import JobStorage
+from tracker_views.shared import is_active_page, md_link
 
 
-# ── Registre de presets ──────────────────────────────────────────────────────
-# label -> {"generate": callable, "help": str}
-# generate(date_from, date_to, statuses, mode) -> (rows: list[dict], filename: str)
-
-
-def _preset_applications(date_from, date_to, statuses, mode):
-    """First preset: applications export."""
-    rows = build_export_rows(DB_PATH, date_from, date_to, statuses)
-    if mode == "month":
-        filename = f"jobs_{date_from[:7]}.csv"
-    else:
-        filename = f"jobs_{date_from}_{date_to}.csv"
-    return rows, filename
-
-
-PRESETS = {
-    "Applications": {
-        "generate": _preset_applications,
-    },
-}
+def _coarse_stage(label: str) -> str:
+    """Map a derived Current-stage label to its coarse bucket (FR-019 metrics)."""
+    if not label:
+        return "Applied"
+    for stage in ("Interviewing", "Rejected", "Withdrawn", "Offer"):
+        if label.startswith(stage):
+            return stage
+    return "Applied"
 
 
 def _resolve_month(month_str: str) -> tuple[str, str]:
@@ -48,13 +30,22 @@ def _resolve_month(month_str: str) -> tuple[str, str]:
     return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last_day:02d}"
 
 
+def _preview_rows(rows: list[dict]) -> list[dict]:
+    """Copy rows with the ID column rewritten to a job-detail link."""
+    out = []
+    for r in rows:
+        pr = dict(r)
+        job_id = pr.get("ID")
+        if job_id:
+            pr["ID"] = f"/job_detail?id={job_id}"
+        out.append(pr)
+    return out
+
+
 def render():
     st.title("📤 Reports")
 
-    # ── Controls ─────────────────────────────────────────────────────────────
-    # Un seul preset (« Applications ») — pas de sélecteur de type d'export.
-    preset = PRESETS["Applications"]
-
+    preset = st.radio("Report", ["Applications", "Activity"], horizontal=True)
     mode = st.radio("Period", ["Month", "Date range"], horizontal=True)
 
     if mode == "Month":
@@ -64,15 +55,21 @@ def render():
         from_date = col_from.date_input("From", value=date.today().replace(day=1), format="DD/MM/YYYY")
         to_date = col_to.date_input("To", value=date.today(), format="DD/MM/YYYY")
 
-    statuses = st.multiselect("Statuses", STATUSES_ALL, default=STATUSES_DEFAULT)
+    stage = None
+    if preset == "Applications":
+        selected = st.selectbox(
+            "Current stage",
+            ["All stages"] + CURRENT_STAGES,
+            index=0,
+            help="Optional filter — rows are always selected by application date",
+        )
+        stage = None if selected == "All stages" else selected
 
     if st.button("Generate preview"):
         error = None
         date_from = date_to = mode_key = None
 
-        if not statuses:
-            error = "Select at least one status."
-        elif mode == "Month":
+        if mode == "Month":
             mode_key = "month"
             try:
                 date_from, date_to = _resolve_month(month_str)
@@ -88,7 +85,15 @@ def render():
 
         if error is None:
             try:
-                rows, filename = preset["generate"](date_from, date_to, statuses, mode_key)
+                storage = JobStorage(str(DB_PATH))
+                if preset == "Applications":
+                    rows = storage.build_application_rows(date_from, date_to, current_stage=stage)
+                    missing = storage.application_date_missing()
+                else:
+                    rows = storage.build_activity_rows(date_from, date_to)
+                    missing = []
+                stem = "activity" if preset == "Activity" else "applications"
+                filename = f"{stem}_{date_from[:7]}.csv" if mode_key == "month" else f"{stem}_{date_from}_{date_to}.csv"
             except FileNotFoundError:
                 error = f"Database not found: {DB_PATH}"
 
@@ -98,39 +103,46 @@ def render():
         else:
             st.session_state["reports_rows"] = rows
             st.session_state["reports_filename"] = filename
+            st.session_state["reports_preset"] = preset
+            st.session_state["reports_missing"] = missing
             st.session_state["reports_generated"] = True
 
     # ── Preview + download (after generation) ────────────────────────────────
     if st.session_state.get("reports_generated"):
         rows = st.session_state.get("reports_rows", [])
         filename = st.session_state.get("reports_filename", "")
+        rendered_preset = st.session_state.get("reports_preset", "Applications")
+        missing = st.session_state.get("reports_missing", [])
 
-        counts = Counter(
-            STATUS_TO_RESULTAT.get(r.get("Status", ""), "en suspens") for r in rows
-        )
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Entries", len(rows))
-        c2.metric("Pending", counts.get("en suspens", 0))
-        c3.metric("Negative", counts.get("négatif", 0))
+        if rendered_preset == "Applications":
+            counts = Counter(_coarse_stage(r.get("Current stage", "")) for r in rows)
+            c = st.columns(6)
+            c[0].metric("Entries", len(rows))
+            c[1].metric("Pending", counts.get("Applied", 0))
+            c[2].metric("Interviewing", counts.get("Interviewing", 0))
+            c[3].metric("Offer", counts.get("Offer", 0))
+            c[4].metric("Rejected", counts.get("Rejected", 0))
+            c[5].metric("Withdrawn", counts.get("Withdrawn", 0))
 
-        preview = [
-            {
-                "Date": r.get("Date", ""),
-                "Company": r.get("Entreprise / Adresse", ""),
-                "Title": r.get("Description du poste", ""),
-                "Status": r.get("Status", ""),
-                "ID": f"/job_detail?id={r.get('ID', '')}",
-            }
-            for r in rows
-        ]
-        st.dataframe(
-            preview,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "ID": st.column_config.LinkColumn("ID", display_text=r"id=(.*)"),
-            },
-        )
+        if rows:
+            st.dataframe(
+                _preview_rows(rows),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "ID": st.column_config.LinkColumn("ID", display_text=r"id=(.*)"),
+                    "URL": st.column_config.LinkColumn("URL"),
+                },
+            )
+        else:
+            st.info("No entries found for this period.")
+
+        if rendered_preset == "Applications" and missing:
+            with st.expander(f"Application date missing ({len(missing)})"):
+                for row in missing:
+                    job_id = row.get("id")
+                    label = f"{row.get('company') or '—'} — {row.get('title') or '—'}"
+                    st.markdown(f"- {md_link(label, f'/job_detail?id={job_id}')}")
 
         st.download_button(
             f"Download {filename}",

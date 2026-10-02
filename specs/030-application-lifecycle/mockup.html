@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — Spec 030 Application lifecycle</title>
+<style>
+  /* Mimics the tracker's Streamlit dark theme so the mockup reads like the real app */
+  :root{
+    --bg:#0e1117; --panel:#262730; --panel-2:#1a1c24; --border:rgba(250,250,250,.2);
+    --text:#fafafa; --muted:#a3a8b8; --primary:#ff4b4b; --link:#5aa2ff;
+    --ok:#21c354; --warn:#ffbd45; --info-bg:#172d43; --info:#c7e2ff;
+    --r:8px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--text);
+    font-family:"Source Sans Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-size:15px; line-height:1.55; padding:2rem 1.25rem 4rem;}
+  .wrap{max-width:980px; margin:0 auto;}
+  h1{font-size:30px; margin:0 0 .25rem;} h2{font-size:22px; margin:2.5rem 0 .75rem;}
+  h3{font-size:17px; margin:1.25rem 0 .5rem;}
+  .note{border-left:3px solid var(--warn); background:rgba(255,189,69,.08); padding:.6rem .9rem;
+    border-radius:0 var(--r) var(--r) 0; color:#f3dfb4; font-size:14px; margin:.75rem 0 1.25rem;}
+  .card{border:1px solid var(--border); border-radius:var(--r); padding:1rem 1.1rem; margin:0 0 1rem;}
+  .title{font-weight:600; font-size:16px;} .meta{color:var(--muted); font-size:13.5px;}
+  .bar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:.75rem; position:relative;}
+  .btn{border:1px solid var(--border); background:transparent; color:var(--text); border-radius:var(--r);
+    padding:6px 14px; font-size:14px; font-family:inherit; cursor:pointer;}
+  .btn.primary{background:var(--primary); border-color:var(--primary);}
+  .btn.more{padding:6px 12px; margin-left:auto;}
+  .btn:focus-visible{outline:2px solid var(--link); outline-offset:2px;}
+  .state{margin-top:.5rem; font-size:13.5px; color:var(--muted);} .state b{color:var(--text);}
+  .pop{position:absolute; right:0; top:42px; background:var(--panel); border:1px solid var(--border);
+    border-radius:var(--r); padding:6px; min-width:220px; z-index:2; box-shadow:0 8px 24px rgba(0,0,0,.5);}
+  .pop div{padding:7px 10px; border-radius:6px; font-size:14px;} .pop div:hover{background:rgba(255,255,255,.06);}
+  .pop small{color:var(--muted);}
+  .prompt{margin-top:.75rem; background:var(--panel-2); border:1px solid var(--border); border-radius:var(--r); padding:.9rem;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  label{display:block; font-size:13.5px; margin-bottom:4px;}
+  .input{background:var(--panel); border-radius:var(--r); padding:8px 10px; font-size:14px; min-height:38px;}
+  .input.empty{color:var(--muted);}
+  .hint{font-size:12.5px; color:var(--muted); margin-top:3px;}
+  table{width:100%; border-collapse:collapse; font-size:14px;}
+  th,td{border:1px solid rgba(250,250,250,.1); padding:7px 9px; text-align:left; vertical-align:top;}
+  th{color:var(--muted); font-weight:400; background:var(--panel-2);}
+  td a{color:var(--link); text-decoration:none;}
+  .metrics{display:flex; gap:2.5rem; flex-wrap:wrap; margin:1rem 0;}
+  .metrics div{font-size:14px;} .metrics b{display:block; font-size:30px; font-weight:400;}
+  .radio{display:flex; gap:1.5rem; font-size:14px;}
+  .dot{display:inline-block; width:14px; height:14px; border-radius:50%; border:1px solid var(--border); vertical-align:-2px; margin-right:6px;}
+  .dot.on{border:4px solid var(--primary);}
+  .expander{border:1px solid var(--border); border-radius:var(--r); padding:.6rem .9rem; margin-top:1rem; font-size:14px;}
+  .tl{list-style:none; margin:0; padding:0;}
+  .tl li{display:grid; grid-template-columns:110px 1fr auto; gap:12px; padding:.6rem 0; border-bottom:1px solid rgba(250,250,250,.08); align-items:center;}
+  .tl .d{color:var(--muted); font-variant-numeric:tabular-nums;}
+  .tl .ev b{font-weight:600;} .tl .sched{color:var(--warn); font-size:12.5px; margin-left:6px;}
+  .tl .ops{display:flex; gap:6px;} .tl .ops .btn{padding:3px 10px; font-size:13px;}
+  .tabs{display:flex; gap:24px; border-bottom:1px solid var(--border); margin-bottom:1.25rem;}
+  .tabs span{padding:8px 2px; color:var(--muted);} .tabs .on{color:var(--text); border-bottom:2px solid var(--primary);}
+  .legend td:first-child{white-space:nowrap;}
+  @media (max-width:640px){ .grid2{grid-template-columns:1fr;} .tl li{grid-template-columns:1fr;} .btn.more{margin-left:0;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Spec 030 — Application lifecycle</h1>
+<p class="meta">Mockup for approval. Static: buttons don't act. Data is illustrative (companies from the Sep/Oct exports; interview dates invented).</p>
+
+<!-- ───────────────────────────── 1. ACTION BAR MODEL ───────────────────────────── -->
+<h2>1. Contextual action bar (Jobs cards + Job detail)</h2>
+<div class="note">Only the actions valid for the job's state are shown. Primary (red) = most likely next step, always first. Rare/parking actions sit in <b>⋯</b> (st.popover), always last.</div>
+
+<table class="legend">
+  <tr><th>State</th><th>Primary</th><th>Secondary</th><th>⋯ menu</th></tr>
+  <tr><td>scraped</td><td>🔍 Extract</td><td>✅ Applied</td><td>⏰ Expired · 🚫 Not relevant</td></tr>
+  <tr><td>extracted</td><td>🎯 Score</td><td>🚀 Queue · 📝 Prepare · ✅ Applied</td><td>⏰ Expired · 🚫 Not relevant</td></tr>
+  <tr><td>scored</td><td>🚀 Queue</td><td>📝 Prepare · ✅ Applied</td><td>⏰ Expired · 🚫 Not relevant</td></tr>
+  <tr><td>queued</td><td>📝 Prepare</td><td>✅ Applied</td><td>⏰ Expired · 🚫 Not relevant</td></tr>
+  <tr><td>prepared</td><td>✅ Applied</td><td>—</td><td>⏰ Expired · 🚫 Not relevant</td></tr>
+  <tr><td>applied</td><td>🎤 Interviewing</td><td>❌ Rejected</td><td>🏳️ Withdrawn · 🚫 Not relevant</td></tr>
+  <tr><td>interviewing</td><td>🎤 + Interview</td><td>🎉 Offer · ❌ Rejected</td><td>🏳️ Withdrawn</td></tr>
+  <tr><td>offer</td><td>—</td><td>—</td><td>🏳️ Withdrawn (declined) · ❌ Rejected (rescinded)</td></tr>
+  <tr><td>rejected / withdrawn</td><td>—</td><td>—</td><td>🚫 Not relevant</td></tr>
+  <tr><td>archived / expired</td><td colspan="3">no actions</td></tr>
+</table>
+
+<!-- ───────────────────────────── 2. JOBS PAGE CARDS ───────────────────────────── -->
+<h2>2. Jobs page — cards in three states</h2>
+
+<h3>a) Applied → click 🎤 Interviewing opens the date prompt</h3>
+<div class="card">
+  <div class="title">⭐ 8 · Senior Product Manager - Earn @ Ledger</div>
+  <div class="meta">📍 Paris, FR · 🏢 Hybrid · ⚡ Scale-up · Indeed</div>
+  <div class="bar">
+    <button class="btn primary">🎤 Interviewing</button>
+    <button class="btn">❌ Rejected</button>
+    <button class="btn">🔗 Open</button>
+    <button class="btn more" aria-label="More actions">⋯</button>
+  </div>
+  <div class="prompt">
+    <div style="font-weight:600; margin-bottom:.6rem;">Move to interviewing</div>
+    <div class="grid2">
+      <div><label>Invite received on</label><div class="input">06/10/2026</div><div class="hint">Optional</div></div>
+      <div><label>First interview on</label><div class="input">14/10/2026</div><div class="hint">Optional · future dates allowed · at least one of the two</div></div>
+    </div>
+    <div class="bar"><button class="btn primary">Confirm</button><button class="btn">Cancel</button></div>
+  </div>
+  <div class="state">State: <b>Applied</b> · applied 02/10/2026</div>
+</div>
+
+<h3>b) Interviewing → ⋯ menu open</h3>
+<div class="card">
+  <div class="title">🔥 9 · Product Manager Crypto Asset Management @ MoonPay</div>
+  <div class="meta">📍 London, UK · 🌍 Remote · ⚡ Scale-up · Web3.career</div>
+  <div class="bar">
+    <button class="btn primary">🎤 + Interview</button>
+    <button class="btn">🎉 Offer</button>
+    <button class="btn">❌ Rejected</button>
+    <button class="btn">🔗 Open</button>
+    <button class="btn more" aria-label="More actions">⋯</button>
+    <div class="pop"><div>🏳️ Withdrawn <small>— I drop out</small></div></div>
+  </div>
+  <div class="state">State: <b>Interviewing · round 1 · next 14/10</b> · applied 02/10/2026</div>
+</div>
+
+<h3>c) Rejected — terminal, only ⋯</h3>
+<div class="card">
+  <div class="title">⭐ 7 · Senior Product Manager, Technical (m/f/d) @ Affinidi</div>
+  <div class="meta">📍 Berlin, DE · 🌍 Remote · 🚀 Startup · LinkedIn</div>
+  <div class="bar">
+    <button class="btn">🔗 Open</button>
+    <button class="btn more" aria-label="More actions">⋯</button>
+  </div>
+  <div class="state">State: <b>Rejected — no interview</b> · applied 20/08/2026 · decision 04/09/2026 · Employer: role filled internally</div>
+</div>
+
+<h3>d) Rejected / Withdrawn prompts (same pattern)</h3>
+<div class="grid2">
+  <div class="prompt" style="margin-top:0;">
+    <div style="font-weight:600; margin-bottom:.6rem;">Mark as rejected</div>
+    <label>Rejection received on</label><div class="input">18/09/2026</div><div class="hint">Pre-filled with the last date you confirmed this session · applied 03/09/2026 · last event 10/09/2026</div>
+    <label style="margin-top:.6rem;">Employer's reason</label><div class="input empty">Optional — e.g. went with a candidate with more B2B payments experience</div>
+    <div class="bar"><button class="btn primary">Confirm</button><button class="btn">Cancel</button></div>
+  </div>
+  <div class="prompt" style="margin-top:0;">
+    <div style="font-weight:600; margin-bottom:.6rem;">Withdraw application</div>
+    <label>Withdrawn on</label><div class="input">02/10/2026</div>
+    <label style="margin-top:.6rem;">My reason</label><div class="input empty">Optional — e.g. salary below my range</div>
+    <div class="bar"><button class="btn primary">Confirm</button><button class="btn">Cancel</button></div>
+  </div>
+</div>
+
+<!-- ───────────────────────────── 3. JOB DETAIL ───────────────────────────── -->
+<h2>3. Job detail — action bar + Application timeline</h2>
+<div class="card">
+  <div class="title" style="font-size:20px;">Product Manager Crypto Asset Management @ MoonPay</div>
+  <div class="bar">
+    <button class="btn primary">🎤 + Interview</button>
+    <button class="btn">🎉 Offer</button>
+    <button class="btn">❌ Rejected</button>
+    <button class="btn more" aria-label="More actions">⋯</button>
+  </div>
+  <div class="state">State: <b>Interviewing · round 2 · next 21/10</b></div>
+
+  <h3 style="margin-top:1.5rem;">Application timeline</h3>
+  <ul class="tl">
+    <li><span class="d">02/10/2026</span><span class="ev"><b>Applied</b></span><span class="ops"><button class="btn">Edit</button><button class="btn">Delete</button></span></li>
+    <li><span class="d">06/10/2026</span><span class="ev"><b>Interview invite received</b></span><span class="ops"><button class="btn">Edit</button><button class="btn">Delete</button></span></li>
+    <li><span class="d">14/10/2026</span><span class="ev"><b>Interview · round 1</b> — recruiter screen</span><span class="ops"><button class="btn">Edit</button><button class="btn">Delete</button></span></li>
+    <li><span class="d">21/10/2026</span><span class="ev"><b>Interview · round 2</b> — hiring manager<span class="sched">scheduled</span></span><span class="ops"><button class="btn">Edit</button><button class="btn">Delete</button></span></li>
+  </ul>
+  <div class="bar"><button class="btn">+ Add past event</button><span class="meta">Any event type, any valid date, in any order — e.g. an interview you forgot to log before the rejection</span></div>
+
+  <div class="prompt">
+    <div style="font-weight:600; margin-bottom:.6rem;">Edit event — Interview · round 2</div>
+    <div class="grid2">
+      <div><label>Date</label><div class="input">21/10/2026</div></div>
+      <div><label>Notes</label><div class="input">hiring manager</div></div>
+    </div>
+    <div class="bar"><button class="btn primary">Save</button><button class="btn">Cancel</button></div>
+  </div>
+  <p class="meta" style="margin-top:.75rem;">Deleting the only interview of an interviewing job asks: “Revert status to Applied?” — the status never changes silently.</p>
+  <p class="meta">The existing “Tracking status” selectbox stays below, with the new statuses; picking a lifecycle status opens the same date prompt.</p>
+</div>
+
+<!-- ───────────────────────────── 4. REPORTS ───────────────────────────── -->
+<h2>4. Reports</h2>
+<div class="tabs"><span>Jobs</span><span>Dashboard</span><span>Settings</span><span class="on">Reports</span></div>
+
+<div class="radio" style="margin-bottom:.75rem;"><span><span class="dot on"></span>Applications</span><span><span class="dot"></span>Activity</span></div>
+<div class="radio" style="margin-bottom:.75rem;"><span><span class="dot on"></span>Month</span><span><span class="dot"></span>Date range</span></div>
+<div class="grid2">
+  <div><label>Month (MM/YYYY)</label><div class="input">09/2026</div></div>
+  <div><label>Current stage</label><div class="input empty">All stages</div><div class="hint">Optional filter — rows are always selected by application date</div></div>
+</div>
+
+<h3>a) Applications — September 2026 (rows = applications submitted in September)</h3>
+<div class="metrics">
+  <div>Entries<b>10</b></div><div>Pending<b>6</b></div><div>Interviewing<b>1</b></div>
+  <div>Offer<b>0</b></div><div>Rejected<b>2</b></div><div>Withdrawn<b>1</b></div>
+</div>
+<div style="overflow-x:auto;">
+<table>
+  <tr><th>Applied</th><th>Company / location</th><th>Title</th><th>Current stage</th><th>Interviews</th><th>Last event</th><th>Decision</th><th>Reason</th><th>Interview held</th><th>ORP result</th><th>ID</th></tr>
+  <tr><td>07/09/2026</td><td>Example Co — Zurich, CH</td><td>Senior PM, Payments</td><td>Interviewing · round 1</td><td>1</td><td>29/09/2026</td><td></td><td></td><td>yes</td><td>pending</td><td><a href="#">a1b2c3…</a></td></tr>
+  <tr><td>07/09/2026</td><td>Example AG — Remote</td><td>Product Manager, Wallets</td><td>Rejected — after 2 interviews</td><td>2</td><td>30/09/2026</td><td>30/09/2026</td><td>Employer: went with a candidate with more B2B payments experience</td><td>yes</td><td>negative</td><td><a href="#">d4e5f6…</a></td></tr>
+  <tr><td>21/09/2026</td><td>Example Labs — Berlin, DE</td><td>Senior PM, DeFi</td><td>Applied</td><td>0</td><td>21/09/2026</td><td></td><td></td><td>no</td><td>pending</td><td><a href="#">0718ab…</a></td></tr>
+  <tr><td>25/09/2026</td><td>Example SA — Geneva, CH</td><td>Product Owner, Tokenization</td><td>Withdrawn — after 1 interview</td><td>1</td><td>30/09/2026</td><td>30/09/2026</td><td>Me: salary below my range</td><td>yes</td><td>negative (withdrawn by me)</td><td><a href="#">9c3d21…</a></td></tr>
+</table>
+</div>
+<div class="note" style="margin-top:.75rem;">Affinidi, Scandit, Virtuozzo, Roamless (applied in August, rejected 04/09) are no longer here — they appear in the August report.</div>
+<div class="expander">▸ Application date missing (3) — lifecycle jobs whose application date could not be recovered. Open each to set it in the timeline.</div>
+<div style="margin-top:1rem;"><button class="btn">Download applications_2026-09.csv</button></div>
+
+<h3>b) Activity — September 2026 (rows = anything that happened in September)</h3>
+<div style="overflow-x:auto;">
+<table>
+  <tr><th>Date</th><th>Event</th><th>Company</th><th>Title</th><th>Applied</th><th>Current stage</th><th>Reason</th><th>ID</th></tr>
+  <tr><td>04/09/2026</td><td>Rejected — no interview</td><td>Affinidi</td><td>Senior Product Manager, Technical (m/f/d)</td><td>20/08/2026</td><td>Rejected — no interview</td><td>Employer: role filled internally</td><td><a href="#">2d58d8…</a></td></tr>
+  <tr><td>04/09/2026</td><td>Rejected — no interview</td><td>Scandit</td><td>Senior Product Manager (ShelfView)</td><td>18/08/2026</td><td>Rejected — no interview</td><td></td><td><a href="#">14f822…</a></td></tr>
+  <tr><td>07/09/2026</td><td>Applied</td><td>Example Co</td><td>Senior PM, Payments</td><td>07/09/2026</td><td>Interviewing · round 1</td><td></td><td><a href="#">a1b2c3…</a></td></tr>
+  <tr><td>29/09/2026</td><td>Interview · round 1</td><td>Example Co</td><td>Senior PM, Payments</td><td>07/09/2026</td><td>Interviewing · round 1</td><td></td><td><a href="#">a1b2c3…</a></td></tr>
+</table>
+</div>
+<div style="margin-top:1rem;"><button class="btn">Download activity_2026-09.csv</button></div>
+
+</div>
+</body>
+</html>

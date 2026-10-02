@@ -24,7 +24,7 @@ from storage import normalize_title, normalize_company
 # helpers
 # ---------------------------------------------------------------------------
 
-NON_NEW_STATUSES = frozenset({"queued", "ready", "applied", "rejected", "archived", "expired"})
+NON_NEW_STATUSES = frozenset({"queued", "ready", "applied", "interviewing", "offer", "rejected", "withdrawn", "archived", "expired"})
 
 
 def _resolve_winner(group: list[dict]) -> tuple[dict | None, list[dict], str | None]:
