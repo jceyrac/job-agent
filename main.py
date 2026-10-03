@@ -74,7 +74,7 @@ def main():
         # ── Step: Monitored-company scrape (conditional) ────────────────────
         if run_monitoring:
             print(f"\n[{_ts()}] === Step {step_num}: Monitored scrape ===")
-            subprocess.run([sys.executable, "scrape.py", "--monitored-only",
+            subprocess.run([sys.executable, "-m", "scrape", "--monitored-only",
                             "--no-score"], check=True)
             t_now = time.monotonic()
             print(f"[{_ts()}] Monitored scrape done"
@@ -86,7 +86,7 @@ def main():
         # ── Step: Broad scrape (conditional) ────────────────────────────────
         if run_broad:
             print(f"\n[{_ts()}] === Step {step_num}: Broad scrape ===")
-            subprocess.run([sys.executable, "scrape.py"], check=True)
+            subprocess.run([sys.executable, "-m", "scrape"], check=True)
             t_now = time.monotonic()
             print(f"[{_ts()}] Broad scrape done"
                   f" — {t_now - t_prev:.0f}s elapsed"
@@ -97,7 +97,7 @@ def main():
         # ── Step: Extraction ────────────────────────────────────────────────
         print(f"\n[{_ts()}] === Step {step_num}: Extraction ===")
         try:
-            subprocess.run([sys.executable, "score.py", "--extract"], check=True)
+            subprocess.run([sys.executable, "-m", "score", "--extract"], check=True)
         except subprocess.CalledProcessError as e:
             print(f"[{_ts()}] ⚠ Extraction step failed (exit {e.returncode})"
                   f" — continuing to scoring anyway")
@@ -110,7 +110,7 @@ def main():
         # ── Step: Scoring ───────────────────────────────────────────────────
         print(f"\n[{_ts()}] === Step {step_num}: Scoring [{active_id}] ===")
         try:
-            subprocess.run([sys.executable, "score.py", "--profile", active_id],
+            subprocess.run([sys.executable, "-m", "score", "--profile", active_id],
                            check=True)
         except subprocess.CalledProcessError as e:
             print(f"[{_ts()}] ⚠ Scoring step failed (exit {e.returncode})"

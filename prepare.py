@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
-from paths import DB_PATH, DATA_DIR
+from paths import DB_PATH, DATA_DIR, OUTPUT_DIR
 from profiles import ALL_PROFILES, SearchProfile
 import llm
 from storage import JobStorage
@@ -565,7 +565,7 @@ def _auto_pick_profile(db: JobStorage, job_id: str) -> str | None:
 
 def _write_markdown(job: dict, result: dict) -> None:
     """Write the application package to a markdown file."""
-    output_dir = os.path.join(os.path.dirname(__file__), "outputs", "applications")
+    output_dir = os.path.join(OUTPUT_DIR, "applications")
     os.makedirs(output_dir, exist_ok=True)
 
     company_slug = _slugify(job.get("company", "unknown"))

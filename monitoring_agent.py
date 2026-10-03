@@ -80,7 +80,7 @@ def _run_export_seed(dry_run: bool) -> None:
     if dry_run:
         print("  [dry-run] Would run export_seed.py")
         return
-    subprocess.run([sys.executable, "export_seed.py"], check=True, cwd=ROOT)
+    subprocess.run([sys.executable, "-m", "export_seed"], check=True, cwd=ROOT)
 
 
 # ---------------------------------------------------------------------------

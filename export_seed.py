@@ -9,7 +9,7 @@ import json
 import sqlite3
 import sys
 
-from paths import DB_PATH
+from paths import DB_PATH, data_path
 
 
 def main():
@@ -42,7 +42,7 @@ def main():
         c["hq_location"] = c.pop("company_country", None)
         companies.append(c)
 
-    output_path = "data/companies.json"
+    output_path = data_path("companies.json")
     with open(output_path, "w") as f:
         json.dump(companies, f, indent=2, ensure_ascii=False)
         f.write("\n")

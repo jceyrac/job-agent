@@ -44,6 +44,28 @@ step** — tick each item before a step is declared complete. Run on verva (SSH)
 
 ---
 
+## Spec 032 — Location Independence (deploy-time validations, queued)
+
+Queued for the verva deploy (a separate, user-confirmed step — **not** run in the
+implementation phase). From spec 032 `quickstart.md` §7:
+
+- [ ] **SC-001 parity** — fingerprint a pre-change snapshot and a post-change
+  snapshot with the same `--as-of`; `scripts/compare_fingerprints.py` reports no
+  diff (spec 032 `quickstart.md`).
+- [ ] **SC-002 drill tracker** — on the drill tracker (`:8502`, restored backup),
+  click all 7 launch buttons (Jobs: fetch / score / extract; Settings: scrape /
+  monitored-only / score / extract) — each completes with normal log output — then
+  run `main.py`'s 4 stages.
+- [ ] **SC-005 live** — health check OK; next nightly `full` run success; Reports
+  CSV export works; the Preferences page context-suggest action (`preferences.py`)
+  opens the DB.
+- [ ] **Prod guard** — `tracker`/`agent`/`email-monitor` start with
+  `JOB_AGENT_DATA_DIR=/app/data` + `JOB_AGENT_REQUIRE_DB=1` (compose `environment`),
+  and a deliberately empty `JOB_AGENT_DATA_DIR` fails at startup without creating
+  any directory or DB.
+
+---
+
 ## Notes
 
 - A schema-touching step also follows **expand / contract**: add + backfill, keep the

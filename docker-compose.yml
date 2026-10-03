@@ -10,6 +10,9 @@ services:
       - job_data:/app/data
     env_file:
       - .env
+    environment:
+      - JOB_AGENT_DATA_DIR=/app/data
+      - JOB_AGENT_REQUIRE_DB=1
     restart: unless-stopped
 
   agent:
@@ -20,6 +23,9 @@ services:
       - job_data:/app/data
     env_file:
       - .env
+    environment:
+      - JOB_AGENT_DATA_DIR=/app/data
+      - JOB_AGENT_REQUIRE_DB=1
     profiles:
       - manual   # triggered by cron, not kept alive
 
@@ -31,6 +37,9 @@ services:
       - job_data:/app/data
     env_file:
       - .env
+    environment:
+      - JOB_AGENT_DATA_DIR=/app/data
+      - JOB_AGENT_REQUIRE_DB=1
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach Hydroxide on Ubuntu host
     profiles:

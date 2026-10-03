@@ -16,6 +16,9 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 
 - **Monorepo, pas de nouveau repo.** `core/` (domaine existant déplacé, non réécrit), `api/` (FastAPI),
   `web/` (nouveau front), `tracker/` (Streamlit actuel). Une seule source de vérité pour `storage`.
+- **`core` est un paquet installable** (`pyproject.toml`) : imports identiques partout, aucun bricolage
+  de `sys.path`, scripts lancés en `python -m`, aucune donnée localisée à partir de `__file__`
+  ailleurs que dans `paths.py`, configuration de prod explicite par l'environnement. Pas de shims.
 - **Monolithe modulaire** : un service API, un router par domaine, SQLite, l'API devient seul écrivain à terme.
 - **Le scoring est une vue de l'utilisateur sur le catalogue**, porté par le user, pas par le job.
   `job_scores` reste clé `(job_id, profile_id)` avec `search_profiles.user_id`.
@@ -47,7 +50,10 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | # | Étape | Contenu | Jours |
 |---|-------|---------|-------|
 | 0 | Filet de sécurité | Amendement constitution (MAJOR), script de parité, **test de restauration réelle** du backup sur verva | 1–2 |
-| 1 | Monorepo | Déplacement vers `core/` sans réécriture ; shims d'import ; commandes cron/Docker inchangées | 1–2 |
+| 1a | Fin des dépendances à l'emplacement | Sans rien déplacer : `JOB_AGENT_DATA_DIR` explicite dans compose, `paths.py` refuse de créer une base vide en prod, tous les chemins dérivés de `__file__` centralisés dans `paths.py`, scripts lancés en `python -m` (tracker, `main.py`, `scrape.py`) — spec 032 | 1 |
+| 1b | Projet installable | `pyproject.toml`, `pip install -e .` dans l'image, suppression des bricolages `sys.path` (scripts, tests), défauts des scripts de diag via `paths` | 1 |
+| 1c | Déplacement vers `core/` | Un commit mécanique : `git mv` + réécriture des imports par script, **sans shims** ; validation sur tracker de test :8502 avec la base sauvegardée (boutons de traitement, `/job_detail?id=`, `scrape --source`), parité ancien/nouveau code | 1–1,5 |
+| 1d | Archivage | `migrate_*.py` exécutés, `tracker_legacy.py`, `test_wellfound.py` → `archive/` après vérification qu'aucun import ne les référence | 0,5 |
 | 2 | Assainissement | 2a : SQL brut des vues → méthodes `JobStorage`. 2b : `subprocess` du tracker → table `tasks` + conteneur `worker`. 2c : retrait des mentions résiduelles de Groq (`scorer.py`, `tracker_views/onboarding.py`, `email_monitor.py`) — seul `llm.py` connaît le fournisseur | 3–5 |
 
 ### Phase B — Bon modèle de données (risque concentré ici)
@@ -73,7 +79,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | 9 | Chat CV agent | Dès l'étape 6 + une fiche job dans `web/` ; peut démarrer en parallèle de l'étape 8 | à estimer |
 | 10 | Contraction | Suppression des anciennes colonnes, retrait des pages Streamlit migrées | 2–3 |
 
-**Total parité : ~40–63 jours de travail.** Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
+**Total parité : ~42–65 jours de travail** (étape 1 réévaluée à 3–4 jours le 2026-10-03 après lecture des chemins sensibles). Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
 
 ## Points ouverts
 

@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from paths import OUTPUT_DIR
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _tier(score: int) -> str:
@@ -103,7 +105,7 @@ def send_email_digest(jobs: list[dict]) -> None:
     notify_to = os.getenv("NOTIFY_TO")
 
     if not all([gmail_from, app_password, notify_to]):
-        output_dir = os.path.join(os.path.dirname(__file__), "outputs")
+        output_dir = OUTPUT_DIR
         os.makedirs(output_dir, exist_ok=True)
         preview_path = os.path.join(output_dir, f"email_preview_{today}.html")
         with open(preview_path, "w", encoding="utf-8") as f:
@@ -207,7 +209,7 @@ def export_joplin(jobs: list[dict]) -> None:
 {md_section("👀 Maybe", maybe)}"""
 
     # Always save local .md
-    output_dir = os.path.join(os.path.dirname(__file__), "outputs")
+    output_dir = OUTPUT_DIR
     os.makedirs(output_dir, exist_ok=True)
     local_path = os.path.join(output_dir, f"jobs_{today_str}.md")
     with open(local_path, "w", encoding="utf-8") as f:

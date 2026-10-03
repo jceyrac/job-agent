@@ -2,6 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from storage import JobStorage
+from paths import DB_PATH
 
 ALL_SCRAPERS = [
     "cryptojobs.com", "cryptojobslist", "defi_jobs", "greenhouse",
@@ -11,7 +12,7 @@ ALL_SCRAPERS = [
 import sys
 cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
 
-db = JobStorage("/app/data/jobs.db")
+db = JobStorage(DB_PATH)
 
 if cmd == "indeed-only":
     for name in ALL_SCRAPERS:

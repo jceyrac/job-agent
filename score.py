@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from notifier import send_email_digest, export_joplin
-from paths import DB_PATH
+from paths import DB_PATH, OUTPUT_DIR
 from profiles import SearchProfile
 from job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
 from scorer import extract_job_fields, evaluate_for_profile
@@ -565,7 +565,7 @@ def main():
 
     # ── JSON output ───────────────────────────────────────────────────────────
     today = date.today().isoformat()
-    output_dir = os.path.join(os.path.dirname(__file__), "outputs")
+    output_dir = OUTPUT_DIR
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"jobs_{profile.id}_{today}.json")
     with open(output_path, "w") as f:

@@ -22,9 +22,9 @@ from datetime import date
 from pathlib import Path
 
 from storage import JobStorage
+from paths import DATA_DIR, DB_PATH
 
-DB_PATH = Path(__file__).parent / "data" / "jobs.db"
-OUTPUT_DIR = Path(__file__).parent / "data"
+OUTPUT_DIR = Path(DATA_DIR)
 
 # Coarse derived stages (FR-017 « Current stage » filter).
 CURRENT_STAGES = ["Applied", "Interviewing", "Offer", "Rejected", "Withdrawn"]
@@ -32,9 +32,9 @@ CURRENT_STAGES = ["Applied", "Interviewing", "Offer", "Rejected", "Withdrawn"]
 
 def _require_db() -> JobStorage:
     """Return a JobStorage for the live DB, raising FileNotFoundError if absent."""
-    if not DB_PATH.exists():
+    if not Path(DB_PATH).exists():
         raise FileNotFoundError(DB_PATH)
-    return JobStorage(str(DB_PATH))
+    return JobStorage(DB_PATH)
 
 
 def build_application_rows(date_from: str, date_to: str, stage: str | None = None) -> list[dict]:

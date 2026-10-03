@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import streamlit as st
 
-from paths import DB_PATH
+from paths import DB_PATH, ENV_PATH
 from storage import JobStorage
 
 # ── Constants ───────────────────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ def env_is_set(key: str) -> bool:
 
 def upsert_env(key: str, value: str) -> None:
     """Upsert one KEY=VALUE line in repo-root .env, preserving all other lines."""
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    env_path = ENV_PATH
     lines: list[str] = []
     found = False
     if os.path.exists(env_path):

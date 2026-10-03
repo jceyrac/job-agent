@@ -9,23 +9,24 @@ Never touches jobs, scores, or run_logs tables.  Idempotent.
 import json
 import sys
 
-from paths import DB_PATH
+from paths import DB_PATH, data_path
 from storage import JobStorage
 
 
 def main():
+    seed_path = data_path("companies.json")
     try:
-        with open("data/companies.json") as f:
+        with open(seed_path) as f:
             companies = json.load(f)
     except FileNotFoundError:
-        print("data/companies.json not found — nothing to seed.", file=sys.stderr)
+        print(f"{seed_path} not found — nothing to seed.", file=sys.stderr)
         sys.exit(0)
     except json.JSONDecodeError as e:
-        print(f"data/companies.json is invalid JSON: {e}", file=sys.stderr)
+        print(f"{seed_path} is invalid JSON: {e}", file=sys.stderr)
         sys.exit(1)
 
     if not companies:
-        print("data/companies.json is empty — nothing to seed.")
+        print(f"{seed_path} is empty — nothing to seed.")
         return
 
     db = JobStorage(DB_PATH)

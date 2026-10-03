@@ -116,11 +116,11 @@ def _render_controls_bar(db):
         # No process running — show launch buttons
         with c1:
             if st.button("🕸 Run scrape", use_container_width=True):
-                _launch_bg("scrape", [sys.executable, "-u", "scrape.py"])
+                _launch_bg("scrape", [sys.executable, "-u", "-m", "scrape"])
         with c2:
             if st.button("🎯 Run scoring", use_container_width=True):
                 active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
-                _launch_bg("score", [sys.executable, "-u", "score.py", "--profile", active_id])
+                _launch_bg("score", [sys.executable, "-u", "-m", "score", "--profile", active_id])
         with c3:
             if st.button("🔄 Clear Cache", use_container_width=True):
                 st.cache_data.clear()
@@ -132,7 +132,7 @@ def _render_controls_bar(db):
                 with st.spinner("Re-extracting…"):
                     try:
                         result = subprocess.run(
-                            [sys.executable, "score.py", "--extract"],
+                            [sys.executable, "-m", "score", "--extract"],
                             capture_output=True, text=True, timeout=600,
                         )
                         st.cache_data.clear()

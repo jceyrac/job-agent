@@ -197,7 +197,7 @@ def _render_run_controls(db):
         if st.button("🕸 Run scrape", use_container_width=True,
                      help="Fetch new jobs from all enabled scrapers. Can be stopped."):
             proc = subprocess.Popen(
-                [sys.executable, "-u", "scrape.py"],
+                [sys.executable, "-u", "-m", "scrape"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=False,  # binary mode for non-blocking reads
             )
@@ -212,7 +212,7 @@ def _render_run_controls(db):
                      help="Run scrape.py --monitored-only. Fetches all openings "
                           "from monitored companies, independent of the broad scrape."):
             proc = subprocess.Popen(
-                [sys.executable, "-u", "scrape.py", "--monitored-only"],
+                [sys.executable, "-u", "-m", "scrape", "--monitored-only"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=False,
             )
@@ -227,7 +227,7 @@ def _render_run_controls(db):
                      help="Score all unscored jobs for the active profile. Can be stopped."):
             active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
             proc = subprocess.Popen(
-                [sys.executable, "-u", "score.py", "--profile", active_id],
+                [sys.executable, "-u", "-m", "score", "--profile", active_id],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=False,
             )
@@ -821,7 +821,7 @@ def _render_stats_actions(db):
             with st.spinner("Running score.py --extract ..."):
                 try:
                     result = subprocess.run(
-                        [sys.executable, "score.py", "--extract"],
+                        [sys.executable, "-m", "score", "--extract"],
                         capture_output=True, text=True, timeout=600,
                     )
                     st.text_area("Output", result.stdout + "\n" + result.stderr, height=200)

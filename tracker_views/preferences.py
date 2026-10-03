@@ -110,8 +110,9 @@ def render():
                     from storage import JobStorage
                     from context_tuner import propose_context_update
                     from profiles import get_active_profile
+                    from paths import DB_PATH
                     pid = get_active_profile().id
-                    db = JobStorage("data/jobs.db")
+                    db = JobStorage(DB_PATH)
                     try:
                         prop_path = propose_context_update(pid, db)
                         st.success(f"Proposal written to {prop_path}")

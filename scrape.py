@@ -315,8 +315,8 @@ def _run_monitored_only(db: JobStorage, profile, *, run_scoring: bool = True) ->
     # ── Immediately extract & score the new jobs (unless suppressed) ─────
     if run_scoring:
         print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Extracting + scoring monitored jobs...")
-        subprocess.run([sys.executable, "score.py", "--extract"], check=False)
-        subprocess.run([sys.executable, "score.py", "--profile", profile.id], check=False)
+        subprocess.run([sys.executable, "-m", "score", "--extract"], check=False)
+        subprocess.run([sys.executable, "-m", "score", "--profile", profile.id], check=False)
 
 
 def _run_broad_scrape(db: JobStorage, profile) -> None:

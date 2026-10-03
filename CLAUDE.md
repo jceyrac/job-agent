@@ -137,6 +137,7 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 - **Prod (verva):** HPE ProLiant Ubuntu server, Docker Compose, repo at `/opt/job-agent`. Deploy-only — never develop or write specs there. SSH access is available for live diagnostics.
 - **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `agent` (cron scrape+score). `email-monitor` exists in compose but is not in use.
 - **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod. Live data lives on verva; the local Mac DB is typically empty.
+- **Locations:** `paths.py` is the single source of truth for every path (`PROJECT_ROOT`, `DATA_DIR`, `DB_PATH`, `OUTPUT_DIR`, `ENV_PATH`, `data_path()`). Env overrides: `JOB_AGENT_DATA_DIR` (data dir), `JOB_AGENT_OUTPUT_DIR` (outputs dir); `JOB_AGENT_REQUIRE_DB=1` makes `import paths` refuse startup (no dir/DB created) if the DB is missing. Rule: locations come from `paths.py` only — never derive `data`/`outputs`/`.env` from `__file__` or a CWD-relative `"data/…"` literal; scripts are launched as modules (`-m <module>`, e.g. `python -m scrape`), never by `.py` filename.
 - **LLM:** DeepSeek only (`deepseek-chat`), configured in `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) and called exclusively through `llm.call()`.
 - **Deploy:** `git push` on Mac → `scripts/deploy.sh` on server (git pull, rebuild all images, restart).
 
@@ -202,8 +203,8 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 **API migration roadmap** — `docs/roadmap-api.md`. Next: step 0 (parity script + backup restore test), then step 1 (monorepo).
 
 <!-- SPECKIT START -->
-Current feature: **Migration Safety Net** (`specs/031-migration-safety-net/`)
-- Spec: `specs/031-migration-safety-net/spec.md`
-- Plan: `specs/031-migration-safety-net/plan.md`
-- Tasks: `specs/031-migration-safety-net/tasks.md` (pending — run /speckit-tasks)
+Current feature: **Location Independence** (`specs/032-location-independence/`)
+- Spec: `specs/032-location-independence/spec.md`
+- Plan: `specs/032-location-independence/plan.md`
+- Tasks: `specs/032-location-independence/tasks.md` (complete)
 <!-- SPECKIT END -->
