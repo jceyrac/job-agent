@@ -47,8 +47,9 @@ python scripts/health_check.py [--url http://localhost:8501] [--db /app/data/job
 ```
 
 - GETs `--url/_stcore/health`; fails unless it returns `ok` (FR-018, R8).
-- Reads the last `runs` row via `JobStorage.get_last_run()`; reports `status`, `run_type`, and age
-  from `ran_at`; fails on a non-success status or age > `--max-age-hours`.
+- Reads the `runs` table read-only (`mode=ro`) and reports the latest run of each `run_type`
+  for information; gates on the latest **full** run — fails on a missing full run, a
+  non-success status, or age > `--max-age-hours`.
 - Exits non-zero on any failure.
 
 ## Fingerprint JSON schema
@@ -65,6 +66,6 @@ python scripts/health_check.py [--url http://localhost:8501] [--db /app/data/job
   "applications": { "count": 55 },
   "companies": { "count": 210 },
   "contacts": { "count": 40 },
-  "regression_cases": { "felfel": { "presence": true, "matched_jobs": 1, "score": 8 }, "lausanne_usa": "absent" }
+  "regression_cases": { "felfel": { "presence": true, "matched_jobs": 1, "score": 8 }, "lausanne_present": "absent" }
 }
 ```

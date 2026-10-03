@@ -56,7 +56,7 @@ Sections:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `id` | string | stable label (e.g. `felfel`, `lausanne_usa`) |
+| `id` | string | stable label (e.g. `felfel`, `lausanne_present`) |
 | `match` | object | `{ title }`, `{ title, company }` (case-insensitive exact), or `{ location_contains }` (case-insensitive substring on `location`/`base_location`) |
 | `expected_presence` | bool | whether the job must appear in the feed |
 | `expected_score_band` | string | e.g. `">=8"`, `"5-7"`, `"any"` |

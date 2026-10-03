@@ -15,18 +15,18 @@ step** — tick each item before a step is declared complete. Run on verva (SSH)
   docker exec job-tracker cat /app/data/backups/manifest_<STEM>.json
   ```
 
-- [ ] **Health check OK** (tracker responds; last run succeeded and is < 26 h)
+- [ ] **Health check OK** (tracker responds; latest **full** run succeeded and is < 26 h)
   ```bash
   docker exec job-tracker python /app/scripts/health_check.py --url http://localhost:8501 --db /app/data/jobs.db
   ```
   (`health_check.py` is baked into the rebuilt image at `/app/scripts/`, so it is
   available right after `deploy.sh` finishes.)
 
-- [ ] **Nightly cron OK** — next morning, the last `runs` row has
-  `status = success` (or `scraped`) and `ran_at` from last night:
+- [ ] **Nightly cron OK** — next morning, the latest `runs` row with
+  `run_type = 'full'` has `status = success` (or `scraped`) and `ran_at` from last night:
   ```bash
   docker exec job-tracker python -c \
-    "import sqlite3;print(sqlite3.connect('/app/data/jobs.db').execute('SELECT ran_at,status,run_type FROM runs ORDER BY ran_at DESC, id DESC LIMIT 1').fetchone())"
+    "import sqlite3;print(sqlite3.connect('/app/data/jobs.db').execute(\"SELECT ran_at,status,run_type FROM runs WHERE run_type='full' ORDER BY ran_at DESC, id DESC LIMIT 1\").fetchone())"
   ```
 
 - [ ] **Manual smoke test** of the tracker (open it in a browser):

@@ -97,7 +97,7 @@
 
 - [x] T016 Run `python -m pytest tests/` — full suite green (235 existing + new `test_migration_safety_net.py`).
 - [x] T017 Walk `quickstart.md` end-to-end (backup, fingerprint determinism, compare, health check) on dev against a snapshot.
-- [ ] T018 Validate SC-001–SC-006: backup + integrity on verva, restore drill duration < 15 min, byte-identical fingerprint, compare detects a change, next `deploy.sh` creates a verified backup, live app unchanged.
+- [x] T018 Validate SC-001–SC-006: backup + integrity on verva, restore drill duration < 15 min, byte-identical fingerprint, compare detects a change, next `deploy.sh` creates a verified backup, live app unchanged.
 
 ---
 

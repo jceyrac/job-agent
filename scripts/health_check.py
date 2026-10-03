@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Post-deploy health check (spec 031, FR-018).
 
-Reports Streamlit health (GET ``/_stcore/health``) and the last ``runs`` row's
-status / type / age, and exits non-zero on a health failure or a run older than
-``--max-age-hours``. Stdlib only — no ``import streamlit``.
+Reports Streamlit health (GET ``/_stcore/health``) and, from the ``runs`` table,
+the latest run of each ``run_type``; gates status and the age threshold on the
+latest **full** run — a fresh ``monitored_only`` run must not mask a failed or
+stale full pipeline run. Exits non-zero on a health failure, a missing full run,
+a non-success full-run status, or a full run older than ``--max-age-hours``.
+
+The ``runs`` read is a read-only diagnostic (``mode=ro``), in the spirit of the
+FR-014 exception: ``JobStorage`` exposes no per-``run_type`` history, and a
+health check must not run migrations on the live DB.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import sys
 import urllib.error
 import urllib.request
@@ -17,10 +24,9 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from paths import DB_PATH  # noqa: E402
-from storage import JobStorage  # noqa: E402
 
 DEFAULT_MAX_AGE_HOURS = 26
-# A "healthy" last run is a full scrape or a successful score run. "error" and
+# A "healthy" full run is a full scrape or a successful score run. "error" and
 # "partial" (scoring finished with some failures) are flagged.
 HEALTHY_STATUSES = {"success", "scraped"}
 
@@ -48,6 +54,47 @@ def check_health(url: str, timeout: int = 10) -> bool:
         return False
 
 
+def latest_runs_by_type(path: str) -> dict[str, dict]:
+    """Latest run per ``run_type`` (``{run_type: {"ran_at", "status"}}``).
+
+    Read-only diagnostic query; returns ``{}`` when the DB or ``runs`` table is
+    absent/unreadable. ``run_type`` is normalised to ``"full"`` when NULL/empty
+    (the schema default and what ``log_run`` writes).
+    """
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT run_type, ran_at, status FROM runs ORDER BY ran_at DESC, id DESC"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+
+    latest: dict[str, dict] = {}
+    for run_type, ran_at, status in rows:
+        rt = run_type or "full"
+        latest.setdefault(rt, {"ran_at": ran_at, "status": status})
+    return latest
+
+
+def gate_failures(runs_by_type: dict[str, dict], now: datetime,
+                  max_age_hours: float) -> list[str]:
+    """Failure labels for the latest **full** run (status + age threshold)."""
+    gate = runs_by_type.get("full")
+    if gate is None:
+        return ["last full run missing"]
+    failures: list[str] = []
+    if gate["status"] not in HEALTHY_STATUSES:
+        failures.append(f"last full run status ({gate['status']})")
+    if run_age_hours(gate["ran_at"], now) > max_age_hours:
+        failures.append("last full run age")
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Post-deploy health check (spec 031).")
     parser.add_argument("--url", default="http://localhost:8501")
@@ -63,26 +110,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"tracker health: FAILED ({args.url}/_stcore/health)", file=sys.stderr)
         failures.append("tracker health")
 
-    db = JobStorage(args.db)
-    run = db.get_last_run()
-    if run is None:
-        print("last run: NONE (no runs recorded)", file=sys.stderr)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    runs = latest_runs_by_type(args.db)
+    if not runs:
+        print("runs: NONE (no runs recorded)", file=sys.stderr)
         failures.append("last run missing")
     else:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        age_h = run_age_hours(run["ran_at"], now)
-        status = run.get("status")
-        run_type = run.get("run_type") or "unknown"
-        print(f"last run: status={status} type={run_type} age={age_h:.1f}h")
-        if status not in HEALTHY_STATUSES:
-            print(f"last run: FAILED (status={status!r})", file=sys.stderr)
-            failures.append(f"last run status ({status})")
-        if age_h > args.max_age_hours:
-            print(
-                f"last run: STALE ({age_h:.1f}h > {args.max_age_hours}h)",
-                file=sys.stderr,
-            )
-            failures.append(f"last run age ({age_h:.1f}h)")
+        for rt in sorted(runs):
+            r = runs[rt]
+            age_h = run_age_hours(r["ran_at"], now)
+            print(f"run[{rt}]: status={r['status']} age={age_h:.1f}h")
+        failures.extend(gate_failures(runs, now, args.max_age_hours))
 
     if failures:
         print("HEALTH CHECK FAILED: " + "; ".join(failures), file=sys.stderr)

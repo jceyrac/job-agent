@@ -8,6 +8,13 @@ cd "$DEPLOY_DIR"
 echo "=== Pulling latest code ==="
 git pull origin main
 
+# Re-exec once so changes to this very script take effect on the same deploy
+# (the pull above may have just replaced deploy.sh). Guarded so we only do it once.
+if [ "${DEPLOY_REEXEC:-0}" != "1" ]; then
+    export DEPLOY_REEXEC=1
+    exec bash "$0" "$@"
+fi
+
 echo "=== Backing up live DB (pre-deploy safety net) ==="
 # Copy the freshly-pulled stdlib backup script into the running container (the
 # running image may predate this script on the first deploy) and take a verified

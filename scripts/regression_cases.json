@@ -8,10 +8,11 @@
       "expected_score_band": "5-7"
     },
     {
-      "id": "lausanne_usa",
+      "id": "lausanne_present",
       "match": { "location_contains": "Lausanne" },
       "expected_presence": true,
-      "expected_score_band": "any"
+      "expected_score_band": "any",
+      "note": "Geo regression (Lausanne jobs wrongly excluded by a naive 'usa' substring match, spec 020) is detected via the matched_jobs count in compare: if it recurs, matched_jobs drops to 0."
     }
   ]
 }

@@ -29,6 +29,7 @@ from scripts.fingerprint import (  # noqa: E402
 )
 from scripts.health_check import (  # noqa: E402
     DEFAULT_MAX_AGE_HOURS,
+    gate_failures,
     run_age_hours,
 )
 from storage import JobStorage  # noqa: E402
@@ -165,6 +166,34 @@ def test_fingerprint_deterministic(tmp_path):
     }
 
 
+def test_fingerprint_as_of_pins_dashboard_windows(tmp_path):
+    # A follow-up dated 2020-06-15 must count as "due today" when as_of is
+    # 2020-06-16 (7/14-day windows pin to as_of), and NOT when as_of is 2019 —
+    # proving the pin reaches get_dashboard_data() rather than real `today`.
+    src = tmp_path / "src.db"
+    JobStorage(str(src))  # schema
+    conn = sqlite3.connect(str(src))
+    conn.execute(
+        "INSERT INTO companies (name, name_normalized, first_seen_at, last_seen_at, created_at) "
+        "VALUES ('Acme', 'acme', '2020-01-01', '2020-01-01', '2020-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO interactions "
+        "(company_id, contact_id, job_id, type, direction, outcome, subject, body_excerpt, "
+        " occurred_at, follow_up_due_at, created_at) "
+        "VALUES (1, NULL, NULL, 'email', 'outbound', NULL, NULL, NULL, "
+        " '2020-01-01', '2020-06-15', '2020-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    past = build_fingerprint(str(src), "2019-01-01", None, None, "test")
+    near = build_fingerprint(str(src), "2020-06-16", None, None, "test")
+
+    assert len(past["dashboard"]["follow_ups_due_today"]) == 0
+    assert len(near["dashboard"]["follow_ups_due_today"]) == 1
+
+
 # ── compare detects a diff (SC-004) ──────────────────────────────────────────
 
 def test_compare_identical_is_empty():
@@ -225,3 +254,33 @@ def test_run_age_stale_flags_threshold():
     age = run_age_hours("2026-09-30 12:00:00", now)  # 72 h old
     assert age == 72.0
     assert age > DEFAULT_MAX_AGE_HOURS
+
+
+def test_gate_failures_uses_full_run_not_any_type():
+    now = datetime(2026, 10, 3, 12, 0, 0)
+    runs = {
+        "monitored_only": {"ran_at": "2026-10-03 06:00:00", "status": "error"},
+        "full": {"ran_at": "2026-10-03 06:00:00", "status": "success"},
+    }
+    # Latest row is monitored_only (error), but the gate is on full → no failures.
+    assert gate_failures(runs, now, DEFAULT_MAX_AGE_HOURS) == []
+
+
+def test_gate_failures_stale_full_run():
+    now = datetime(2026, 10, 3, 12, 0, 0)
+    runs = {"full": {"ran_at": "2026-09-30 12:00:00", "status": "success"}}  # 72 h
+    assert "last full run age" in gate_failures(runs, now, DEFAULT_MAX_AGE_HOURS)
+
+
+def test_gate_failures_bad_full_status():
+    now = datetime(2026, 10, 3, 12, 0, 0)
+    runs = {"full": {"ran_at": "2026-10-03 06:00:00", "status": "error"}}
+    assert "last full run status (error)" in gate_failures(
+        runs, now, DEFAULT_MAX_AGE_HOURS
+    )
+
+
+def test_gate_failures_missing_full_run():
+    now = datetime(2026, 10, 3, 12, 0, 0)
+    runs = {"monitored_only": {"ran_at": "2026-10-03 06:00:00", "status": "success"}}
+    assert gate_failures(runs, now, DEFAULT_MAX_AGE_HOURS) == ["last full run missing"]
