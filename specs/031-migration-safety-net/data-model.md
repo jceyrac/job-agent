@@ -40,22 +40,24 @@ Sections:
 
 | Section | Source | Content |
 |---------|--------|---------|
-| `meta` | args | `{ schema, as_of, git_ref, db_path }` |
+| `meta` | args | `{ schema, as_of, git_ref, db_path, profile }` |
 | `counts` | raw `mode=ro` | per-table row counts |
 | `feed` | `get_all_for_tracker` | feed size per status and per score band (active profile) |
-| `scores` | `get_stats` / scores read | score distribution |
+| `scores` | derived from `feed` | score distribution |
+| `stats` | `get_stats` | `{ total, scored, hot, solid, by_status }` |
 | `dashboard` | `get_dashboard_data` | dashboard figures |
+| `last_run` | `get_last_run` | last pipeline run row (or `null` when none) |
 | `applications` | `get_all_applications` | application count/figures |
 | `companies` | `get_companies` | company count/figures |
 | `contacts` | `get_all_contacts` | contact count/figures |
-| `regression_cases` | `regression_cases.json` | per case: `{ presence, score }` or `"absent"` |
+| `regression_cases` | `regression_cases.json` | per case: `{ presence, matched_jobs, score }` or `"absent"` |
 
 ### 3. Regression case (in `scripts/regression_cases.json`, versioned)
 
 | Field | Type | Meaning |
 |-------|------|---------|
 | `id` | string | stable label (e.g. `felfel`, `lausanne_usa`) |
-| `match` | object | `{ title }` or `{ title, company }` pattern |
+| `match` | object | `{ title }`, `{ title, company }` (case-insensitive exact), or `{ location_contains }` (case-insensitive substring on `location`/`base_location`) |
 | `expected_presence` | bool | whether the job must appear in the feed |
 | `expected_score_band` | string | e.g. `">=8"`, `"5-7"`, `"any"` |
 

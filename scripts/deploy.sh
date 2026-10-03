@@ -8,6 +8,21 @@ cd "$DEPLOY_DIR"
 echo "=== Pulling latest code ==="
 git pull origin main
 
+echo "=== Backing up live DB (pre-deploy safety net) ==="
+# Copy the freshly-pulled stdlib backup script into the running container (the
+# running image may predate this script on the first deploy) and take a verified
+# backup BEFORE rebuilding. Abort the deploy if the backup fails (FR-005).
+GIT_REF=$(git rev-parse --short HEAD)
+docker cp scripts/backup_db.py job-tracker:/tmp/backup_db.py
+if ! docker exec job-tracker python /tmp/backup_db.py \
+      --db /app/data/jobs.db \
+      --checkpoints /app/data/cv_agent_checkpoints.sqlite \
+      --backup-dir /app/data/backups \
+      --ref "$GIT_REF"; then
+    echo "ERROR: pre-deploy backup failed — aborting deploy."
+    exit 1
+fi
+
 echo "=== Rebuilding images (all services) ==="
 # Build every service by name — not by profile.
 # Profiles (e.g. "manual" on agent/email-monitor) bypass `docker compose build`

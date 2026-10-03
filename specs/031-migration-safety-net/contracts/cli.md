@@ -55,14 +55,16 @@ python scripts/health_check.py [--url http://localhost:8501] [--db /app/data/job
 
 ```jsonc
 {
-  "meta": { "schema": 1, "as_of": "2026-10-03", "git_ref": "abc1234", "db_path": "…" },
+  "meta": { "schema": 1, "as_of": "2026-10-03", "git_ref": "abc1234", "db_path": "…", "profile": "unified_jc" },
   "counts": { "jobs": 1234, "job_scores": 987, "job_tracking": 1200, "interactions": 345, "contacts": 40, "companies": 210 },
   "feed": { "by_status": { "new": 100, "ready": 20, "…": 0 }, "by_score_band": { ">=8": 50, "5-7": 120, "<5": 60, "unscored": 300 } },
   "scores": { "distribution": { "10": 1, "9": 3, "…": 0 } },
+  "stats": { "total": 1234, "scored": 987, "hot": 50, "solid": 120, "by_status": { "new": 100, "…": 0 } },
   "dashboard": { "…": "figures from get_dashboard_data" },
+  "last_run": { "ran_at": "…", "status": "ok", "run_type": "full", "…": "…" },
   "applications": { "count": 55 },
   "companies": { "count": 210 },
   "contacts": { "count": 40 },
-  "regression_cases": { "felfel": { "presence": true, "score": 8 }, "lausanne_usa": { "presence": true, "score": 7 } }
+  "regression_cases": { "felfel": { "presence": true, "matched_jobs": 1, "score": 8 }, "lausanne_usa": "absent" }
 }
 ```

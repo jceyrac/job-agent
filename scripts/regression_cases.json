@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "felfel",
+      "match": { "title": "Senior Tech Product Owner", "company": "FELFEL" },
+      "expected_presence": true,
+      "expected_score_band": "5-7"
+    },
+    {
+      "id": "lausanne_usa",
+      "match": { "location_contains": "Lausanne" },
+      "expected_presence": true,
+      "expected_score_band": "any"
+    }
+  ]
+}
