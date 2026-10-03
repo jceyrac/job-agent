@@ -1,22 +1,43 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 1.0.0 → 1.1.0
-  Bump rationale: MINOR — expansion matérielle du Principe VIII pour
-  refléter la décision de conserver la découverte ATS. Les sources
-  company-keyed sont pilotées par une liste d'entreprises (toutes les
-  connues d'un provider en découverte, ou les monitorées seulement en
-  monitoring), et non par les seules entreprises monitorées.
+  Version change: 1.1.0 → 2.0.0
+  Bump rationale: MAJOR — redéfinition incompatible du Principe III (la
+  couture multi-utilisateur passe de `profile_id` à `user_id`) et
+  restriction du Principe I (le périmètre d'ingestion ne peut plus être
+  dérivé d'un profil). Ajout de l'architecture API (docs/roadmap-api.md).
 
   Modified principles:
-    - VIII. Scrapers organisés par modèle d'acquisition — pilotage des
-      sources company-keyed élargi à une liste paramétrable par
-      l'orchestrateur (découverte vs monitoring) ; adaptateurs ATS
-      qualifiés de fonctions pures ; garantie d'exécution autonome du
-      monitoring (--monitored-only).
+    - I. Filet large — le périmètre d'ingestion est un paramètre
+      plateforme ; tout gate dépendant d'un profil appartient au scoring.
+    - III. Profil unifié unique — couture `user_id` ; l'utilisateur
+      possède son profil ; `profile_id` reste la clé du scoring.
+    - IV. Structure déterministe — étendu aux flux conversationnels :
+      la cible d'une édition est choisie par l'UI, jamais routée par LLM.
+    - VII. Sécurité — egress LLM aligné sur `llm.py` (DeepSeek) ; règles
+      d'exposition de l'API (Tailscale, tokens à scopes).
 
-  Added sections: None
-  Removed sections: None
+  Added principles:
+    - X. Catalogue partagé, espace utilisateur
+    - XI. Migration progressive, application toujours opérationnelle
+
+  Modified sections:
+    - Architecture Constraints — data flow cible, API, tâches longues,
+      dépendances autorisées, Stable core adapté au monorepo.
+    - Development Workflow — specs SpecKit dans `specs/`, chemin de
+      migration, deploy via scripts/deploy.sh.
+
+  Known violations at ratification (résolues par la roadmap) :
+    - scrape.py applique `title_matches_profile` avant sauvegarde
+      (Principe I) → étape 4.
+    - job_tracking, status_history, job_applications, interactions,
+      contacts sans `user_id` ; `companies.monitored` sur l'entité
+      partagée (Principe X) → étape 3.
+    - SQL brut dans tracker_views/ et subprocess lancés par le tracker
+      (Architecture Constraints) → étape 2.
+    - Mentions résiduelles de Groq dans scorer.py,
+      tracker_views/onboarding.py et email_monitor.py (Principe VII)
+      → étape 2.
 
   Templates requiring updates:
     - .specify/templates/plan-template.md     ✅ No changes needed
@@ -24,7 +45,7 @@
     - .specify/templates/tasks-template.md    ✅ No changes needed
     - .specify/templates/checklist-template.md ✅ No changes needed
 
-  Follow-up TODOs: None.
+  Follow-up TODOs: None (CLAUDE.md aligné le 2026-10-03).
 -->
 
 # Job Agent Constitution
@@ -35,7 +56,13 @@
 
 Les scrapers d'agrégation MUST collecter largement sans aucun filtrage de
 pertinence. Le scorer est le seul point de décision où un job est jugé sur
-sa pertinence vis-à-vis du profil.
+sa pertinence vis-à-vis d'un profil.
+
+Le périmètre d'ingestion (familles de postes, zones, fraîcheur, liste de
+sources) est un **paramètre plateforme**, curé et versionné. Il MUST NEVER
+être dérivé d'un profil ou d'un utilisateur. Tout filtre qui dépend d'un
+profil (titres, exclusions, mode de travail) appartient au scoring, en
+Tier 0 déterministe.
 
 Exception cadrée : les sources company-keyed (adaptateurs ATS, scrapers de
 sites carrières) renvoient la liste complète des postes d'une entreprise. Un
@@ -46,7 +73,8 @@ gratuitement, pas du filtrage de pertinence.
 Tout jugement de fit MUST rester au scorer seul.
 
 **Rationale** : Éviter les décisions précoces irréversibles. Si le scraper
-filtre, on ne sait jamais ce qu'on a perdu. Le scorer a le contexte complet.
+filtre, on ne sait jamais ce qu'on a perdu. Un catalogue façonné par le
+profil d'un utilisateur prive tous les autres des offres qui les concernent.
 
 ### II. Deux chemins d'amélioration, jamais confondus
 
@@ -62,20 +90,31 @@ Un changement est l'un ou l'autre, jamais les deux simultanément. Si un
 changement de prose nécessite une adaptation de code, c'est un changement
 code qui inclut la prose comme payload.
 
+Un agent qui produit du code ou des specs (ex. `monitoring_agent.py`) relève
+du chemin code : il MUST NOT être exposé par l'API ni tourner en production.
+
 **Rationale** : Séparation des responsabilités. La prose évolue au rythme
 de la recherche d'emploi (heures) ; le code évolue au rythme du
 développement logiciel (jours/semaines). Les confondre bloque les deux.
 
-### III. Profil unifié unique, couture multi-utilisateur préservée
+### III. Profil unifié unique, couture multi-utilisateur `user_id`
 
-Un seul profil de recherche sert toute l'intention de l'utilisateur. La
-dimension `profile_id` MUST rester en base comme couture pour un futur
-multi-utilisateur, mais les profils MUST NOT être multipliés pour un usage
-personnel.
+Chaque utilisateur possède **un seul** profil de recherche qui sert toute
+son intention. Les profils MUST NOT être multipliés pour un usage personnel.
+
+La couture multi-utilisateur est `user_id` : `search_profiles.user_id`
+rattache le profil à son propriétaire. `profile_id` reste la clé du scoring
+(`job_scores (job_id, profile_id)`), ce qui permet de versionner des
+critères sans changer le modèle.
+
+Le multi-utilisateur (auth, isolation, clés LLM par utilisateur) n'est PAS
+construit tant qu'il n'est pas une décision produit explicite ; seule la
+couture est maintenue.
 
 **Rationale** : La multiplication des profils pour un usage solo ajoute
-complexité sans valeur. La couture `profile_id` est un pari architectural
-peu coûteux qui préserve la possibilité d'évolution.
+complexité sans valeur. Porter la couture sur l'utilisateur plutôt que sur
+le profil place la propriété des données au bon endroit, pour un coût
+négligeable tant qu'il n'existe qu'un utilisateur.
 
 ### IV. Structure déterministe, prose LLM uniquement
 
@@ -83,8 +122,13 @@ Les champs structurés dont dépend le control flow (work_mode, geo_zone,
 status, etc.) MUST être dérivés de façon déterministe, sans LLM.
 
 Le LLM MUST ONLY produire de la prose : résumé, raison du score,
-qualification du candidat. Il MUST NEVER générer de données structurées
-dont dépendent des décisions automatiques.
+qualification du candidat, contenu de CV et de lettre. Il MUST NEVER
+générer de données structurées dont dépendent des décisions automatiques.
+
+Cela s'applique aux flux conversationnels (chat avec un agent) : la cible
+d'une édition (section du CV, paragraphe de lettre) et les décisions
+(approuver, abandonner) MUST être fournies par l'interface, jamais
+inférées par un LLM routeur d'intention.
 
 **Rationale** : Les LLM sont non-déterministes par nature. Leur faire
 produire des champs structurés dont dépend le routing ou le filtrage
@@ -96,6 +140,9 @@ Chaque changement MUST être le plus petit possible pour atteindre l'objectif.
 Pas de refactoring opportuniste, pas de nouvelle dépendance sans
 justification explicite, blast radius minimal.
 
+Les étapes de la roadmap API (`docs/roadmap-api.md`) sont des refactorings
+planifiés, pas opportunistes : chacune est une spec avec ses non-goals.
+
 Chaque spec MUST énoncer ses non-goals explicites.
 
 **Rationale** : Projet solo sans filet de sécurité de code review
@@ -105,7 +152,7 @@ et facilite le bisect.
 ### VI. Validation empirique avant livraison
 
 Les changements MUST être vérifiés contre des cas de régression connus (ex.
-l'offre FELFEL) avant d'être considérés comme terminés.
+l'offre FELFEL, le job de Lausanne) avant d'être considérés comme terminés.
 
 Chaque phase MUST être confirmée avant de passer à la suivante. Pas de
 déploiement sans validation.
@@ -119,7 +166,13 @@ empirique sur des cas connus est le filet de sécurité pour le reste.
 Les secrets (clés API, tokens) MUST NEVER être commités ni loggés.
 
 L'egress réseau MUST être contrôlé : les scrapers ne contactent que leurs
-cibles déclarées, l'appel LLM ne sort que vers Groq et DeepSeek.
+cibles déclarées, l'appel LLM ne sort que vers le fournisseur déclaré dans
+`llm.py` (DeepSeek). Aucun autre fichier ne nomme un fournisseur LLM.
+
+L'API MUST être joignable uniquement via Tailscale, jamais exposée
+publiquement. Chaque client reçoit un token à scopes minimaux : un scraper
+n'a accès qu'à l'ingestion, un agent qu'aux tâches et à l'espace de
+l'utilisateur pour lequel il agit.
 
 Toute nouvelle intégration (scraper, API, service) MUST partir du moindre
 privilège : pas d'accès aux données qu'elle n'a pas besoin de lire, pas de
@@ -134,18 +187,24 @@ privilège limite le blast radius d'un bug ou d'une compromission.
 Les scrapers sont classés en deux catégories, invoquables indépendamment :
 
 - **Boards d'agrégation** (LinkedIn, Indeed, Wellfound, etc.) :
-  query-driven, filet large. Paramétrés par des requêtes de recherche.
+  query-driven, filet large. Paramétrés par des requêtes de recherche
+  issues du périmètre plateforme (Principe I).
 - **Sources company-keyed** (adaptateurs ATS Greenhouse/Lever/Ashby,
   scrapers de sites carrières) : pilotées par **une liste d'entreprises**
   décidée par l'orchestrateur, pas par une requête. Les adaptateurs sont
   des fonctions pures (liste → offres), sans logique de mode interne. La
   liste varie selon le chemin : **toutes** les entreprises connues d'un
-  provider en découverte (filet large), ou les seules `monitored = true`
-  en monitoring.
+  provider en découverte (filet large), ou l'**union des entreprises
+  surveillées par les utilisateurs** en monitoring.
 
 Les deux catégories MUST pouvoir tourner séparément (ex. `--source
 linkedin` vs `--source greenhouse`), et le monitoring MUST pouvoir tourner
 seul (`--monitored-only`) sans déclencher le filet large.
+
+Un scraper ne connaît que son contrat de sortie (`JobPosting`) ; à terme il
+MUST NOT accéder à la base autrement que par l'endpoint d'ingestion. Son
+indépendance est contractuelle, pas de déploiement : un seul worker
+d'ingestion les exécute.
 
 **Rationale** : Les deux modèles ont des rythmes de changement différents
 (liste d'entreprises vs. termes de recherche) et des contraintes de
@@ -166,36 +225,101 @@ un prérequis à l'usage de l'application.
 rend l'application utile même sans scoring configuré, et garantit que la
 couche scraping est autonome et testable isolément.
 
+### X. Catalogue partagé, espace utilisateur
+
+Les données sont réparties en deux espaces exclusifs :
+
+- **Catalogue partagé** (aucun utilisateur) : ingestion, `jobs`, champs
+  extraits (une extraction par job, quel que soit le nombre
+  d'utilisateurs), `runs`, faits sur les entreprises (site, ATS, taille,
+  secteur).
+- **Espace utilisateur** (clé `user_id`) : profil, scores, suivi et
+  historique de statut, candidatures et documents, relation aux
+  entreprises (`user_companies` : surveillance, statut, notes), contacts
+  et interactions.
+
+Le scoring est une **vue de l'utilisateur sur le catalogue** : il est porté
+par l'utilisateur (via son profil), jamais par le job. Une décision ou une
+donnée personnelle MUST NEVER être stockée sur une entité du catalogue.
+
+Les contacts sont **privés par utilisateur** : un contact trouvé par un
+utilisateur n'est jamais visible d'un autre.
+
+**Rationale** : L'ingestion ne dépend de personne, le jugement dépend de
+chacun. Mélanger les deux rend le multi-utilisateur impossible sans
+migration lourde et expose des données personnelles (RGPD).
+
+### XI. Migration progressive, application toujours opérationnelle
+
+L'application est l'outil de recherche d'emploi en production : chaque
+étape de migration MUST laisser un système pleinement utilisable.
+
+- **Expand / contract** : une migration de schéma ajoute et backfill ; la
+  suppression de l'ancien est une étape séparée, après usage éprouvé.
+- **Flags** : tout nouveau chemin d'exécution est activable par une clé
+  `config`, avec retour arrière sans redéploiement.
+- **Définition de terminé** : cron de la nuit suivante OK, smoke test du
+  tracker (feed, changement de statut, fiche job), script de parité vert.
+- **Backup** de la base avant tout déploiement touchant le schéma.
+
+Pas de réécriture parallèle dans un repo séparé : le nouveau se construit
+dans le monorepo existant, sur le code existant.
+
+**Rationale** : Une réécriture redécouvre les bugs déjà corrigés et laisse
+l'utilisateur sans outil pendant des mois. La migration progressive livre
+de la valeur à chaque étape et peut s'arrêter après n'importe laquelle.
+
 ## Architecture Constraints
 
-Ces contraintes découlent des principes I, IV, VIII et IX.
+Ces contraintes découlent des principes I, IV, VIII, IX, X et XI.
 
-**Data flow** : `scrape.py → SQLite → score.py (extract) → score.py
-(per-profile) → tracker.py`. Chaque étape est optionnelle et indépendante.
+**Data flow (cible)** : scrapers → `POST /ingest` → catalogue → extraction
+(tâche) → scoring par utilisateur (tâche) → clients (tracker, web, agents)
+via l'API. Chaque étape est optionnelle et indépendante. Tant que la
+roadmap n'est pas terminée, le flux actuel `scrape.py → SQLite → score.py
+→ tracker.py` reste valide.
+
+**Monorepo** : `core/` (domaine), `api/` (FastAPI), `web/` (front),
+`tracker/` (Streamlit). `api/` et les clients MUST passer par `core/` ;
+aucune duplication de la logique de stockage.
 
 **DB access** : Tout accès à la base MUST passer par `JobStorage`. Pas de
-`sqlite3` direct hors de `storage.py`, sauf blocs diagnostiques explicites
-dans `settings.py` ou `dashboard.py`.
+`sqlite3` direct hors de `storage.py`. À terme, l'API est le seul écrivain ;
+les clients et workers passent par elle.
 
-**No new dependencies** : L'UI est Streamlit-native. Toute nouvelle
+**API** : monolithe modulaire, un router par domaine, chaque router
+n'utilisant que les méthodes de son domaine.
+
+**Tâches longues** : aucun appel LLM ni traitement de plus de quelques
+secondes dans une requête HTTP. Batch → table `tasks` + worker ;
+conversationnel → session pilotant le graphe LangGraph, progression en SSE.
+
+**Dépendances** : FastAPI, uvicorn et pydantic sont autorisés pour `api/`.
+La stack de `web/` est fixée par sa première spec. Toute autre nouvelle
 dépendance MUST être justifiée dans la spec correspondante.
 
 **Stable core** : `storage.py`, `models.py`, `profiles.py`, `scrape.py`,
 `scorer.py`, `main.py`, les fichiers de `scrapers/`, `tracker_views/shared.py`,
-`tracker_views/onboarding.py` et les migrations sont NEVER modified sauf si
-la tâche les concerne explicitement.
+`tracker_views/onboarding.py` et les migrations (et leurs équivalents sous
+`core/` après déplacement) sont NEVER modified sauf si la tâche, ou l'étape
+de roadmap en cours, les concerne explicitement.
 
 ## Development Workflow
 
-Ces règles découlent des principes II, V, VI et VII.
+Ces règles découlent des principes II, V, VI, VII et XI.
 
 **Code path** :
-1. Lire la spec applicable dans `prompts/`
+1. Lire la spec SpecKit applicable dans `specs/`
 2. Modifier le code — diffs minimaux, pas de refactoring opportuniste
-3. Si `storage.py` ou `models.py` touché : `python -m pytest tests/` (162 tests)
+3. Si `storage.py` ou `models.py` touché : `python -m pytest tests/`
 4. Vérification empirique contre les cas de régression connus
 5. Commit avec message descriptif
-6. `git push` → `docker compose up -d` sur le serveur
+6. `git push` → `scripts/deploy.sh` sur le serveur
+
+**Migration path** (étapes de `docs/roadmap-api.md`) : le code path,
+plus backup avant déploiement, flag de retour arrière, et validation de la
+définition de terminé (Principe XI) avant l'étape suivante. Les déploiements
+touchant le schéma évitent la fin de mois (mise à jour des statuts en batch).
 
 **Prose path** :
 1. Modifier le scoring context ou la config directement en base
@@ -206,7 +330,7 @@ Ces règles découlent des principes II, V, VI et VII.
 tout commit touchant `storage.py` ou `models.py`. `tests/run_all.py`
 (intégration, hit live scrapers) à exécuter intentionnellement seulement.
 
-**Secrets** : Stockés dans `.venv/` et variables d'environnement, jamais
+**Secrets** : Stockés dans des variables d'environnement (`.env`), jamais
 dans le repo. `.env` et fichiers de secrets sont `.gitignore`d.
 
 ## Governance
@@ -234,5 +358,7 @@ constitution, la constitution prévaut.
   vérifie la conformité de la feature aux principes applicables.
 - Toute violation MUST être justifiée dans la section Complexity Tracking
   du plan, avec la raison et l'alternative plus simple rejetée.
+- Les violations connues listées dans le Sync Impact Report sont tolérées
+  jusqu'à l'étape de roadmap qui les résout.
 
-**Version**: 1.1.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-06-15
+**Version**: 2.0.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-03

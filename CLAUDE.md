@@ -1,12 +1,13 @@
 # CLAUDE.md — job_agent
 
 Instructions for Claude Code. Read this before touching any file.
+The constitution (`.specify/memory/constitution.md`, v2.0.0) takes precedence over this file.
 
 ---
 
 ## Project in one sentence
 
-Python/SQLite/Streamlit pipeline that scrapes job postings from 12+ sources, scores them via LLM, and surfaces matches through a multi-page tracker dashboard. Solo project — no team conventions needed, just correctness and minimal diffs.
+Python/SQLite pipeline that scrapes job postings from 25+ sources, extracts and scores them via LLM, and surfaces matches through a multi-page Streamlit tracker — currently migrating, step by step, to an API architecture (`docs/roadmap-api.md`). Solo project — no team conventions needed, just correctness and minimal diffs.
 
 ---
 
@@ -31,6 +32,9 @@ python score.py --profile <profile_id> --rescore
 # Field extraction only (profile-independent)
 python score.py --extract
 
+# CV + cover letter agent (LangGraph, human-in-the-loop)
+python -m cv_agent.cli <job_id | url>
+
 # Run tests
 python -m pytest tests/
 
@@ -42,137 +46,160 @@ sqlite3 data/jobs.db "SELECT COUNT(*) FROM jobs"
 
 ## Architecture
 
+**Current:**
+
 ```
 scrape.py  →  SQLite (data/jobs.db)  →  score.py --extract  →  score.py (per-profile)
                                                                         ↓
                                                               tracker.py (Streamlit UI)
 ```
 
+**Target** (see `docs/roadmap-api.md` and constitution principles X–XI): monorepo with
+`core/` (domain), `api/` (FastAPI, single DB writer), `web/` (new front), `tracker/` (Streamlit).
+Shared catalogue (ingestion, jobs, extraction, company facts — no user) vs user space
+(profile, scores, tracking, applications, `user_companies`, private contacts — keyed by `user_id`).
+Migration is progressive: the app MUST stay operational after every step.
+
 **Key files:**
 - `models.py` — `JobPosting`, `JobFilter` dataclasses
 - `storage.py` — all DB access via `JobStorage` class (WAL mode SQLite)
 - `profiles.py` — `SearchProfile` dataclass + `load_active_profile(db)`
+- `llm.py` — unified LLM client; the only file allowed to know the provider
 - `scorer.py` — LLM extraction + Tier 0/Tier 1 evaluation
 - `scrape.py` — discovers and runs all enabled scrapers
 - `score.py` — CLI entry point for extraction and scoring
+- `job_actions.py` — per-job actions (`extract_one`, `score_one`, `prepare_one`)
+- `cv_agent/` — LangGraph CV/letter agent (`graph.py`, `nodes.py`, `state.py`, `cli.py`); HITL via `interrupt()` + `SqliteSaver` checkpointer
+- `company_researcher.py` — company enrichment / ATS detection
 - `tracker.py` — Streamlit entry point (multi-page via `st.navigation`)
-- `tracker_views/` — one file per page: `dashboard.py`, `jobs.py`, `settings.py`, `preferences.py`, `companies.py`, `contacts.py`, `shared.py`, `job_helpers.py`, `forms.py`, `*_detail.py`
+- `tracker_views/` — one file per page: `dashboard.py`, `jobs.py`, `settings.py`, `preferences.py`, `companies.py`, `contacts.py`, `reports.py`, `shared.py`, `job_helpers.py`, `forms.py`, `*_detail.py`
+- `monitoring_agent.py` — dev-side tool (writes specs and scraper stubs). Never runs in prod, never exposed by the API.
 
-**Scrapers** live in `scrapers/`, discovered automatically via `scrape.discover_scrapers()`. Each extends `BaseScraper` and declares `SOURCE_NAME` and `ENABLED`.
+**Scrapers** live in `scrapers/` (`boards/`, `ats/`, `company_sites/`), discovered automatically via `scrape.discover_scrapers()`. Each extends `BaseScraper` and declares `SOURCE_NAME` and `ENABLED`.
 
+Ingestion scope is a **platform parameter**, never derived from a profile (Constitution I).
 Scrapers (boards d'agrégation) : le scope de source est une liste statique curée
 à la main. NE JAMAIS le dériver de job_filter.titles par matching dynamique —
-jugement de fit = scorer seul (Constitution I). Passer les titres en query à une
-vraie recherche texte (hh.ru ?text=) est OK ; élaguer une liste curée ne l'est pas.
+jugement de fit = scorer seul. Passer les titres en query à une vraie recherche
+texte (hh.ru ?text=) est OK ; élaguer une liste curée ne l'est pas.
 
 ---
 
 ## NEVER modify these files
 
+Unless the task — or the current roadmap step's spec — explicitly concerns them:
+
 - `storage.py` — DB schema and all persistence logic. Extremely stable; breakage cascades everywhere.
 - `models.py` — `JobPosting` and `JobFilter` dataclasses. Field changes require migration.
 - `profiles.py` — `SearchProfile` definition and `load_active_profile()`. Touch only to add fields with defaults.
+- `llm.py` — unified LLM client. Touch only for provider/retry changes.
 - `scrape.py` — scraper orchestration. Touch only to add/remove scraper discovery.
-- `scorer.py` — LLM scoring logic. Touch only for prompt changes or new fallback models.
+- `scorer.py` — LLM scoring logic. Touch only for prompt changes.
 - `main.py` — thin orchestrator. Touch only if the pipeline sequence changes.
 - Any file in `scrapers/` — unless the task is specifically about that scraper.
 - `tracker_views/shared.py` — shared helpers consumed by all pages. Changes here break every page.
 - `tracker_views/onboarding.py` — first-run wizard. Do not touch unless explicitly asked.
 - Migration files (`migrate_*.py`) — one-shot scripts, already executed.
 
+After the monorepo step (roadmap step 1), the same rule applies to their equivalents under `core/`.
+
 ---
 
 ## Safe to modify
 
-- `tracker_views/dashboard.py`, `jobs.py`, `settings.py`, `preferences.py` — UI pages
+- `tracker_views/dashboard.py`, `jobs.py`, `settings.py`, `preferences.py`, `reports.py` — UI pages
 - `tracker_views/job_helpers.py` — action bar and state derivation for job cards
 - `tracker_views/forms.py` — `@st.dialog` modals
 - `tracker.py` — entry point, global CSS only
 - `tracker_legacy.py` — legacy reference, not in production
 
+Any spec touching the tracker UI (or the future `web/` front) requires a mockup approved by Jean Claude before implementation.
+
 ---
 
 ## Code style
 
-- **Surgical edits only** — change the minimum needed. No opportunistic refactors.
-- **No new dependencies** — all UI is Streamlit-native. `st.html()` for targeted CSS only.
-- **Preserve existing logic** — when reorganising UI, move code verbatim; don't rewrite it.
+- **Surgical edits only** — change the minimum needed. No opportunistic refactors. Roadmap steps are planned refactors, each with its own spec and non-goals.
+- **Dependencies** — Streamlit UI stays Streamlit-native (`st.html()` for targeted CSS only). FastAPI, uvicorn and pydantic are allowed for `api/`. Any other new dependency must be justified in its spec.
+- **Preserve existing logic** — when reorganising, move code verbatim; don't rewrite it.
 - Python 3.11: use `X | Y` union types, f-strings, dataclasses with defaults.
 - No type annotations required unless the function is new and complex.
-- DB access always goes through `JobStorage` methods — never raw `sqlite3` outside `storage.py`, except in one-off diagnostic blocks inside `settings.py` or `dashboard.py`.
+- DB access always goes through `JobStorage` methods — never raw `sqlite3` outside `storage.py`. Existing raw SQL in `tracker_views/` is a known violation, removed in roadmap step 2 — don't add more.
+- No file other than `llm.py` names an LLM provider. Never put LLM calls or long-running work inside an HTTP request handler (use the `tasks` table + worker, or a streamed session).
+- No user-dependent data on catalogue entities (`jobs`, `companies`); no user-independent logic keyed by profile (Constitution X).
 - Session state keys follow the pattern `jobs_<name>`, `bg_<name>` etc. — don't add generic keys that could collide across pages.
 
 ---
 
 ## Infrastructure
 
-- **Dev:** MacBook Pro M5 Pro, Python 3.11 venv at `.venv/`
-- **Prod:** HPE ProLiant Ubuntu server, Docker Compose
-- **Services:** `tracker` (always-on Streamlit :8501), `agent` (cron scrape+score), `email-monitor` (IMAP daemon)
-- **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod.
-- **LLM:** Groq API primary (`llama-3.3-70b-versatile` extraction, `llama-3.1-8b-instant` scoring), DeepSeek fallback.
-- **Deploy:** `git push` on Mac → `git pull` + `docker compose up -d tracker` on server via `scripts/deploy.sh`.
+- **Dev:** MacBook Pro M5 Pro, Python 3.11 venv at `.venv/`, repo at `/Users/jeanclaudevd/AI-Suite/job_agent/`. All development happens here.
+- **Prod (verva):** HPE ProLiant Ubuntu server, Docker Compose, repo at `/opt/job-agent`. Deploy-only — never develop or write specs there. SSH access is available for live diagnostics.
+- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `agent` (cron scrape+score). `email-monitor` exists in compose but is not in use.
+- **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod. Live data lives on verva; the local Mac DB is typically empty.
+- **LLM:** DeepSeek only (`deepseek-chat`), configured in `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) and called exclusively through `llm.call()`.
+- **Deploy:** `git push` on Mac → `scripts/deploy.sh` on server (git pull, rebuild all images, restart).
 
 ---
 
 ## LLM / API constraints
 
-- Groq free tier: 30 RPM, 1000 RPD on `llama-3.3-70b-versatile`.
-- Retry logic in `scorer.py`: 5 exponential retries on 429 (2s → 32s). Don't add extra sleeps.
-- If scoring fails after retries, return `None` — caller saves job as unscored for retry next run.
-- Ollama is abandoned (Metal shader bug on M5 Pro with Ollama 0.19.0). Do not suggest it.
+- All calls go through `llm.call()`: up to 3 retries with exponential backoff on 429/5xx/network (5s → 10s → 20s), plus a short `sleep_after` between calls. Don't add extra sleeps or retry loops elsewhere.
+- If extraction or scoring fails after retries, return `None` — the caller saves the job as unscored for retry next run.
+- The LLM produces prose only; structured fields used for control flow are derived deterministically (Constitution IV).
+- Local Ollama models are not part of the pipeline.
 
 ---
 
 ## DB schema (key tables)
 
 ```
-jobs            — one row per unique job (id, title, company, url, source, location, posted_date, …)
-job_scores      — one row per (job_id, profile_id) — score, reason, summary, work_mode, geo_zone, …
-job_tracking    — one row per job_id — status, notes, status_changed_at (profile-independent)
-applications    — cover letter + analysis per job_id
-companies       — CRM company records
-contacts        — CRM contact records
-interactions    — outreach log
-search_profiles — serialised SearchProfile JSON (id, name, criteria, scoring_context)
-config          — key/value store (active_profile_id, onboarding_complete, cv.master_path, …)
-pipeline_runs   — run history (ran_at, status, jobs_scraped, jobs_scored, duration_seconds)
+jobs                — one row per unique job + extracted fields (summary, work_mode, geo_zone, company_size, contract_type, …)
+job_scores          — one row per (job_id, profile_id) — score, reason, country_code, comp_flag, scored_at
+job_tracking        — one row per job_id — status, notes, changed_at
+status_history      — status changes per job (lifecycle dates)
+job_applications    — analysis, cover letter, CV bullets per job_id
+companies           — company records (facts + monitoring/ATS fields)
+company_status_history
+contacts            — CRM contact records
+interactions        — outreach log
+search_profiles     — serialised SearchProfile JSON (id, name, criteria)
+config              — key/value store (active_profile_id, onboarding_complete, cv.master_path, …)
+runs                — run history (ran_at, status, jobs_scraped, jobs_scored, duration_seconds, run_type)
 ```
 
-**Job statuses:** `new` → `queued` → `ready` → `applied` → `rejected` / `expired` / `archived`
+Roadmap step 3 adds `users`, `user_id` on tracking/history/applications/contacts/interactions, and `user_companies` (expand/contract — old columns kept until step 10).
+
+**Job statuses:** `new`, `queued`, `ready`, `applied`, `interviewing`, `offer`, `rejected`, `withdrawn`, `archived`, `expired`
 - `expired` = offer no longer live (external decision)
 - `archived` = candidate decision (not relevant), requires a note
 - `rejected` = explicit recruiter rejection
+
+Lifecycle dates are set manually (statuses are often updated in batch at month end), never from the click date.
 
 ---
 
 ## Testing
 
-Tests live in `tests/test_storage.py` (162 unit tests, in-memory DB — fast). Run before committing any change to `storage.py` or `models.py`.
+Unit tests live in `tests/test_storage.py` (in-memory DB — fast). Run before committing any change to `storage.py` or `models.py`.
 
 Integration tests in `tests/run_all.py` hit live scrapers — only run intentionally.
 
----
-
-## Specs and build files
-
-All spec and build files live in `prompts/`. Read the relevant spec before starting any task.
-
-Current active spec: `prompts/SPEC_tracker_redesign.md`
+Roadmap steps also require: next nightly cron OK, tracker smoke test (feed, status change, job detail), and the parity script green (Constitution XI).
 
 ---
 
-## Current focus (as of 2026-06-07)
+## Specs
 
-**Tracker UI redesign** — see `prompts/SPEC_tracker_redesign.md`.
+All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` → `/speckit.clarify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`). Read the relevant spec before starting any task.
 
-Changes in scope:
-1. `tracker_views/jobs.py` — add Run controls bar at top (scrape, score, clear cache, re-extract + unscored count)
-2. `tracker_views/dashboard.py` — add DB stats row (jobs, unscored, companies, contacts)
-3. `tracker_views/settings.py` — remove Run section and DB stats (now on Jobs/Dashboard), add dividers
-4. `tracker.py` — add global CSS tweaks (metric label size, card padding)
+`prompts/` holds legacy BUILD_*/SPEC_* files — historical reference only, never a source of current requirements.
 
-No new DB tables. No new dependencies. Preserve all existing logic.
+---
+
+## Current focus (as of 2026-10-03)
+
+**API migration roadmap** — `docs/roadmap-api.md`. Next: step 0 (parity script + backup restore test), then step 1 (monorepo).
 
 <!-- SPECKIT START -->
 Current feature: **CV + Cover Letter Agent** (`specs/029-cv-cover-letter-agent/`)
