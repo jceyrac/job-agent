@@ -202,8 +202,8 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 **API migration roadmap** — `docs/roadmap-api.md`. Next: step 0 (parity script + backup restore test), then step 1 (monorepo).
 
 <!-- SPECKIT START -->
-Current feature: **CV + Cover Letter Agent** (`specs/029-cv-cover-letter-agent/`)
-- Spec: `specs/029-cv-cover-letter-agent/spec.md`
-- Plan: `specs/029-cv-cover-letter-agent/plan.md`
-- Tasks: `specs/029-cv-cover-letter-agent/tasks.md`
+Current feature: **Migration Safety Net** (`specs/031-migration-safety-net/`)
+- Spec: `specs/031-migration-safety-net/spec.md`
+- Plan: `specs/031-migration-safety-net/plan.md`
+- Tasks: `specs/031-migration-safety-net/tasks.md` (pending — run /speckit-tasks)
 <!-- SPECKIT END -->
