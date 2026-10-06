@@ -8,8 +8,6 @@ import sqlite3
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from models import JobPosting
 from paths import DB_PATH
 from scorer import extract_job_fields

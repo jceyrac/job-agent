@@ -10,7 +10,9 @@ import sqlite3
 import sys
 from collections import defaultdict
 
-db_path = sys.argv[1] if len(sys.argv) > 1 else "data/jobs.db"
+from paths import DB_PATH
+
+db_path = sys.argv[1] if len(sys.argv) > 1 else DB_PATH
 conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
 q = conn.execute
 

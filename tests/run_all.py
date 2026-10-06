@@ -11,10 +11,7 @@ on a non-optional field.
 """
 
 import sys
-import os
 import time
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scraper_checks import run_scraper, print_result, ScraperResult, FIELDS
 from test_storage import run_storage_tests

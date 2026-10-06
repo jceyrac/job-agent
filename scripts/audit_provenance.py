@@ -14,8 +14,10 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 
+from paths import DB_PATH
+
 ap = argparse.ArgumentParser()
-ap.add_argument("db", nargs="?", default="data/jobs.db")
+ap.add_argument("db", nargs="?", default=DB_PATH)
 ap.add_argument("--max-age-days", type=int, default=3)
 ap.add_argument("--force", action="store_true", help="passer outre le garde-fou")
 a = ap.parse_args()

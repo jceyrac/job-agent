@@ -14,16 +14,13 @@ health check must not run migrations on the live DB.
 from __future__ import annotations
 
 import argparse
-import os
 import sqlite3
 import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from paths import DB_PATH  # noqa: E402
+from paths import DB_PATH
 
 DEFAULT_MAX_AGE_HOURS = 26
 # A "healthy" full run is a full scrape or a successful score run. "error" and

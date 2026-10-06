@@ -15,8 +15,6 @@ import sqlite3
 import traceback
 from datetime import date, timedelta
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from models import JobPosting
 from storage import JobStorage, _normalize_company_name, COMPANY_STATUSES, _now
 from tracker_views.shared import (

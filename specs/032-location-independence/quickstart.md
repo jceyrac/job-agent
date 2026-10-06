@@ -57,10 +57,10 @@ python -c "import export_seed"   # export_seed has no argparse; dry import prove
 ## 7. Prod validation (SC-001, SC-002, SC-005 — on verva / drill tracker)
 
 - **Parity**: fingerprint a pre-change snapshot and a post-change snapshot with the
-  same `--as-of`; `scripts/compare_fingerprints.py` reports no diff (see spec 031
+  same `--as-of`; `scripts.compare_fingerprints` reports no diff (see spec 031
   `quickstart.md`).
 - **Drill tracker** (`:8502`, restored backup): click all 7 launch buttons
   (Jobs: fetch/score/extract; Settings: scrape/monitored-only/score/extract) — each
   completes and its log shows normal output; run `main.py`'s 4 stages.
-- **Live**: `health_check.py` OK; next nightly `full` run success; Reports CSV export
+- **Live**: `scripts.health_check` OK; next nightly `full` run success; Reports CSV export
   and Preferences page work (see `docs/migration-checklist.md`).

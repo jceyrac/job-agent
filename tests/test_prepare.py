@@ -10,12 +10,9 @@ Usage:
 
 import json
 import sys
-import os
 import traceback
 from datetime import date, datetime, timezone
 from unittest.mock import patch, MagicMock
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from models import JobPosting
 from storage import JobStorage

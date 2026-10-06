@@ -12,11 +12,8 @@ Fields listed in optional_fields are best-effort for a given scraper:
 a missing value raises ⚠️  instead of ❌ and does not affect PASS/FAIL.
 """
 
-import sys
 import os
 from datetime import date
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from models import JobFilter, JobPosting
 

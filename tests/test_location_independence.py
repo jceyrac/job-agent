@@ -81,18 +81,14 @@ def test_unset_creates_data_dir():
 
 SCAN_SKIP_DIRS = {".venv", ".git", "__pycache__", "tests", "specs"}
 
-# FR-006 allow-list: the `scripts/` diagnostic tools deferred to step 1b keep
-# CWD-relative `--db` defaults (`"data/jobs.db"`). Everything else is converted.
+# FR-006 allow-list: nothing is deferred anymore — spec 033 (step 1b) converted
+# the last CWD-relative `--db` defaults to `paths.DB_PATH`. Keep this empty so
+# `test_no_cwd_data_literals` fails on any reintroduction.
 # `paths.py` is exempt from (a) by construction (it is the single source of
 # truth). `scrape.py:21`, `monitoring_agent.py` ROOT and
 # `scripts/duplicate_report.py` ROOT use `__file__` for non-data/non-output
 # purposes, so the token-based (a) check does not match them.
-B_ALLOW = {
-    "scripts/filter_funnel.py",
-    "scripts/audit_work_mode.py",
-    "scripts/audit_provenance.py",
-    "scripts/diag_freelance.py",
-}
+B_ALLOW = set()
 
 
 def _runtime_py_files() -> list[str]:

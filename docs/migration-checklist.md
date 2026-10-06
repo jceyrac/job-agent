@@ -5,6 +5,18 @@ step** — tick each item before a step is declared complete. Run on verva (SSH)
 
 ---
 
+## Pre-deploy: staging validation (spec 033, FR-011)
+
+Before `deploy.sh`, validate the candidate commit on the staging tracker (`:8502`):
+
+- [ ] `scripts/staging.sh up <candidate-sha>` — staging tracker serves a copy of the latest backup on 8502.
+- [ ] Click every background-launch button (Jobs: fetch / score / extract; Settings: scrape / monitored-only / score / extract).
+- [ ] Open `/job_detail?id=<id>` and confirm it renders.
+- [ ] `scripts/staging.sh run python -m scripts.fingerprint …` — fingerprint equals the pre-change baseline (parity green).
+- [ ] `scripts/staging.sh down` — no staging container, image, volume or worktree remains.
+
+---
+
 ## Per-step definition of done
 
 - [ ] **Backup taken (and verified) before the deploy**
@@ -17,7 +29,7 @@ step** — tick each item before a step is declared complete. Run on verva (SSH)
 
 - [ ] **Health check OK** (tracker responds; latest **full** run succeeded and is < 26 h)
   ```bash
-  docker exec job-tracker python /app/scripts/health_check.py --url http://localhost:8501 --db /app/data/jobs.db
+  docker exec job-tracker python -m scripts.health_check --url http://localhost:8501 --db /app/data/jobs.db
   ```
   (`health_check.py` is baked into the rebuilt image at `/app/scripts/`, so it is
   available right after `deploy.sh` finishes.)
@@ -38,8 +50,8 @@ step** — tick each item before a step is declared complete. Run on verva (SSH)
   when recomputed with the same code + `--as-of`, and `compare` reports no diff
   against the pre-change baseline (see `quickstart.md`):
   ```bash
-  python scripts/fingerprint.py --db <snapshot>.db --as-of <date> --out /tmp/after.json
-  python scripts/compare_fingerprints.py <baseline.json> /tmp/after.json
+  python -m scripts.fingerprint --db <snapshot>.db --as-of <date> --out /tmp/after.json
+  python -m scripts.compare_fingerprints <baseline.json> /tmp/after.json
   ```
 
 ---
@@ -50,7 +62,7 @@ Queued for the verva deploy (a separate, user-confirmed step — **not** run in 
 implementation phase). From spec 032 `quickstart.md` §7:
 
 - [ ] **SC-001 parity** — fingerprint a pre-change snapshot and a post-change
-  snapshot with the same `--as-of`; `scripts/compare_fingerprints.py` reports no
+  snapshot with the same `--as-of`; `scripts.compare_fingerprints` reports no
   diff (spec 032 `quickstart.md`).
 - [ ] **SC-002 drill tracker** — on the drill tracker (`:8502`, restored backup),
   click all 7 launch buttons (Jobs: fetch / score / extract; Settings: scrape /

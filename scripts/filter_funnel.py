@@ -16,11 +16,9 @@ import sqlite3
 import sys
 from datetime import date, datetime, timezone, timedelta
 
-# ── Bootstrap: allow running from repo root without installing ────────────────
-sys.path.insert(0, ".")
-
 from models import JobFilter, JobPosting
 from filters import JobFilterEngine
+from paths import DB_PATH
 from profiles import load_active_profile
 
 
@@ -94,7 +92,7 @@ def main():
                "  python scripts/filter_funnel.py --source Indeed --db data/prod_snapshot.db",
     )
     ap.add_argument("--source", required=True, help="Source name to analyze")
-    ap.add_argument("--db", default="data/jobs.db")
+    ap.add_argument("--db", default=DB_PATH)
     a = ap.parse_args()
 
     # ── Connect (read-only) ──────────────────────────────────────────────────

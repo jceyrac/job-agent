@@ -5,7 +5,7 @@ services:
     container_name: job-tracker
     command: streamlit run tracker.py --server.port 8501 --server.address 0.0.0.0 --server.fileWatcherType none
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     volumes:
       - job_data:/app/data
     env_file:

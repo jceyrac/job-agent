@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools]
+py-modules = [
+    "ats_detection",
+    "backfill_descriptions",
+    "company_researcher",
+    "context_tuner",
+    "create_profile",
+    "cv_extract",
+    "email_monitor",
+    "export_jobs",
+    "export_seed",
+    "filters",
+    "job_actions",
+    "llm",
+    "main",
+    "models",
+    "monitoring_agent",
+    "notifier",
+    "paths",
+    "preference_report",
+    "prepare",
+    "profile_generator",
+    "profiles",
+    "score",
+    "scorer",
+    "scrape",
+    "seed",
+    "storage",
+    "title_gate",
+    "tracker",
+]
+packages = [
+    "scrapers",
+    "scrapers.ats",
+    "scrapers.boards",
+    "scrapers.company_sites",
+    "tracker_views",
+    "cv_agent",
+    "scripts",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

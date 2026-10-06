@@ -15,18 +15,18 @@ docker exec job-tracker python scripts/backup_db.py
 
 ```bash
 # on dev, against a snapshot
-python scripts/fingerprint.py --db data/jobs.db --as-of 2026-10-03 > /tmp/f1.json
-python scripts/fingerprint.py --db data/jobs.db --as-of 2026-10-03 > /tmp/f2.json
+python -m scripts.fingerprint --db data/jobs.db --as-of 2026-10-03 > /tmp/f1.json
+python -m scripts.fingerprint --db data/jobs.db --as-of 2026-10-03 > /tmp/f2.json
 diff /tmp/f1.json /tmp/f2.json   # byte-identical (empty diff)
 ```
 
 ## 3. Compare detects a change (US3, SC-004)
 
 ```bash
-python scripts/fingerprint.py --db data/jobs.db --as-of 2026-10-03 > /tmp/f3.json
+python -m scripts.fingerprint --db data/jobs.db --as-of 2026-10-03 > /tmp/f3.json
 # on a test branch, deliberately break a filter, rebuild, run again:
-python scripts/fingerprint.py --db data/jobs.db --as-of 2026-10-03 > /tmp/f4.json
-python scripts/compare_fingerprints.py /tmp/f3.json /tmp/f4.json
+python -m scripts.fingerprint --db data/jobs.db --as-of 2026-10-03 > /tmp/f4.json
+python -m scripts.compare_fingerprints /tmp/f3.json /tmp/f4.json
 # expect: non-zero exit, difference shown in the feed section
 ```
 
@@ -38,7 +38,7 @@ restored DB on a different port (live volume untouched). Record the measured dur
 ## 5. Post-deploy check (US4)
 
 ```bash
-python scripts/health_check.py
+python -m scripts.health_check
 # expect: tracker OK + last run status/type/age; non-zero on failure or age > 26h
 ```
 

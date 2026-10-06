@@ -21,9 +21,7 @@ import sys
 import tempfile
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from storage import JobStorage  # noqa: E402
+from storage import JobStorage
 
 CORE_TABLES = (
     "jobs",

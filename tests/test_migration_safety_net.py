@@ -6,14 +6,10 @@ JSON shape, the end-to-end backup → integrity → counts path on a scratch DB,
 fingerprint determinism, the compare diff, and the health-check age threshold.
 """
 import json
-import os
 import sqlite3
-import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from scripts.backup_db import (  # noqa: E402
+from scripts.backup_db import (
     _stems_to_prune,
     backup_sqlite,
     build_manifest,
@@ -21,19 +17,18 @@ from scripts.backup_db import (  # noqa: E402
     prune_backups,
     table_counts,
 )
-from scripts.compare_fingerprints import diff_fingerprints  # noqa: E402
-from scripts.fingerprint import (  # noqa: E402
+from scripts.compare_fingerprints import diff_fingerprints
+from scripts.fingerprint import (
     _match_jobs,
     _regression_results,
     build_fingerprint,
 )
-from scripts.health_check import (  # noqa: E402
+from scripts.health_check import (
     DEFAULT_MAX_AGE_HOURS,
     gate_failures,
     run_age_hours,
 )
-from storage import JobStorage  # noqa: E402
-
+from storage import JobStorage
 
 # ── prune rule (FR-006) ────────────────────────────────────────────────────────
 

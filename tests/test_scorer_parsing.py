@@ -10,12 +10,9 @@ Usage:
 """
 
 import sys
-import os
 import json
 import traceback
 from unittest.mock import patch
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scorer import _parse_result, _parse_extraction_result, evaluate_for_profile
 from models import JobPosting
