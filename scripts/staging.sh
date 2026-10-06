@@ -11,6 +11,9 @@
 #   scripts/staging.sh down
 #
 # See specs/033-installable-project/contracts/staging-cli.md.
+#
+# Prerequisite (once, on verva): `sudo tailscale set --operator=$(whoami)` — the
+# `tailscale serve` calls below are non-root and need the operator role.
 set -euo pipefail
 
 REPO="/opt/job-agent"

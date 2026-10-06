@@ -12,6 +12,19 @@ loopback port.
 - `tailscale serve` (a persistent tailscaled setting) forwards tailnet TCP 8501
   to `127.0.0.1:8501`. It survives a reboot of verva with no manual step.
 
+## Prerequisite (run once on verva)
+
+`tailscale serve` is a privileged operation. On a fresh install it needs root, so
+grant your user the operator role once:
+
+```bash
+sudo tailscale set --operator=$(whoami)
+```
+
+After this, the non-root `tailscale serve` calls below run without `sudo`. (The
+alternative — prefixing each `tailscale serve` with `sudo` — needs a password on
+every call and is not suitable for `scripts/staging.sh`.)
+
 ## Enable (run once on verva)
 
 ```bash
