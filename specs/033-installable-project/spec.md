@@ -91,7 +91,7 @@ As the operator, I want to run a candidate commit on verva as a separate tracker
 
 **Acceptance Scenarios**:
 
-1. **Given** a commit SHA or branch, **When** I run `scripts/staging.sh up <ref>`, **Then** it checks the ref out in a separate worktree (e.g. `/opt/job-agent-staging`), builds an image tagged `job-agent:staging`, copies the latest backup from `/app/data/backups/` into a dedicated staging volume, and starts a tracker on port 8502 with `JOB_AGENT_DATA_DIR`/`JOB_AGENT_REQUIRE_DB=1`.
+1. **Given** a commit SHA or branch, **When** I run `scripts/staging.sh up <ref>`, **Then** it checks the ref out in a separate worktree (e.g. `$HOME/job-agent-staging`), builds an image tagged `job-agent:staging`, copies the latest backup from `/app/data/backups/` into a dedicated staging volume, and starts a tracker on port 8502 with `JOB_AGENT_DATA_DIR`/`JOB_AGENT_REQUIRE_DB=1`.
 2. **Given** staging is up, **When** I run `scripts/staging.sh run <command...>`, **Then** the command runs in a one-shot staging container on the staging volume (e.g. `python -m main`, `python -m scrape --source <name>`, `python -m scripts.fingerprint ...`).
 3. **Given** staging is up, **When** I run `scripts/staging.sh down`, **Then** the staging container, image, volume and worktree are removed.
 4. **Given** any staging command, **Then** production containers, images, the `job_data` volume and `/opt/job-agent` are never modified (no `docker compose` call on the production project).

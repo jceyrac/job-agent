@@ -139,12 +139,12 @@ container itself must never bind `0.0.0.0` (`streamlit --server.address 127.0.0.
 ## 5. `staging.sh` design (US3, FR-009/010)
 
 **Decision**: `scripts/staging.sh up|run|down` around a **separate worktree** at
-`/opt/job-agent-staging`, a dedicated image `job-agent:staging`, a dedicated volume
+`$HOME/job-agent-staging`, a dedicated image `job-agent:staging`, a dedicated volume
 `job_agent_staging_data`, and a container `job-agent-staging` — none of which share
 names with the production Compose project.
 
 - **`up <ref>`**: `git worktree add` (or fetch+checkout the SHA) into
-  `/opt/job-agent-staging` → `docker build -t job-agent:staging .` → copy the latest
+  `$HOME/job-agent-staging` → `docker build -t job-agent:staging .` → copy the latest
   backup out of the live volume (`docker cp job-tracker:/app/data/backups/<newest>`)
   into the staging volume → `docker run -d --name job-agent-staging -p
   127.0.0.1:8502:8501 -e JOB_AGENT_DATA_DIR=/app/data -e JOB_AGENT_REQUIRE_DB=1
@@ -158,12 +158,12 @@ names with the production Compose project.
   `main`/`scrape`/`score` (real sources + LLM credits, edge case).
 - **`down`**: `docker rm -f job-agent-staging` → `docker rmi job-agent:staging` →
   `docker volume rm job_agent_staging_data` → `git worktree remove
-  /opt/job-agent-staging --force`.
+  $HOME/job-agent-staging --force`.
 
 **FR-010 guarantee**: `staging.sh` never invokes `docker compose` on the production
 project, never names `job_data`/`job-agent-tracker`/`job-agent-agent`, and never
-writes under `/opt/job-agent`'s working tree (the worktree lives beside it, at
-`/opt/job-agent-staging`). All staging artifacts are prefixed `job-agent-staging*`.
+writes under `/opt/job-agent`'s working tree (the worktree lives under `$HOME`, at
+`$HOME/job-agent-staging` — `/opt` is root-owned). All staging artifacts are prefixed `job-agent-staging*`.
 
 **Tailscale IP source**: read `TAILSCALE_IP` from the environment, else
 `tailscale ip -4` (spec assumption).

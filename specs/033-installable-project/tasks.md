@@ -151,6 +151,12 @@ verva deploy.
 - [ ] T022 (SC-004/SC-007) After the go: `deploy.sh`, then in the same SSH session the
   `tailscale serve` command for 8501, verify the tailnet URL + `/job_detail` + health
   check. Then hand over for the LAN closed-port check and the reboot test.
+- [X] T023 (deploy-gated, unblocks T021) Fix the staging worktree path: `/opt` is
+  root-owned on verva, so `git worktree add --detach /opt/job-agent-staging` fails
+  with "Permission denied". Move it to `$HOME/job-agent-staging`
+  (`WORKTREE="${HOME}/job-agent-staging"` in `scripts/staging.sh`) and align the path
+  in `contracts/staging-cli.md`, `research.md`, `data-model.md`, `quickstart.md`,
+  `spec.md`.
 
 ---
 

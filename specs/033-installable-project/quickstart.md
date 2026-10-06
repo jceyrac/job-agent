@@ -78,7 +78,7 @@ ssh <verva> 'docker ps -a | grep staging; docker images | grep staging; docker v
 ```
 
 **Expected**: `down` leaves no staging container, image or volume (SC-005); the
-worktree at `/opt/job-agent-staging` is gone.
+worktree at `$HOME/job-agent-staging` is gone.
 
 ## 5. Tailscale-only production (US4 / SC-007)
 

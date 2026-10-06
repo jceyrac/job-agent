@@ -11,9 +11,9 @@ supported way to exercise a candidate commit before it replaces production.
 scripts/staging.sh up <commit-sha | branch>
 ```
 
-1. Checkout `ref` into a separate worktree at `/opt/job-agent-staging`
+1. Checkout `ref` into a separate worktree at `$HOME/job-agent-staging`
    (`git worktree add`, or fetch + detached checkout of the SHA).
-2. Build the image: `docker build -t job-agent:staging /opt/job-agent-staging`.
+2. Build the image: `docker build -t job-agent:staging $HOME/job-agent-staging`.
 3. Locate the **latest** backup in the live volume
    (`docker exec job-tracker ls -1 /app/data/backups/jobs_*.db | sort | tail -1`
    and the matching `cv_agent_checkpoints_*.sqlite` if present).
@@ -66,7 +66,7 @@ scripts/staging.sh down
 Tears down every staging artifact, in order: `docker rm -f job-agent-staging` →
 `tailscale serve --bg --tcp=8502 off` → `docker rmi job-agent:staging` →
 `docker volume rm job_agent_staging_data` → `git worktree remove
-/opt/job-agent-staging --force`. Leaves no residue (SC-005).
+$HOME/job-agent-staging --force`. Leaves no residue (SC-005).
 
 ## Invariants (FR-010)
 

@@ -59,7 +59,7 @@ An isolated, disposable copy of production for a given commit. Lifecycle:
 
 | Field | Value / naming | Notes |
 |-------|----------------|-------|
-| worktree path | `/opt/job-agent-staging` | separate `git worktree`, beside prod, not inside it |
+| worktree path | `$HOME/job-agent-staging` | separate `git worktree` under the deploy user's home (`/opt` is root-owned), not inside prod |
 | image tag | `job-agent:staging` | built from the worktree's Dockerfile |
 | volume name | `job_agent_staging_data` | seeded with the latest backup copy |
 | container name | `job-agent-staging` | tracker on port 8502 |

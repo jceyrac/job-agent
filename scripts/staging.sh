@@ -17,7 +17,9 @@
 set -euo pipefail
 
 REPO="/opt/job-agent"
-WORKTREE="/opt/job-agent-staging"
+# `/opt` is root-owned on verva — the deploy user cannot create a sibling of
+# `/opt/job-agent` — so the staging worktree lives under $HOME.
+WORKTREE="${HOME}/job-agent-staging"
 IMAGE="job-agent:staging"
 VOLUME="job_agent_staging_data"
 CONTAINER="job-agent-staging"
