@@ -5,6 +5,24 @@ step** — tick each item before a step is declared complete. Run on verva (SSH)
 
 ---
 
+## Release process — branch → staging → merge → deploy → SHA check
+
+Every roadmap step ships the same way; nothing deploys until the exact commit is
+validated on staging.
+
+1. **Branch** — work on a spec branch; the branch tip must be exactly the commit to ship.
+2. **Stage the exact SHA** — on verva: `scripts/staging.sh up <full-sha>` (never the branch
+   name). Run the *Pre-deploy: staging validation* checklist, then `scripts/staging.sh down`.
+3. **ff-only merge** — promote that SHA itself, not the branch tip:
+   `git checkout main && git pull --ff-only && git merge --ff-only <full-sha> && git push origin main`.
+   Refuse anything that is not fast-forward.
+4. **Deploy** — on verva: `./scripts/deploy.sh` (git pull + pre-rebuild backup + rebuild +
+   restart), then `tailscale serve --bg --tcp=8501 tcp://127.0.0.1:8501`.
+5. **SHA check** — `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA; health check
+   OK; parity green.
+
+---
+
 ## Pre-deploy: staging validation (spec 033, FR-011)
 
 Before `deploy.sh`, validate the candidate commit on the staging tracker (`:8502`):

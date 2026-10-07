@@ -144,11 +144,11 @@ verva deploy.
 - [X] T020 In `tests/test_installable_project.py`, scan `tests/` too (only
   `scripts/backup_db.py` and `specs/` are allow-listed per FR-007); the AST check already
   avoids self-flagging. Do not silently skip files with `SyntaxError` — fail on them.
-- [ ] T021 (SC-003) Commit + push. On verva: `scripts/staging.sh up <sha>`, confirm staging
+- [X] T021 (SC-003) Commit + push. On verva: `scripts/staging.sh up <sha>`, confirm staging
   serves the backup on `8502`, then **STOP** and hand over for the button clicks +
   `/job_detail?id=<id>` check. After the go: fingerprint staging vs baseline,
   `scripts/staging.sh down` (SC-005 verification output). Do **not** deploy before the go.
-- [ ] T022 (SC-004/SC-007) After the go: `deploy.sh`, then in the same SSH session the
+- [X] T022 (SC-004/SC-007) After the go: `deploy.sh`, then in the same SSH session the
   `tailscale serve` command for 8501, verify the tailnet URL + `/job_detail` + health
   check. Then hand over for the LAN closed-port check and the reboot test.
 - [X] T023 (deploy-gated, unblocks T021) Fix the staging worktree path: `/opt` is
