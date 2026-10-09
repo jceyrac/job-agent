@@ -5,7 +5,7 @@ from datetime import date
 
 import streamlit as st
 
-from preference_report import generate_report, generate_action_items
+from core.preference_report import generate_report, generate_action_items
 from tracker_views.shared import ensure_db
 
 REPORT_DIR = "outputs/preference_reports"
@@ -45,7 +45,7 @@ def render():
         st.markdown("### Generate")
         if st.button("Regenerate report"):
             with st.spinner("Analyzing apply/archive behavior…"):
-                from profiles import get_active_profile
+                from core.profiles import get_active_profile
                 path = generate_report(
                     profile_id=get_active_profile().id, output_dir=REPORT_DIR)
             st.success(f"Wrote {os.path.basename(path)}")
@@ -95,7 +95,7 @@ def render():
             st.markdown("**Generate**")
             if st.button("📊 Run full analysis", use_container_width=True):
                 with st.spinner("Generating report + action items…"):
-                    from profiles import get_active_profile
+                    from core.profiles import get_active_profile
                     pid = get_active_profile().id
                     report_path = generate_report(profile_id=pid)
                     actions_path = generate_action_items(profile_id=pid)
@@ -107,10 +107,10 @@ def render():
             if st.button("🤖 Suggest context update", use_container_width=True,
                          help="Call the LLM to draft a revised scoring_context. Takes 5-10s."):
                 with st.spinner("Calling LLM to draft revised scoring_context…"):
-                    from storage import JobStorage
-                    from context_tuner import propose_context_update
-                    from profiles import get_active_profile
-                    from paths import DB_PATH
+                    from core.storage import JobStorage
+                    from core.context_tuner import propose_context_update
+                    from core.profiles import get_active_profile
+                    from core.paths import DB_PATH
                     pid = get_active_profile().id
                     db = JobStorage(DB_PATH)
                     try:

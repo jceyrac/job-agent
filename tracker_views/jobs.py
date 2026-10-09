@@ -5,7 +5,7 @@ import time
 
 import streamlit as st
 
-from profiles import ACTIVE_PROFILE_ID, DEFAULT_PROFILE_ID
+from core.profiles import ACTIVE_PROFILE_ID, DEFAULT_PROFILE_ID
 from tracker_views.shared import (
     ensure_db, get_db,
     load_jobs, load_applications_index,
@@ -116,11 +116,11 @@ def _render_controls_bar(db):
         # No process running — show launch buttons
         with c1:
             if st.button("🕸 Run scrape", use_container_width=True):
-                _launch_bg("scrape", [sys.executable, "-u", "-m", "scrape"])
+                _launch_bg("scrape", [sys.executable, "-u", "-m", "core.scrape"])
         with c2:
             if st.button("🎯 Run scoring", use_container_width=True):
                 active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
-                _launch_bg("score", [sys.executable, "-u", "-m", "score", "--profile", active_id])
+                _launch_bg("score", [sys.executable, "-u", "-m", "core.score", "--profile", active_id])
         with c3:
             if st.button("🔄 Clear Cache", use_container_width=True):
                 st.cache_data.clear()
@@ -132,7 +132,7 @@ def _render_controls_bar(db):
                 with st.spinner("Re-extracting…"):
                     try:
                         result = subprocess.run(
-                            [sys.executable, "-m", "score", "--extract"],
+                            [sys.executable, "-m", "core.score", "--extract"],
                             capture_output=True, text=True, timeout=600,
                         )
                         st.cache_data.clear()

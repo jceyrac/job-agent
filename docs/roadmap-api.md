@@ -18,7 +18,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
   `web/` (nouveau front), `tracker/` (Streamlit actuel). Une seule source de vérité pour `storage`.
 - **`core` est un paquet installable** (`pyproject.toml`) : imports identiques partout, aucun bricolage
   de `sys.path`, scripts lancés en `python -m`, aucune donnée localisée à partir de `__file__`
-  ailleurs que dans `paths.py`, configuration de prod explicite par l'environnement. Pas de shims.
+  ailleurs que dans `core/paths.py`, configuration de prod explicite par l'environnement. Pas de shims.
 - **Monolithe modulaire** : un service API, un router par domaine, SQLite, l'API devient seul écrivain à terme.
 - **Le scoring est une vue de l'utilisateur sur le catalogue**, porté par le user, pas par le job.
   `job_scores` reste clé `(job_id, profile_id)` avec `search_profiles.user_id`.
@@ -31,7 +31,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 - **Tâches longues** : table `tasks` + worker, progression en SSE. Aucun appel LLM dans une requête HTTP.
 - **Sessions conversationnelles** (chat CV) : ressource `cv-sessions` pilotant le graphe LangGraph existant.
   Cible d'édition déterministe (choisie dans l'UI), jamais routée par un LLM (principe IV).
-- **`monitoring_agent.py` reste un outil de dev** (il écrit du code) — hors API.
+- **`core/monitoring_agent.py` reste un outil de dev** (il écrit du code) — hors API.
 - **Sécurité** : API joignable via Tailscale uniquement, tokens à scopes (ingest / tasks / user).
 
 ## Règles de migration (valables à chaque étape)
@@ -50,11 +50,11 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | # | Étape | Contenu | Jours |
 |---|-------|---------|-------|
 | 0 | Filet de sécurité | Amendement constitution (MAJOR), script de parité, **test de restauration réelle** du backup sur verva | 1–2 |
-| 1a | Fin des dépendances à l'emplacement | Sans rien déplacer : `JOB_AGENT_DATA_DIR` explicite dans compose, `paths.py` refuse de créer une base vide en prod, tous les chemins dérivés de `__file__` centralisés dans `paths.py`, scripts lancés en `python -m` (tracker, `main.py`, `scrape.py`) — spec 032 | 1 |
+| 1a | Fin des dépendances à l'emplacement | Sans rien déplacer : `JOB_AGENT_DATA_DIR` explicite dans compose, `core/paths.py` refuse de créer une base vide en prod, tous les chemins dérivés de `__file__` centralisés dans `core/paths.py`, scripts lancés en `python -m` (tracker, `core.main`, `core.scrape`) — spec 032 | 1 |
 | 1b | Projet installable + préprod | `pyproject.toml`, `pip install -e .` dans l'image, suppression des bricolages `sys.path` (scripts, tests), scripts en `python -m scripts.*`, défauts des scripts de diag via `paths` ; `scripts/staging.sh` (tracker de préprod :8502 sur une copie du backup, sans toucher à la prod) — spec 033 | 1,5 |
-| 1c | Déplacement vers `core/` | Phase A (sans déplacer) : derniers `__file__` supprimés (`cv_agent/renderer.py` → `.cv_pipeline`, `monitoring_agent`, découverte des scrapers) + garde qui résout chaque nom de module écrit en texte (`-m`, `importlib`, `mock.patch`). Phase B : un commit mécanique `git mv` + réécriture des imports par script, **sans shims** ; tracker laissé à la racine. Validation par le flux de mise en prod (préprod sur SHA exact) — spec 034 | 1,5–2 |
+| 1c | Déplacement vers `core/` | Phase A (sans déplacer) : derniers `__file__` supprimés (`core/cv_agent/renderer.py` → `.cv_pipeline`, `core/monitoring_agent`, découverte des scrapers) + garde qui résout chaque nom de module écrit en texte (`-m`, `importlib`, `mock.patch`). Phase B : un commit mécanique `git mv` + réécriture des imports par script, **sans shims** ; tracker laissé à la racine. Validation par le flux de mise en prod (préprod sur SHA exact) — spec 034 | 1,5–2 |
 | 1d | Archivage | `migrate_*.py` exécutés, `tracker_legacy.py`, `test_wellfound.py` → `archive/` après vérification qu'aucun import ne les référence | 0,5 |
-| 2 | Assainissement | 2a : SQL brut des vues → méthodes `JobStorage`. 2b : `subprocess` du tracker → table `tasks` + conteneur `worker`. 2c : retrait des mentions résiduelles de Groq (`scorer.py`, `tracker_views/onboarding.py`, `email_monitor.py`) — seul `llm.py` connaît le fournisseur | 3–5 |
+| 2 | Assainissement | 2a : SQL brut des vues → méthodes `JobStorage`. 2b : `subprocess` du tracker → table `tasks` + conteneur `worker`. 2c : retrait des mentions résiduelles de Groq (`core/scorer.py`, `tracker_views/onboarding.py`, `core/email_monitor.py`) — seul `core/llm.py` connaît le fournisseur | 3–5 |
 
 ### Phase B — Bon modèle de données (risque concentré ici)
 
@@ -69,7 +69,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 |---|-------|---------|-------|
 | 5 | API lecture | Service `api` (Tailscale), tokens à scopes, `/jobs`, `/me/feed`, `/me/companies`, `/me/contacts` | 4–6 |
 | 6 | API écriture + tâches | Statuts, notes, cycle de vie, `POST /tasks` + SSE ; worker consomme via l'API | 4–6 |
-| 7 | Ingestion via API | `scrape.py` → `/ingest/batch` derrière `INGEST_VIA_API` ; `BaseScraper` sans `JobStorage` ; une nuit en double pour comparer | 4–6 |
+| 7 | Ingestion via API | `core/scrape.py` → `/ingest/batch` derrière `INGEST_VIA_API` ; `BaseScraper` sans `JobStorage` ; une nuit en double pour comparer | 4–6 |
 
 ### Phase D — Front et chat
 

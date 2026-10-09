@@ -4,7 +4,7 @@ from datetime import date
 
 import streamlit as st
 
-from job_actions import extract_one, score_one, prepare_one
+from core.job_actions import extract_one, score_one, prepare_one
 from tracker_views.action_sets import ACTION_LABELS, ACTION_SETS
 from tracker_views.shared import get_db
 
@@ -53,7 +53,7 @@ def _source_link(src: str, url: str) -> str:
 
 def _resolve_active_profile() -> str:
     """Return the active profile id."""
-    from profiles import get_active_profile
+    from core.profiles import get_active_profile
     return get_active_profile().id
 
 

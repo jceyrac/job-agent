@@ -24,7 +24,7 @@ from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from paths import DB_PATH
+from core.paths import DB_PATH
 
 
 # ── Normalisation des titres ──────────────────────────────────────────────

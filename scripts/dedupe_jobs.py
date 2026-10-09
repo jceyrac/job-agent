@@ -16,8 +16,8 @@ import argparse
 import sqlite3
 from collections import defaultdict
 
-from paths import DB_PATH
-from storage import normalize_url
+from core.paths import DB_PATH
+from core.storage import normalize_url
 
 
 # ---------------------------------------------------------------------------

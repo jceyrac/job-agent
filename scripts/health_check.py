@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-from paths import DB_PATH
+from core.paths import DB_PATH
 
 DEFAULT_MAX_AGE_HOURS = 26
 # A "healthy" full run is a full scrape or a successful score run. "error" and

@@ -15,8 +15,8 @@ import sqlite3
 import traceback
 from datetime import date, timedelta
 
-from models import JobPosting
-from storage import JobStorage, _normalize_company_name, COMPANY_STATUSES, _now
+from core.models import JobPosting
+from core.storage import JobStorage, _normalize_company_name, COMPANY_STATUSES, _now
 from tracker_views.shared import (
     score_badge, company_status_badge, relationship_badge,
     sector_label, unverified_badge, apply_filters,
@@ -530,7 +530,7 @@ def test_score_new_fields_round_trip():
 
 def test_pre_migration_null_defaults():
     """Rows with NULLs in the three new columns (pre-migration) read back with correct defaults."""
-    from storage import _now
+    from core.storage import _now
     db = JobStorage(":memory:")
     db.upsert_profile(_FakeProfile())
     job = _job()
@@ -560,7 +560,7 @@ def test_pre_migration_null_defaults():
 
 def test_migration_idempotent():
     """Running the migration twice must not raise or double-backfill data."""
-    from models import JobPosting
+    from core.models import JobPosting
     from datetime import date
 
     job = JobPosting(
@@ -664,7 +664,7 @@ def test_backfill_correctness():
 
 def test_dedupe_against_db():
     """Cross-batch dedup drops scraped jobs matching an already-engaged row."""
-    from scrape import dedupe_against_db
+    from core.scrape import dedupe_against_db
     from datetime import date as dt_date
 
     db = JobStorage(":memory:")
@@ -719,7 +719,7 @@ def test_dedupe_against_db():
 
 def test_dedupe_against_db_normalization():
     """Parentheticals like ' (m/w/d)' and ' (Remote)' are stripped before comparing."""
-    from scrape import _normalize_key
+    from core.scrape import _normalize_key
 
     k1 = _normalize_key("Product Manager (m/w/d)", "Acme")
     k2 = _normalize_key("Product Manager", "Acme")
@@ -1021,7 +1021,7 @@ def test_digest_joins_company_fields():
 
 def test_email_regex_extracts_basic():
     """Email regex catches name@domain.com in a paragraph."""
-    from scrapers.contact_extract import extract_contact_references
+    from core.scrapers.contact_extract import extract_contact_references
 
     refs = extract_contact_references(
         "Contact us at john.doe@example.com for more info."
@@ -1032,7 +1032,7 @@ def test_email_regex_extracts_basic():
 
 def test_email_regex_flags_role_accounts():
     """Role-account emails like careers@x.com are returned with role_account=True."""
-    from scrapers.contact_extract import extract_contact_references
+    from core.scrapers.contact_extract import extract_contact_references
 
     refs = extract_contact_references(
         "Send your CV to careers@startup.io or contact hr@example.ch."
@@ -1049,7 +1049,7 @@ def test_email_regex_flags_role_accounts():
 
 def test_linkedin_regex_normalizes_url():
     """LinkedIn regex extracts and normalizes various URL forms."""
-    from scrapers.contact_extract import extract_contact_references
+    from core.scrapers.contact_extract import extract_contact_references
 
     refs = extract_contact_references(
         "Find us at https://www.linkedin.com/in/janedoe/ or "
@@ -1065,7 +1065,7 @@ def test_linkedin_regex_normalizes_url():
 
 def test_extract_contact_references_dedupes():
     """Same email twice in description = one result."""
-    from scrapers.contact_extract import extract_contact_references
+    from core.scrapers.contact_extract import extract_contact_references
 
     refs = extract_contact_references(
         "Email alice@test.com for questions. CC alice@test.com as well."
@@ -1076,7 +1076,7 @@ def test_extract_contact_references_dedupes():
 
 def test_extract_contact_references_empty_input():
     """Empty or None input returns []."""
-    from scrapers.contact_extract import extract_contact_references
+    from core.scrapers.contact_extract import extract_contact_references
 
     assert extract_contact_references("") == []
     assert extract_contact_references(None) == []
@@ -1476,7 +1476,7 @@ def test_extract_pass_discovers_contacts_via_regex():
     db.save_unscored(job, company_id=cid)
 
     # Simulate what _discover_contacts does
-    from scrapers.contact_extract import extract_contact_references
+    from core.scrapers.contact_extract import extract_contact_references
 
     refs = extract_contact_references(job.description or "")
     for ref in refs:
@@ -2133,7 +2133,7 @@ def test_job_scores_has_comp_flag_column():
 
 def test_save_scored_with_comp_flag():
     """save_scored stores comp_flag and it's retrievable via get_digest."""
-    from models import JobPosting
+    from core.models import JobPosting
     db = JobStorage(":memory:")
     job = JobPosting(source="test", title="PM", company="Acme",
                       location="Remote", url="http://a.com")
@@ -2157,7 +2157,7 @@ def test_save_scored_with_comp_flag():
 
 def test_save_scored_without_comp_flag():
     """save_scored without comp_flag defaults to 0."""
-    from models import JobPosting
+    from core.models import JobPosting
     db = JobStorage(":memory:")
     job = JobPosting(source="test", title="PM", company="Acme",
                       location="Remote", url="http://b.com")
@@ -2783,19 +2783,19 @@ def run_storage_tests() -> list[tuple[str, bool, str]]:
 
 
 def test_get_active_profile_returns_unified_jc():
-    from profiles import get_active_profile
+    from core.profiles import get_active_profile
     profile = get_active_profile()
     assert profile.id == "unified_jc"
     assert profile.name == "Unified JC"
 
 
 def test_all_profiles_has_only_unified_jc():
-    from profiles import ALL_PROFILES
+    from core.profiles import ALL_PROFILES
     assert set(ALL_PROFILES.keys()) == {"unified_jc"}
 
 
 def test_default_profile_id_is_unified_jc():
-    from profiles import DEFAULT_PROFILE_ID
+    from core.profiles import DEFAULT_PROFILE_ID
     assert DEFAULT_PROFILE_ID == "unified_jc"
 
 
@@ -2875,8 +2875,8 @@ def test_get_job_for_prepare_company_country_from_companies_table():
 
 def test_score_one_defaults_to_active_profile():
     """score_one with profile_id=None resolves to the active profile."""
-    from profiles import get_active_profile
-    from job_actions import score_one
+    from core.profiles import get_active_profile
+    from core.job_actions import score_one
     import inspect
 
     # Verify function signature: profile_id is optional (defaults to None,
@@ -2998,7 +2998,7 @@ def test_get_watching_companies_by_method_excludes_legacy_null_method():
 
 def test_scraper_helper_seed_merge_greenhouse():
     """get_greenhouse_boards merges seed + DB slugs, seed first for legacy coverage."""
-    from scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
+    from core.scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
 
     db = JobStorage(":memory:")
     _setup_test_companies(db)
@@ -3017,7 +3017,7 @@ def test_scraper_helper_seed_merge_greenhouse():
 
 def test_scraper_helper_seed_merge_lever():
     """get_lever_slugs merges seed + DB slugs, deduplicating overlaps."""
-    from scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
+    from core.scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
 
     db = JobStorage(":memory:")
     _setup_test_companies(db)
@@ -3033,7 +3033,7 @@ def test_scraper_helper_seed_merge_lever():
 
 def test_scraper_helper_seed_merge_workable():
     """get_workable_slugs merges seed + DB slugs."""
-    from scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
+    from core.scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
 
     db = JobStorage(":memory:")
     _setup_test_companies(db)
@@ -3054,9 +3054,9 @@ def test_scraper_helper_seed_merge_workable():
 
 def test_scraper_helper_graceful_with_none_db():
     """Scraper helpers return seed only when db is None."""
-    from scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
-    from scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
-    from scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
+    from core.scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
+    from core.scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
+    from core.scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
 
     assert get_greenhouse_boards(None) == list(GREENHOUSE_BOARDS_SEED)
     assert get_lever_slugs(None) == list(LEVER_SLUGS_SEED)

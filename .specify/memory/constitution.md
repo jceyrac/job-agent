@@ -1,7 +1,13 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 1.1.0 → 2.0.0
+  Version change: 2.0.0 → 2.0.1
+  Bump rationale: PATCH — déplacement du domaine vers `core/` (spec 034,
+  étape 1c) ; réécriture des références de fichiers (Stable core, flux de
+  données, DB access, tests, Principes II et VII) de la racine vers `core/`.
+  Aucun changement de sens.
+
+  Prior version (2.0.0) :
   Bump rationale: MAJOR — redéfinition incompatible du Principe III (la
   couture multi-utilisateur passe de `profile_id` à `user_id`) et
   restriction du Principe I (le périmètre d'ingestion ne peut plus être
@@ -90,7 +96,7 @@ Un changement est l'un ou l'autre, jamais les deux simultanément. Si un
 changement de prose nécessite une adaptation de code, c'est un changement
 code qui inclut la prose comme payload.
 
-Un agent qui produit du code ou des specs (ex. `monitoring_agent.py`) relève
+Un agent qui produit du code ou des specs (ex. `core/monitoring_agent.py`) relève
 du chemin code : il MUST NOT être exposé par l'API ni tourner en production.
 
 **Rationale** : Séparation des responsabilités. La prose évolue au rythme
@@ -167,7 +173,7 @@ Les secrets (clés API, tokens) MUST NEVER être commités ni loggés.
 
 L'egress réseau MUST être contrôlé : les scrapers ne contactent que leurs
 cibles déclarées, l'appel LLM ne sort que vers le fournisseur déclaré dans
-`llm.py` (DeepSeek). Aucun autre fichier ne nomme un fournisseur LLM.
+`core/llm.py` (DeepSeek). Aucun autre fichier ne nomme un fournisseur LLM.
 
 L'API MUST être joignable uniquement via Tailscale, jamais exposée
 publiquement. Chaque client reçoit un token à scopes minimaux : un scraper
@@ -276,15 +282,15 @@ Ces contraintes découlent des principes I, IV, VIII, IX, X et XI.
 **Data flow (cible)** : scrapers → `POST /ingest` → catalogue → extraction
 (tâche) → scoring par utilisateur (tâche) → clients (tracker, web, agents)
 via l'API. Chaque étape est optionnelle et indépendante. Tant que la
-roadmap n'est pas terminée, le flux actuel `scrape.py → SQLite → score.py
-→ tracker.py` reste valide.
+roadmap n'est pas terminée, le flux actuel `core/scrape.py → SQLite →
+core/score.py → tracker.py` reste valide.
 
 **Monorepo** : `core/` (domaine), `api/` (FastAPI), `web/` (front),
 `tracker/` (Streamlit). `api/` et les clients MUST passer par `core/` ;
 aucune duplication de la logique de stockage.
 
 **DB access** : Tout accès à la base MUST passer par `JobStorage`. Pas de
-`sqlite3` direct hors de `storage.py`. À terme, l'API est le seul écrivain ;
+`sqlite3` direct hors de `core/storage.py`. À terme, l'API est le seul écrivain ;
 les clients et workers passent par elle.
 
 **API** : monolithe modulaire, un router par domaine, chaque router
@@ -298,11 +304,11 @@ conversationnel → session pilotant le graphe LangGraph, progression en SSE.
 La stack de `web/` est fixée par sa première spec. Toute autre nouvelle
 dépendance MUST être justifiée dans la spec correspondante.
 
-**Stable core** : `storage.py`, `models.py`, `profiles.py`, `scrape.py`,
-`scorer.py`, `main.py`, les fichiers de `scrapers/`, `tracker_views/shared.py`,
-`tracker_views/onboarding.py` et les migrations (et leurs équivalents sous
-`core/` après déplacement) sont NEVER modified sauf si la tâche, ou l'étape
-de roadmap en cours, les concerne explicitement.
+**Stable core** : `core/storage.py`, `core/models.py`, `core/profiles.py`,
+`core/scrape.py`, `core/scorer.py`, `core/main.py`, les fichiers de
+`core/scrapers/`, `tracker_views/shared.py`, `tracker_views/onboarding.py` et
+les migrations sont NEVER modified sauf si la tâche, ou l'étape de roadmap
+en cours, les concerne explicitement.
 
 ## Development Workflow
 
@@ -311,7 +317,7 @@ Ces règles découlent des principes II, V, VI, VII et XI.
 **Code path** :
 1. Lire la spec SpecKit applicable dans `specs/`
 2. Modifier le code — diffs minimaux, pas de refactoring opportuniste
-3. Si `storage.py` ou `models.py` touché : `python -m pytest tests/`
+3. Si `core/storage.py` ou `core/models.py` touché : `python -m pytest tests/`
 4. Vérification empirique contre les cas de régression connus
 5. Commit avec message descriptif
 6. `git push` → `scripts/deploy.sh` sur le serveur
@@ -327,7 +333,7 @@ touchant le schéma évitent la fin de mois (mise à jour des statuts en batch).
 3. Vérifier le résultat sur un scoring suivant
 
 **Tests** : `tests/test_storage.py` (unit, in-memory DB) à exécuter avant
-tout commit touchant `storage.py` ou `models.py`. `tests/run_all.py`
+tout commit touchant `core/storage.py` ou `core/models.py`. `tests/run_all.py`
 (intégration, hit live scrapers) à exécuter intentionnellement seulement.
 
 **Secrets** : Stockés dans des variables d'environnement (`.env`), jamais
@@ -361,4 +367,4 @@ constitution, la constitution prévaut.
 - Les violations connues listées dans le Sync Impact Report sont tolérées
   jusqu'à l'étape de roadmap qui les résout.
 
-**Version**: 2.0.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-03
+**Version**: 2.0.1 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-09

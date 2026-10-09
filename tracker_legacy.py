@@ -10,8 +10,8 @@ from datetime import date, timedelta
 
 import streamlit as st
 
-from profiles import ALL_PROFILES, DEFAULT_PROFILE_ID, SearchProfile
-from storage import JobStorage
+from core.profiles import ALL_PROFILES, DEFAULT_PROFILE_ID, SearchProfile
+from core.storage import JobStorage
 
 COUNTRY_OPTIONS = [
     "Switzerland", "Germany", "France", "United Kingdom", "Ireland",
@@ -53,7 +53,7 @@ COUNTRY_FLAG = {
     "Australia": "🇦🇺", "Japan": "🇯🇵",
 }
 
-from paths import DB_PATH
+from core.paths import DB_PATH
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Job Tracker", layout="wide", page_icon="💼")

@@ -1,6 +1,6 @@
 """Tests for title_gate.title_matches_profile."""
 
-from title_gate import title_matches_profile
+from core.title_gate import title_matches_profile
 
 
 def test_felfel_regression():

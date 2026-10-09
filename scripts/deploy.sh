@@ -56,7 +56,7 @@ echo "=== Seeding companies ==="
 # (.dockerignore excludes data/ and the volume overlays /app/data, so
 #  running seed.py on the host writes to a different DB than the tracker serves)
 docker cp data/companies.json job-tracker:/app/data/companies.json
-docker exec job-tracker python seed.py
+docker exec job-tracker python -m core.seed
 
 echo "=== Deploy complete ==="
 docker compose ps

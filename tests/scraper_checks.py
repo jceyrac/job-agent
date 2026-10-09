@@ -15,7 +15,7 @@ a missing value raises ⚠️  instead of ❌ and does not affect PASS/FAIL.
 import os
 from datetime import date
 
-from models import JobFilter, JobPosting
+from core.models import JobFilter, JobPosting
 
 VALID_WORK_MODES = {"remote", "hybrid", "on-site", "unknown"}
 N_SAMPLE = 5

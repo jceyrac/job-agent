@@ -1,7 +1,7 @@
 import sys
 
-from storage import JobStorage
-from paths import DB_PATH
+from core.storage import JobStorage
+from core.paths import DB_PATH
 
 ALL_SCRAPERS = [
     "cryptojobs.com", "cryptojobslist", "defi_jobs", "greenhouse",

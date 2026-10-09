@@ -83,7 +83,7 @@ def _read_available(pipe) -> str:
 
 def _render_run_controls(db):
     """Buttons to trigger scrape & score from the UI with stop capability."""
-    from profiles import DEFAULT_PROFILE_ID
+    from core.profiles import DEFAULT_PROFILE_ID
 
     st.subheader("🚀 Run")
 
@@ -197,7 +197,7 @@ def _render_run_controls(db):
         if st.button("🕸 Run scrape", use_container_width=True,
                      help="Fetch new jobs from all enabled scrapers. Can be stopped."):
             proc = subprocess.Popen(
-                [sys.executable, "-u", "-m", "scrape"],
+                [sys.executable, "-u", "-m", "core.scrape"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=False,  # binary mode for non-blocking reads
             )
@@ -212,7 +212,7 @@ def _render_run_controls(db):
                      help="Run scrape.py --monitored-only. Fetches all openings "
                           "from monitored companies, independent of the broad scrape."):
             proc = subprocess.Popen(
-                [sys.executable, "-u", "-m", "scrape", "--monitored-only"],
+                [sys.executable, "-u", "-m", "core.scrape", "--monitored-only"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=False,
             )
@@ -227,7 +227,7 @@ def _render_run_controls(db):
                      help="Score all unscored jobs for the active profile. Can be stopped."):
             active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
             proc = subprocess.Popen(
-                [sys.executable, "-u", "-m", "score", "--profile", active_id],
+                [sys.executable, "-u", "-m", "core.score", "--profile", active_id],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=False,
             )
@@ -406,7 +406,7 @@ def render():
 def _render_company_monitoring(db):
     """Company-keyed ATS sources. Each provider can be paused without losing
     its company list (non-destructive master switch with cascade re-arm)."""
-    from scrape import discover_scrapers
+    from core.scrape import discover_scrapers
     from tracker_views.shared import load_all_monitorable_companies
 
     st.subheader("📡 Company Monitoring")
@@ -543,7 +543,7 @@ def _render_reonboard(db):
 
 def _render_profile_editor(db):
     """Editable form for the active search profile.  Load-mutate-save."""
-    from profiles import load_active_profile
+    from core.profiles import load_active_profile
 
     st.subheader("🎯 Profile Editor")
     profile = load_active_profile(db)
@@ -716,7 +716,7 @@ def _render_profile_editor(db):
 def _render_broad_scraping(db):
     """Query-driven boards and discovery-capable ATS scrapers.
     Each toggle governs broad discovery only; monitoring has its own switches below."""
-    from scrape import discover_scrapers
+    from core.scrape import discover_scrapers
 
     st.subheader("🕸 Broad scraping")
     st.caption("Query-driven boards and discovery sweeps of known companies. "
@@ -821,7 +821,7 @@ def _render_stats_actions(db):
             with st.spinner("Running score.py --extract ..."):
                 try:
                     result = subprocess.run(
-                        [sys.executable, "-m", "score", "--extract"],
+                        [sys.executable, "-m", "core.score", "--extract"],
                         capture_output=True, text=True, timeout=600,
                     )
                     st.text_area("Output", result.stdout + "\n" + result.stderr, height=200)

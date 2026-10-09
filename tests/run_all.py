@@ -18,18 +18,18 @@ from test_storage import run_storage_tests
 
 
 def _load_scrapers():
-    from scrapers.boards.remoteok        import RemoteOKScraper
-    from scrapers.boards.web3career      import Web3CareerScraper
-    from scrapers.boards.weworkremotely  import WeWorkRemotelyScraper
-    from scrapers.boards.cryptojobs_com  import CryptoJobsComScraper
-    from scrapers.boards.cryptojobslist  import CryptoJobsListScraper
-    from scrapers.boards.tietalent       import TieTalentScraper
-    from scrapers.greenhouse             import GreenhouseScraper
-    from scrapers.boards.defi_jobs       import DeFiJobsScraper
-    from scrapers.boards.jobup           import JobupScraper
-    from scrapers.boards.wellfound       import WellfoundScraper
-    from scrapers.boards.linkedin        import LinkedInScraper
-    from scrapers.boards.joinup          import JoinupScraper
+    from core.scrapers.boards.remoteok        import RemoteOKScraper
+    from core.scrapers.boards.web3career      import Web3CareerScraper
+    from core.scrapers.boards.weworkremotely  import WeWorkRemotelyScraper
+    from core.scrapers.boards.cryptojobs_com  import CryptoJobsComScraper
+    from core.scrapers.boards.cryptojobslist  import CryptoJobsListScraper
+    from core.scrapers.boards.tietalent       import TieTalentScraper
+    from core.scrapers.greenhouse             import GreenhouseScraper
+    from core.scrapers.boards.defi_jobs       import DeFiJobsScraper
+    from core.scrapers.boards.jobup           import JobupScraper
+    from core.scrapers.boards.wellfound       import WellfoundScraper
+    from core.scrapers.boards.linkedin        import LinkedInScraper
+    from core.scrapers.boards.joinup          import JoinupScraper
 
     # optional_fields: fields that are best-effort for this source.
     # A None/missing value raises ⚠️  instead of ❌ and does not cause FAIL.

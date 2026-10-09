@@ -18,7 +18,7 @@ services:
   agent:
     build: .
     container_name: job-agent
-    command: python main.py
+    command: python -m core.main
     volumes:
       - job_data:/app/data
     env_file:
@@ -32,7 +32,7 @@ services:
   email-monitor:
     build: .
     container_name: job-email-monitor
-    command: python email_monitor.py
+    command: python -m core.email_monitor
     volumes:
       - job_data:/app/data
     env_file:

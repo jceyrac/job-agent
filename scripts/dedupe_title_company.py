@@ -13,8 +13,8 @@ import argparse
 import sqlite3
 from collections import defaultdict
 
-from paths import DB_PATH
-from storage import normalize_title, normalize_company
+from core.paths import DB_PATH
+from core.storage import normalize_title, normalize_company
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -164,7 +164,7 @@ def _backfill_norm_columns(conn: sqlite3.Connection) -> int:
             updates.append("norm_company = ?")
             params.append(normalize_company(row["company"]))
         if row["url"] and row["source"] and not row["cu"]:
-            from storage import normalize_url
+            from core.storage import normalize_url
             canon = normalize_url(row["url"], row["source"])
             if canon:
                 updates.append("canonical_url = ?")

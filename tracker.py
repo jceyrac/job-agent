@@ -2,7 +2,7 @@
 import os
 import streamlit as st
 
-from paths import DB_PATH
+from core.paths import DB_PATH
 
 st.set_page_config(page_title="Job Tracker", layout="wide", page_icon="💼")
 
@@ -46,8 +46,8 @@ def _is_onboarded() -> bool:
     and redirect the user away from the wizard before they can save."""
     if not os.path.exists(DB_PATH):
         return False
-    from storage import JobStorage
-    from profiles import DEFAULT_PROFILE_ID, load_active_profile
+    from core.storage import JobStorage
+    from core.profiles import DEFAULT_PROFILE_ID, load_active_profile
     db = JobStorage(DB_PATH)
 
     # If the explicit onboarding flag is set, the user completed the wizard.

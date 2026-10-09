@@ -27,7 +27,7 @@ def _clean_env() -> dict:
 
 def _import_paths(env: dict) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c", "import paths"],
+        [sys.executable, "-c", "import core.paths"],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -84,10 +84,8 @@ SCAN_SKIP_DIRS = {".venv", ".git", "__pycache__", "tests", "specs"}
 # FR-006 allow-list: nothing is deferred anymore — spec 033 (step 1b) converted
 # the last CWD-relative `--db` defaults to `paths.DB_PATH`. Keep this empty so
 # `test_no_cwd_data_literals` fails on any reintroduction.
-# `paths.py` is exempt from (a) by construction (it is the single source of
-# truth). `scrape.py:21`, `monitoring_agent.py` ROOT and
-# `scripts/duplicate_report.py` ROOT use `__file__` for non-data/non-output
-# purposes, so the token-based (a) check does not match them.
+# `core/paths.py` is exempt from (a) by construction (it is the single source of
+# truth for locations; its `__file__` derives PROJECT_ROOT, never a data path).
 B_ALLOW = set()
 
 
@@ -190,7 +188,7 @@ def _subprocess_py_launches(path: str):
 def test_no_file_derived_data_paths():
     offenders = []
     for path in _runtime_py_files():
-        if _rel(path) == "paths.py":
+        if _rel(path) == os.path.join("core", "paths.py"):
             continue
         with open(path, encoding="utf-8") as f:
             for lineno, line in enumerate(f, 1):

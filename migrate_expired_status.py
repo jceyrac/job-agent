@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-from paths import DB_PATH
+from core.paths import DB_PATH
 
 MIGRATION_SQL = """
 UPDATE job_tracking

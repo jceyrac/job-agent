@@ -22,7 +22,7 @@ import sys
 import tempfile
 from unittest import mock
 
-from storage import JobStorage
+from core.storage import JobStorage
 
 CORE_TABLES = (
     "jobs",

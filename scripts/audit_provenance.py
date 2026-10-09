@@ -14,7 +14,7 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 
-from paths import DB_PATH
+from core.paths import DB_PATH
 
 ap = argparse.ArgumentParser()
 ap.add_argument("db", nargs="?", default=DB_PATH)

@@ -8,8 +8,8 @@ monkeypatched to serve fixture data; the wide-net test locks Constitution I
 import os
 from datetime import timedelta
 
-from models import JobFilter
-from scrapers.boards.joinup import JoinupScraper
+from core.models import JobFilter
+from core.scrapers.boards.joinup import JoinupScraper
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -39,7 +39,7 @@ def _install_fake_fetch(monkeypatch, pages: dict):
         return pages.get(page)
 
     monkeypatch.setattr(JoinupScraper, "_fetch_page", fake_fetch_page)
-    monkeypatch.setattr("scrapers.boards.joinup.time.sleep", lambda _: None)
+    monkeypatch.setattr("core.scrapers.boards.joinup.time.sleep", lambda _: None)
     return requested
 
 

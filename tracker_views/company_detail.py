@@ -200,7 +200,7 @@ def _render_detail(company_id: int):
         if not _already_researched:
             if st.button("🔍 Research now", use_container_width=True, key=f"research_{company_id}"):
                 with st.spinner(f"Researching {company['name']}..."):
-                    from company_researcher import research_company, update_company_from_research
+                    from core.company_researcher import research_company, update_company_from_research
                     result = research_company(
                         company["name"],
                         company.get("website") or company.get("careers_url"))
@@ -210,7 +210,7 @@ def _render_detail(company_id: int):
         else:
             if st.button("🔍 Re-research", use_container_width=True, key=f"reresearch_{company_id}"):
                 with st.spinner(f"Re-researching {company['name']}..."):
-                    from company_researcher import research_company, update_company_from_research
+                    from core.company_researcher import research_company, update_company_from_research
                     result = research_company(
                         company["name"],
                         company.get("website") or company.get("careers_url"))

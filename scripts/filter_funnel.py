@@ -16,10 +16,10 @@ import sqlite3
 import sys
 from datetime import date, datetime, timezone, timedelta
 
-from models import JobFilter, JobPosting
-from filters import JobFilterEngine
-from paths import DB_PATH
-from profiles import load_active_profile
+from core.models import JobFilter, JobPosting
+from core.filters import JobFilterEngine
+from core.paths import DB_PATH
+from core.profiles import load_active_profile
 
 
 # ── Column list matching the full JobPosting constructor ──────────────────────

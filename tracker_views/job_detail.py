@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from profiles import ACTIVE_PROFILE_ID
+from core.profiles import ACTIVE_PROFILE_ID
 from tracker_views.shared import (
     ensure_db, get_db, get_detail_id, md_link,
     score_badge, sector_label,

@@ -3,7 +3,7 @@
 Three guards, each of which must fail loudly when its violation is reintroduced:
 
 - **FR-004** — no `__file__` in runtime code, allow-listed by *pattern* (not by
-  directory): `paths.py` (the single allowed `__file__`-derived location) and the
+  directory): `core/paths.py` (the single allowed `__file__`-derived location) and the
   exact call `is_active_page(__file__)` (call to `is_active_page` whose sole
   argument is `__file__`, matched via AST). `tracker_views/` is covered, not
   exempt.
@@ -25,10 +25,10 @@ import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-_RUNTIME_SUBDIRS = ("scrapers", "cv_agent", "tracker_views", "scripts")
+_RUNTIME_SUBDIRS = ("core", "tracker_views", "scripts")
 
 # FR-004: the only file whose `__file__` use is allowed unconditionally.
-_ALLOWED_FILE_FILES = ("paths.py", os.path.join("core", "paths.py"))
+_ALLOWED_FILE_FILES = (os.path.join("core", "paths.py"),)
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def _rel(path: str) -> str:
 
 
 def _runtime_files():
-    """Yield every runtime .py file the guards scan (root modules + 4 packages)."""
+    """Yield every runtime .py file the guards scan (root modules + core/ + tracker_views/ + scripts/)."""
     for name in sorted(os.listdir(REPO_ROOT)):
         if name.endswith(".py"):
             yield os.path.join(REPO_ROOT, name)
@@ -271,7 +271,7 @@ def test_fr004_is_active_page_allowed():
 
 def test_fr004_paths_allowed():
     good = "import os\nPROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))\n"
-    assert _file_violations("paths.py", good) == []
+    assert _file_violations(os.path.join("core", "paths.py"), good) == []
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ def test_fr005_patch_object_target_skipped():
 # ---------------------------------------------------------------------------
 
 def test_fr014_scrapers_src_dir_exists():
-    from paths import SCRAPERS_SRC_DIR
+    from core.paths import SCRAPERS_SRC_DIR
 
     assert _check_scrapers_src_dir(SCRAPERS_SRC_DIR) == []
 

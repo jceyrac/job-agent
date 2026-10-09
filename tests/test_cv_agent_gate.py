@@ -13,8 +13,8 @@ Two surfaces are covered:
 import io
 from unittest.mock import patch
 
-from cv_agent.cli import prompt_analysis_gate
-from cv_agent.nodes import analysis_gate
+from core.cv_agent.cli import prompt_analysis_gate
+from core.cv_agent.nodes import analysis_gate
 
 
 def _state(**overrides):
@@ -39,7 +39,7 @@ def test_payload_surfaces_empty_title_company():
         captured.update(payload)
         return {"decision": "proceed"}
 
-    with patch("cv_agent.nodes.interrupt", side_effect=_interrupt):
+    with patch("core.cv_agent.nodes.interrupt", side_effect=_interrupt):
         analysis_gate(_state())
 
     assert captured["job_title"] == ""
@@ -53,7 +53,7 @@ def test_payload_surfaces_existing_title_company():
         captured.update(payload)
         return {"decision": "proceed"}
 
-    with patch("cv_agent.nodes.interrupt", side_effect=_interrupt):
+    with patch("core.cv_agent.nodes.interrupt", side_effect=_interrupt):
         analysis_gate(_state(job={"title": "Product Owner Lead", "company": "Jobgether"}))
 
     assert captured["job_title"] == "Product Owner Lead"
@@ -64,7 +64,7 @@ def test_decision_overrides_patch_job():
     def _interrupt(payload):
         return {"decision": "proceed", "title": "Product Owner Lead", "company": "Jobgether"}
 
-    with patch("cv_agent.nodes.interrupt", side_effect=_interrupt):
+    with patch("core.cv_agent.nodes.interrupt", side_effect=_interrupt):
         out = analysis_gate(_state())
 
     assert out["decision"] == "proceed"

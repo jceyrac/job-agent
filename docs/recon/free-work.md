@@ -8,15 +8,15 @@
 
 ## Étape 1 : Contrat d'un scraper job_agent (rappel)
 
-D'après `scrapers/base.py`, `scrapers/boards/hh_network.py` (template de référence),
-`scrape.py`, `models.py`, et la constitution (`.specify/memory/constitution.md`,
+D'après `core/scrapers/base.py`, `core/scrapers/boards/hh_network.py` (template de référence),
+`core/scrape.py`, `core/models.py`, et la constitution (`.specify/memory/constitution.md`,
 Principe I) :
 
 1. **Héritage** : étendre `BaseScraper`, déclarer `SOURCE_NAME`, `ENABLED`, `ACQUISITION_MODEL = "board"`, `SUPPORTS_DISCOVERY = True`.
 2. **Signature** : `fetch(self, job_filter: JobFilter) -> list[JobPosting]` — unique méthode obligatoire.
-3. **Pas de filtrage de pertinence** : le scraper est un filet large. Le `JobFilter` sert uniquement au scoping grossier (query terms, date). Le scoring de désirabilité est exclusivement dans `scorer.py`.
+3. **Pas de filtrage de pertinence** : le scraper est un filet large. Le `JobFilter` sert uniquement au scoping grossier (query terms, date). Le scoring de désirabilité est exclusivement dans `core/scorer.py`.
 4. **Sortie** : une liste de dataclass `JobPosting` avec au minimum `source`, `title`, `company`, `location`, `url`, `description`. Les champs `work_mode`, `contract_type`, `geo_zone`, `salary`, `posted_date` sont facultatifs au scrape mais accélèrent le scoring.
-5. **Écriture DB** : le scraper ne touche PAS à la DB. C'est `scrape.py` qui appelle `db.save_unscored()` après filtrage et déduplication.
+5. **Écriture DB** : le scraper ne touche PAS à la DB. C'est `core/scrape.py` qui appelle `db.save_unscored()` après filtrage et déduplication.
 
 ---
 
@@ -253,7 +253,7 @@ Ce volume est raisonnable : à 100 items/page, 7 appels API suffisent. À 1 requ
 
 2. **Contrat `contracts` ambigu** : quand une offre a `["permanent", "contractor"]`, quel `contract_type` choisir ? Proposition : prendre le premier, ou prioriser `permanent` si les deux sont présents (c'est souvent un CDI avec TJM indicatif).
 
-3. **`experienceLevel`** : faut-il créer un nouveau champ dans `JobPosting` (`experience_level`), ou le stocker dans `summary` en attendant ? La création d'un champ nécessite de toucher `models.py` et `storage.py` (fichiers NEVER modify) → spec dédiée requise.
+3. **`experienceLevel`** : faut-il créer un nouveau champ dans `JobPosting` (`experience_level`), ou le stocker dans `summary` en attendant ? La création d'un champ nécessite de toucher `core/models.py` et `core/storage.py` (fichiers NEVER modify) → spec dédiée requise.
 
 4. **Taux de requêtes** : 1 req/s entre chaque slug (courtois), ou plus agressif (pas de rate-limit détecté) ? Le volume total (~20 requêtes) rend la question quasi-anecdotique, mais à fixer pour la spec.
 

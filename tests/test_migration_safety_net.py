@@ -28,7 +28,7 @@ from scripts.health_check import (
     gate_failures,
     run_age_hours,
 )
-from storage import JobStorage
+from core.storage import JobStorage
 
 # ── prune rule (FR-006) ────────────────────────────────────────────────────────
 

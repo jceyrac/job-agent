@@ -85,7 +85,7 @@ implementation phase). From spec 032 `quickstart.md` §7:
 - [ ] **SC-002 drill tracker** — on the drill tracker (`:8502`, restored backup),
   click all 7 launch buttons (Jobs: fetch / score / extract; Settings: scrape /
   monitored-only / score / extract) — each completes with normal log output — then
-  run `main.py`'s 4 stages.
+  run `core/main.py`'s 4 stages.
 - [ ] **SC-005 live** — health check OK; next nightly `full` run success; Reports
   CSV export works; the Preferences page context-suggest action (`preferences.py`)
   opens the DB.

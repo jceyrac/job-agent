@@ -14,9 +14,9 @@ import traceback
 from datetime import date, datetime, timezone
 from unittest.mock import patch, MagicMock
 
-from models import JobPosting
-from storage import JobStorage
-from profiles import ALL_PROFILES
+from core.models import JobPosting
+from core.storage import JobStorage
+from core.profiles import ALL_PROFILES
 
 PROFILE_ID = "unified_jc"
 
@@ -142,7 +142,7 @@ def test_upsert_idempotency():
 
 def test_language_fallback():
     """When language_required is NULL, prepare should default to 'en'."""
-    from prepare import _language_name
+    from core.prepare import _language_name
 
     # Test the language helper used by prepare.py
     assert _language_name("en") == "English"
@@ -153,7 +153,7 @@ def test_language_fallback():
 
 def test_bullet_json_parse_retry():
     """_safe_json_parse handles malformed JSON and recovers from code blocks."""
-    from prepare import _safe_json_parse
+    from core.prepare import _safe_json_parse
 
     # Valid JSON
     result = _safe_json_parse('{"bullets": [], "omit": []}', "test")
@@ -175,7 +175,7 @@ def test_bullet_json_parse_retry():
 
 def test_slugify():
     """_slugify produces clean URL-safe slugs."""
-    from prepare import _slugify
+    from core.prepare import _slugify
 
     assert _slugify("Hello World") == "hello-world"
     assert _slugify("SIX Group (Switzerland)") == "six-group-switzerland"
@@ -185,7 +185,7 @@ def test_slugify():
 
 def test_build_user_prompt():
     """_build_user_prompt includes all key fields from the job dict."""
-    from prepare import _build_user_prompt
+    from core.prepare import _build_user_prompt
 
     job = {
         "title": "Senior PM",

@@ -5,8 +5,8 @@ profile. Any reintroduction of profile-driven slug gating (like the removed
 SLUG_KEYWORDS + _relevant_slugs) will break this test.
 """
 
-from models import JobFilter
-from scrapers.boards.free_work import FreeWorkScraper
+from core.models import JobFilter
+from core.scrapers.boards.free_work import FreeWorkScraper
 
 
 def test_free_work_always_fetches_all_slugs(monkeypatch):
@@ -22,9 +22,9 @@ def test_free_work_always_fetches_all_slugs(monkeypatch):
         return []
 
     # Neutralize both sleep calls (_fetch_slug page delay + fetch slug-to-slug delay)
-    monkeypatch.setattr("scrapers.boards.free_work.FreeWorkScraper._fetch_slug",
+    monkeypatch.setattr("core.scrapers.boards.free_work.FreeWorkScraper._fetch_slug",
                         fake_fetch_slug)
-    monkeypatch.setattr("scrapers.boards.free_work.time.sleep", lambda _: None)
+    monkeypatch.setattr("core.scrapers.boards.free_work.time.sleep", lambda _: None)
 
     scraper = FreeWorkScraper(storage=None)
 

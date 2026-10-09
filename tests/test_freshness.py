@@ -6,9 +6,9 @@ honoring in `JobFilterEngine`. In-memory DB only; no network I/O.
 
 from datetime import date, timedelta
 
-from filters import JobFilterEngine
-from models import JobFilter, JobPosting
-from storage import JobStorage
+from core.filters import JobFilterEngine
+from core.models import JobFilter, JobPosting
+from core.storage import JobStorage
 
 
 def _job(title: str = "PM", posted_days_ago: int = 5) -> JobPosting:

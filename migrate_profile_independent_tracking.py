@@ -7,7 +7,7 @@ Move job_applications to be keyed on job_id only (drop profile_id from PK).
 import sqlite3
 import sys
 
-from paths import DB_PATH
+from core.paths import DB_PATH
 
 STATUS_PRIORITY = {
     "applied":  0,

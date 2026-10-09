@@ -379,7 +379,7 @@ def _render_cv():
         key="cv_uploader",
     )
     if uploaded is not None:
-        from cv_extract import extract_cv_text_from_bytes, save_uploaded_cv
+        from core.cv_extract import extract_cv_text_from_bytes, save_uploaded_cv
         data = uploaded.read()
         text = extract_cv_text_from_bytes(data, uploaded.name)
         if text:
@@ -462,7 +462,7 @@ def _render_generate():
         if st.button("✨ Generate my profile", use_container_width=True, type="primary"):
             with st.spinner("Writing your scoring rubric… this takes ~30–60 seconds."):
                 try:
-                    from profile_generator import generate_profile
+                    from core.profile_generator import generate_profile
                     criteria = generate_profile(q, cv_text)
                     st.session_state["generated_criteria"] = criteria
                     st.session_state["onboarding_step"] = 4
@@ -531,7 +531,7 @@ def _render_review():
     with c2:
         if st.button("Refine", use_container_width=True) and instruction.strip():
             with st.spinner("Refining…"):
-                from profile_generator import refine_scoring_context
+                from core.profile_generator import refine_scoring_context
                 try:
                     new_ctx = refine_scoring_context(ctx, instruction.strip(), q)
                     criteria["scoring_context"] = new_ctx
@@ -591,7 +591,7 @@ def _render_save():
         return
 
     db = get_db()
-    from profiles import SearchProfile, DEFAULT_PROFILE_ID
+    from core.profiles import SearchProfile, DEFAULT_PROFILE_ID
 
     active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
     # Use the name from the existing profile or default

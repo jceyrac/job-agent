@@ -6,7 +6,7 @@ produce "remote").
 """
 
 import pandas as pd
-from scrapers.boards._jobspy_helpers import dataframe_to_postings
+from core.scrapers.boards._jobspy_helpers import dataframe_to_postings
 
 
 def _make_row(**kwargs) -> pd.DataFrame:

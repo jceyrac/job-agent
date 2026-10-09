@@ -5,8 +5,8 @@ from datetime import date, timedelta
 
 import streamlit as st
 
-from paths import DB_PATH, ENV_PATH
-from storage import JobStorage
+from core.paths import DB_PATH, ENV_PATH
+from core.storage import JobStorage
 
 # ── Constants ───────────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ COMPANY_STATUSES = [
     "dormant", "passed_by_me", "declined_by_them", "blacklisted",
 ]
 
-from storage import (
+from core.storage import (
     CONTACT_ROLE_FAMILIES, CONTACT_SENIORITIES,
     INTERACTION_TYPES, INTERACTION_DIRECTIONS, INTERACTION_OUTCOMES,
 )
@@ -123,7 +123,7 @@ def set_secret(key: str, value: str) -> None:
 @st.cache_data(ttl=60, show_spinner=False)
 def load_jobs(profile_id: str | None = None,
               exclude_archived: bool = False) -> list[dict]:
-    from profiles import get_active_profile
+    from core.profiles import get_active_profile
     if profile_id is None:
         profile_id = get_active_profile().id
     return get_db().get_all_for_tracker(profile_id, exclude_archived=exclude_archived)

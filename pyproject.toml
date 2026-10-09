@@ -15,43 +15,15 @@ dev = ["pytest"]
 dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools]
-py-modules = [
-    "ats_detection",
-    "backfill_descriptions",
-    "company_researcher",
-    "context_tuner",
-    "create_profile",
-    "cv_extract",
-    "email_monitor",
-    "export_jobs",
-    "export_seed",
-    "filters",
-    "job_actions",
-    "llm",
-    "main",
-    "models",
-    "monitoring_agent",
-    "notifier",
-    "paths",
-    "preference_report",
-    "prepare",
-    "profile_generator",
-    "profiles",
-    "score",
-    "scorer",
-    "scrape",
-    "seed",
-    "storage",
-    "title_gate",
-    "tracker",
-]
+py-modules = ["tracker"]
 packages = [
-    "scrapers",
-    "scrapers.ats",
-    "scrapers.boards",
-    "scrapers.company_sites",
+    "core",
+    "core.scrapers",
+    "core.scrapers.ats",
+    "core.scrapers.boards",
+    "core.scrapers.company_sites",
+    "core.cv_agent",
     "tracker_views",
-    "cv_agent",
     "scripts",
 ]
 

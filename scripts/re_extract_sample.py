@@ -8,9 +8,9 @@ import sqlite3
 import sys
 import os
 
-from models import JobPosting
-from paths import DB_PATH
-from scorer import extract_job_fields
+from core.models import JobPosting
+from core.paths import DB_PATH
+from core.scorer import extract_job_fields
 SAMPLE_SIZE = 10
 
 
