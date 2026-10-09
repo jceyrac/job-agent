@@ -1,5 +1,4 @@
 import importlib
-import os
 import pkgutil
 import re
 import subprocess
@@ -16,17 +15,24 @@ from paths import DB_PATH
 from storage import JobStorage
 from title_gate import title_matches_profile
 
+import scrapers
+import scrapers.ats
+import scrapers.boards
+import scrapers.company_sites
+
+_SUBPACKAGES = {
+    "boards": scrapers.boards,
+    "ats": scrapers.ats,
+    "company_sites": scrapers.company_sites,
+}
+
 
 def discover_scrapers():
-    scrapers_dir = os.path.join(os.path.dirname(__file__), "scrapers")
     scraper_classes = []
 
     # Scan sub-packages: boards/, ats/, company_sites/ (and root-level for legacy)
-    for subpkg in ("boards", "ats", "company_sites"):
-        pkg_path = os.path.join(scrapers_dir, subpkg)
-        if not os.path.isdir(pkg_path):
-            continue
-        for _, module_name, _ in pkgutil.iter_modules([pkg_path]):
+    for subpkg, pkg in _SUBPACKAGES.items():
+        for _, module_name, _ in pkgutil.iter_modules(pkg.__path__):
             if module_name in ("base", "__init__"):
                 continue
             module = importlib.import_module(f"scrapers.{subpkg}.{module_name}")
@@ -42,7 +48,7 @@ def discover_scrapers():
                     scraper_classes.append(obj)
 
     # Also scan root-level scrapers/ for non-migrated modules (greenhouse, disabled scrapers)
-    for _, module_name, _ in pkgutil.iter_modules([scrapers_dir]):
+    for _, module_name, _ in pkgutil.iter_modules(scrapers.__path__):
         if module_name in ("base", "__init__"):
             continue
         module = importlib.import_module(f"scrapers.{module_name}")

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _datetime
+import importlib.resources
 import json
 import os
 import sqlite3
@@ -215,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--as-of", required=True, help="YYYY-MM-DD to pin date.today() to")
     parser.add_argument("--profile", default=None)
     parser.add_argument("--regression-cases", default=None,
-                        help="path to regression_cases.json (default: sibling of this script)")
+                        help="path to regression_cases.json (default: scripts package data)")
     parser.add_argument("--ref", default=None, help="git ref (default: short HEAD)")
     parser.add_argument("--out", default=None, help="write JSON here (default: stdout)")
     args = parser.parse_args(argv)
@@ -226,10 +227,8 @@ def main(argv: list[str] | None = None) -> int:
 
     cases_path = args.regression_cases
     if cases_path is None:
-        candidate = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "regression_cases.json"
-        )
-        cases_path = candidate if os.path.isfile(candidate) else None
+        candidate = importlib.resources.files("scripts") / "regression_cases.json"
+        cases_path = str(candidate) if candidate.is_file() else None
 
     git_ref = args.ref or _git_ref()
     try:

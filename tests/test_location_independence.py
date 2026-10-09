@@ -132,6 +132,53 @@ def _code_str_literals(path: str):
             yield node.lineno, node.value
 
 
+def _collect_str_ids(node: ast.AST, ids: set[int]) -> None:
+    """Collect the ids of string Constant nodes inside `node` (incl. f-string parts)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        ids.add(id(node))
+    elif isinstance(node, ast.JoinedStr):
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                ids.add(id(value))
+
+
+def _os_path_join_str_ids(tree: ast.AST) -> set[int]:
+    """ids of string constants that are `os.path.join(...)` filename arguments."""
+    ids = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # `os.path.join(...)` — func is Attribute(join) on Attribute(path) on Name(os).
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "join"
+            and isinstance(func.value, ast.Attribute)
+            and func.value.attr == "path"
+            and isinstance(func.value.value, ast.Name)
+            and func.value.value.id == "os"
+        ):
+            for arg in node.args:
+                _collect_str_ids(arg, ids)
+    return ids
+
+
+def _py_launch_literals(path: str):
+    """Yield (lineno, literal) for bare `name.py` literals that are *not*
+    `os.path.join` filename arguments — i.e. the `[sys.executable, "name.py", …]`
+    launch form (a filename joined to a directory is not a launch)."""
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    tree = ast.parse(src)
+    doc_ids = _docstring_ids(tree)
+    join_ids = _os_path_join_str_ids(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) in doc_ids or id(node) in join_ids:
+                continue
+            yield node.lineno, node.value
+
+
 # ── FR-006 (a) __file__-derived data/output/.env paths ──────────────────────
 
 def test_no_file_derived_data_paths():
@@ -170,7 +217,7 @@ def test_no_py_subprocess_launches():
     for path in _runtime_py_files():
         if _rel(path) in B_ALLOW:
             continue
-        for lineno, value in _code_str_literals(path):
+        for lineno, value in _py_launch_literals(path):
             # A bare module filename (no path separator, no whitespace) ending
             # in ".py" is the `[sys.executable, "<name>.py", …]` launch form.
             # `value != ".py"` skips f-string tail fragments like

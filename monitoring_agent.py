@@ -20,22 +20,22 @@ import sys
 import textwrap
 from pathlib import Path
 
-from paths import DB_PATH
+from paths import DB_PATH, PROJECT_ROOT, SCRAPERS_SRC_DIR
 from storage import JobStorage
 
 # ---------------------------------------------------------------------------
 # Config file locations (Phase 1 knowledge)
 # ---------------------------------------------------------------------------
 
-GREENHOUSE_CONFIG_PATH = "scrapers/greenhouse.py"
+GREENHOUSE_CONFIG_PATH = os.path.join(SCRAPERS_SRC_DIR, "greenhouse.py")
 GREENHOUSE_LIST_NAME = "GREENHOUSE_BOARDS_SEED"
 
 ATS_CONFIG_PATHS = {
-    "lever":    ("scrapers/ats/lever.py",    "LEVER_SLUGS_SEED"),
-    "workable": ("scrapers/ats/workable.py", "WORKABLE_SLUGS_SEED"),
+    "lever":    (os.path.join(SCRAPERS_SRC_DIR, "ats", "lever.py"),    "LEVER_SLUGS_SEED"),
+    "workable": (os.path.join(SCRAPERS_SRC_DIR, "ats", "workable.py"), "WORKABLE_SLUGS_SEED"),
 }
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(PROJECT_ROOT)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -169,7 +169,7 @@ def _action_c_new_ats(company: dict, db: JobStorage, dry_run: bool) -> str:
     subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=ROOT)
 
     # Write stub
-    _write_scraper_stub(provider, f"scrapers/ats/{provider}.py")
+    _write_scraper_stub(provider, f"ats/{provider}.py")
 
     subprocess.run(["git", "add", "."], check=True, cwd=ROOT)
     subprocess.run(
@@ -204,7 +204,7 @@ def _write_ats_spec(provider: str, name: str, slug: str,
 
 
 def _write_scraper_stub(provider: str, rel_path: str) -> None:
-    path = ROOT / rel_path
+    path = Path(SCRAPERS_SRC_DIR) / rel_path
     if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -267,7 +267,7 @@ def _action_d_custom(company: dict, db: JobStorage, dry_run: bool) -> str:
     (spec_dir / "tasks.md").write_text(f"# Tasks {spec_num} — TODO\n")
 
     subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=ROOT)
-    _write_scraper_stub("custom", f"scrapers/company_sites/{slug}.py")
+    _write_scraper_stub("custom", f"company_sites/{slug}.py")
 
     subprocess.run(["git", "add", "."], check=True, cwd=ROOT)
     subprocess.run(

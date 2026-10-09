@@ -8,6 +8,8 @@ Defaults to <repo_root>/data, preserving previous behavior.
 Other locations:
   JOB_AGENT_OUTPUT_DIR — outputs directory (default <repo_root>/outputs)
   ENV_PATH             — <repo_root>/.env (not overridable)
+  CV_PIPELINE_DIR      — .cv_pipeline render harness, sibling of the repo root (env-overridable)
+  SCRAPERS_SRC_DIR     — source-tree scraper directory (pre-move <repo_root>/scrapers, post-move <repo_root>/core/scrapers)
 
 Guard:
   JOB_AGENT_REQUIRE_DB=1 — refuse to import (creating nothing) if the DB file
@@ -19,6 +21,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("JOB_AGENT_DATA_DIR") or os.path.join(PROJECT_ROOT, "data")
 OUTPUT_DIR = os.environ.get("JOB_AGENT_OUTPUT_DIR") or os.path.join(PROJECT_ROOT, "outputs")
 ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
+CV_PIPELINE_DIR = os.environ.get("CV_PIPELINE_DIR") or os.path.join(os.path.dirname(PROJECT_ROOT), ".cv_pipeline")
+SCRAPERS_SRC_DIR = os.path.join(PROJECT_ROOT, "scrapers")
 DB_PATH = os.path.join(DATA_DIR, "jobs.db")
 
 if os.environ.get("JOB_AGENT_REQUIRE_DB") == "1":

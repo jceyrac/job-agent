@@ -23,16 +23,12 @@ import re
 import subprocess
 import sys
 
-from paths import DATA_DIR
+from paths import DATA_DIR, CV_PIPELINE_DIR
 
 # The render harness lives in …/AI-Suite/.cv_pipeline — a *sibling* of this
 # repo (note: the spec's "~/.cv_pipeline" was stale; the real dir is here).
-# Env-overridable for prod where the harness may live elsewhere.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CV_PIPELINE_DIR = os.environ.get(
-    "CV_PIPELINE_DIR",
-    os.path.join(os.path.dirname(_REPO_ROOT), ".cv_pipeline"),
-)
+# `CV_PIPELINE_DIR` comes from paths.py (env-overridable for prod where the
+# harness may live elsewhere).
 MASTER_CV_PATH = os.path.join(CV_PIPELINE_DIR, "cv_data_master.json")
 
 def default_output_root() -> str:

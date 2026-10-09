@@ -55,5 +55,8 @@ packages = [
     "scripts",
 ]
 
+[tool.setuptools.package-data]
+scripts = ["*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

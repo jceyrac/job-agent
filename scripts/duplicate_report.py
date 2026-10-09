@@ -24,8 +24,7 @@ from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "jobs.db"
+from paths import DB_PATH
 
 
 # ── Normalisation des titres ──────────────────────────────────────────────

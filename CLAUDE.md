@@ -203,13 +203,13 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-03)
+## Current focus (as of 2026-10-08)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Next: step 0 (parity script + backup restore test), then step 1 (monorepo).
+**API migration roadmap** — `docs/roadmap-api.md`. Next: step 1c (move domain into `core/` — spec 034), then step 1d (archiving).
 
 <!-- SPECKIT START -->
-Current feature: **Installable Project + Staging Environment** (`specs/033-installable-project/`)
-- Spec: `specs/033-installable-project/spec.md`
-- Plan: `specs/033-installable-project/plan.md`
-- Tasks: `specs/033-installable-project/tasks.md` (pending — run /speckit-tasks)
+Current feature: **Domain Package `core/`** (`specs/034-core-package/`, roadmap step 1c)
+- Spec: `specs/034-core-package/spec.md`
+- Plan: `specs/034-core-package/plan.md`
+- Tasks: `specs/034-core-package/tasks.md` (ready — run /speckit-implement)
 <!-- SPECKIT END -->
