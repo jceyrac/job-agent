@@ -102,7 +102,6 @@ Unless the task — or the current roadmap step's spec — explicitly concerns t
 - Any file in `core/scrapers/` — unless the task is specifically about that scraper.
 - `tracker_views/shared.py` — shared helpers consumed by all pages. Changes here break every page.
 - `tracker_views/onboarding.py` — first-run wizard. Do not touch unless explicitly asked.
-- Migration files (`migrate_*.py`) — one-shot scripts, already executed.
 
 ---
 
@@ -112,7 +111,6 @@ Unless the task — or the current roadmap step's spec — explicitly concerns t
 - `tracker_views/job_helpers.py` — action bar and state derivation for job cards
 - `tracker_views/forms.py` — `@st.dialog` modals
 - `tracker.py` — entry point, global CSS only
-- `tracker_legacy.py` — legacy reference, not in production
 
 Any spec touching the tracker UI (or the future `web/` front) requires a mockup approved by Jean Claude before implementation.
 

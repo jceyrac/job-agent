@@ -23,17 +23,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_SKIP_DIRS = {".venv", ".git", "__pycache__", "specs"}
 SYS_PATH_ALLOW = {"scripts/backup_db.py"}
 
-# FR-007(b): root modules legitimately excluded from py-modules — the five
-# one-off scripts (three migrations, the legacy tracker, a live-scrape test)
-# and the gitignored personal-data filler, which must never be packaged.
-ROOT_MODULE_ALLOW = {
-    "migrate_expired_status",
-    "migrate_profile_independent_tracking",
-    "migrate_single_status",
-    "test_wellfound",
-    "tracker_legacy",
-    "fill_orp_pdf",
-}
+# FR-007(b): the only root module legitimately excluded from py-modules is the
+# gitignored personal-data filler, which must never be packaged.
+ROOT_MODULE_ALLOW = {"fill_orp_pdf"}
 
 
 def _runtime_py_files():
