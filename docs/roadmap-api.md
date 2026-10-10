@@ -15,7 +15,11 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 ## Décisions d'architecture
 
 - **Monorepo, pas de nouveau repo.** `core/` (domaine existant déplacé, non réécrit), `api/` (FastAPI),
-  `web/` (nouveau front), `tracker/` (Streamlit actuel). Une seule source de vérité pour `storage`.
+  `web/` (nouveau front). Une seule source de vérité pour `storage`.
+- **Remplacement complet de Streamlit à terme** (décision 2026-10-09). `web/` reprend toutes les pages,
+  une par une ; Streamlit reste la référence tant qu'une page n'a pas atteint la parité, puis est retiré
+  à l'étape 10. Conséquence : `tracker.py` et `tracker_views/` **restent à la racine** jusqu'à leur
+  suppression — pas de déplacement vers `tracker/` (effort perdu sur un code destiné à disparaître).
 - **`core` est un paquet installable** (`pyproject.toml`) : imports identiques partout, aucun bricolage
   de `sys.path`, scripts lancés en `python -m`, aucune donnée localisée à partir de `__file__`
   ailleurs que dans `core/paths.py`, configuration de prod explicite par l'environnement. Pas de shims.
@@ -32,6 +36,11 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 - **Sessions conversationnelles** (chat CV) : ressource `cv-sessions` pilotant le graphe LangGraph existant.
   Cible d'édition déterministe (choisie dans l'UI), jamais routée par un LLM (principe IV).
 - **`core/monitoring_agent.py` reste un outil de dev** (il écrit du code) — hors API.
+- **Les agents sont des clients de l'API** (décision 2026-10-09). En attendant l'API, la frontière
+  agents ↔ domaine est rendue explicite dans le monorepo (garde d'imports, spec 035 US6). Après l'étape 6b,
+  un agent n'importe plus `core` : il lit et écrit par HTTP avec un token à scopes. Sortir un agent dans
+  un repo séparé devient alors une option à coût quasi nul, à décider sur critères : rythme de mise en
+  production différent, réutilisation hors job_agent, dépendances lourdes (LangGraph) inutiles à l'image du tracker.
 - **Sécurité** : API joignable via Tailscale uniquement, tokens à scopes (ingest / tasks / user).
 
 ## Règles de migration (valables à chaque étape)
@@ -69,20 +78,22 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 |---|-------|---------|-------|
 | 5 | API lecture | Service `api` (Tailscale), tokens à scopes, `/jobs`, `/me/feed`, `/me/companies`, `/me/contacts` | 4–6 |
 | 6 | API écriture + tâches | Statuts, notes, cycle de vie, `POST /tasks` + SSE ; worker consomme via l'API | 4–6 |
+| 6b | Agents via l'API | Le cv_agent (puis les autres agents) lit le job et écrit ses documents de candidature par l'API (token à scopes), plus aucun import de `core` hors `llm`/`paths` côté agent ; la garde de frontière (spec 035) est resserrée en conséquence. Prérequis de l'étape 9 | 2–4 |
 | 7 | Ingestion via API | `core/scrape.py` → `/ingest/batch` derrière `INGEST_VIA_API` ; `BaseScraper` sans `JobStorage` ; une nuit en double pour comparer | 4–6 |
 
 ### Phase D — Front et chat
 
 | # | Étape | Contenu | Jours |
 |---|-------|---------|-------|
-| 8 | Front `web/` | Page par page (feed lecture d'abord), chaque page = spec + mockup validé ; Streamlit reste référence | 15–25 |
-| 9 | Chat CV agent | Dès l'étape 6 + une fiche job dans `web/` ; peut démarrer en parallèle de l'étape 8 | à estimer |
-| 10 | Contraction | Suppression des anciennes colonnes, retrait des pages Streamlit migrées | 2–3 |
+| 8 | Front `web/` | Page par page (feed lecture d'abord), chaque page = spec + mockup validé ; Streamlit reste référence jusqu'à parité de chaque page. Objectif : **toutes** les pages (remplacement complet) | 15–25 |
+| 9 | Chat CV agent | Nœud d'édition ciblée dans le graphe, sessions `cv-sessions` streamées (SSE), page de session dans `web/` (aperçu cliquable + chat + révisions). Dès l'étape 6 + une fiche job dans `web/` ; en parallèle de l'étape 8 | 6–10 |
+| 10 | Contraction | Suppression des anciennes colonnes ; **retrait complet de Streamlit** (`tracker.py`, `tracker_views/`, dépendance `streamlit`, service `tracker` du compose) une fois toutes les pages migrées | 2–3 |
 
-**Total parité : ~42–65 jours de travail** (étape 1 réévaluée à 3–4 jours le 2026-10-03 après lecture des chemins sensibles). Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
+**Total : ~50–79 jours de travail**, chat CV et passage des agents par l'API inclus (réestimé le 2026-10-09 ; l'ancien total de 42–65 n'incluait ni l'étape 9 ni l'étape 6b). Mesure à date : étapes 0 à 1c faites en ~6 jours de calendrier, conforme aux estimations. Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
 
 ## Points ouverts
 
 - Stack du front `web/` (React/Vite pressenti) — à confirmer avant l'étape 8.
 - Emplacement du checkpointer `cv_agent_checkpoints.sqlite` sur le volume `job_data` + inclusion dans les backups (avant étape 9).
-- Amendements constitution : principe III (couture `user_id`), principe I (périmètre plateforme), contraintes d'architecture (API, nouvelles dépendances FastAPI/uvicorn/pydantic).
+- ~~Amendements constitution~~ — faits (v2.0.0 le 2026-10-03, v2.0.1 le 2026-10-08).
+- La règle constitutionnelle « UI Streamlit-native » devra être amendée avant l'étape 8 (stack de `web/`).

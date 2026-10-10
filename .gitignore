@@ -38,3 +38,8 @@ data/jobs_*.csv
 
 # ORP form filler (données personnelles — ne pas publier)
 fill_orp_pdf.py
+
+# Offres d'emploi et notes de candidature (données personnelles — elles vont
+# dans Nextcloud/Documents/01 Job/Job applications/, jamais dans le dépôt)
+offre_*.md
+offre_*.pdf
