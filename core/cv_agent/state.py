@@ -27,6 +27,9 @@ class CVAgentState(TypedDict, total=False):
     reference: str          # raw job_id | url | pasted posting text
     profile_id: str         # active profile id (fallback DEFAULT_PROFILE_ID)
     force_letter: bool      # --letter: draft a letter even if the posting doesn't ask
+    thread_id: str          # deterministic checkpoint key (seeded by the CLI; surfaced in review.json)
+    job_title: str          # job title (--title); required for --paste --auto — drives job_id + folder
+    job_company: str        # company name (--company); required for --paste --auto — drives job_id + folder
 
     # ── resolve_reference / refresh_context ────────────────────────────────
     entry_kind: str         # "id" | "url" | "paste" (recorded for audit)
@@ -75,6 +78,10 @@ class CVAgentState(TypedDict, total=False):
 
     # ── render ─────────────────────────────────────────────────────────────
     output_paths: dict      # {json, docx, pdf, local_dir}
+
+    # ── lint (deterministic zero-LLM check of the rendered CV, spec 036) ───
+    lint: list[dict]        # [{id, status, detail}] — 9 checks; last-writer-wins
+    lint_ok: bool           # all(r["status"] == "pass") — derived in code (§IV)
 
     # ── publish (optional WebDAV step; None when CV_NC_* unset) ────────────
     nextcloud_web_url: str  # browser Files-app URL of the published folder

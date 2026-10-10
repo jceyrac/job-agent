@@ -12,7 +12,7 @@ load_dotenv()
 from core.notifier import send_email_digest, export_joplin
 from core.paths import DB_PATH, OUTPUT_DIR
 from core.profiles import SearchProfile
-from core.job_actions import extract_one, score_one, _dict_to_posting, _discover_contacts
+from core.job_actions import extract_one, score_one, _discover_contacts
 from core.scorer import extract_job_fields, evaluate_for_profile
 from core.title_gate import title_matches_profile
 from core.storage import JobStorage

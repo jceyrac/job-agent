@@ -205,7 +205,7 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` â
 
 <!-- SPECKIT START -->
 Current feature: **CV agent review loop** (`specs/036-cv-agent-review-loop/`, not a roadmap step)
-- Spec: `specs/036-cv-agent-review-loop/spec.md` (draft â€” clarify next)
-- Plan: (pending)
-- Tasks: (pending)
+- Spec: `specs/036-cv-agent-review-loop/spec.md` (clarified)
+- Plan: `specs/036-cv-agent-review-loop/plan.md`
+- Tasks: `specs/036-cv-agent-review-loop/tasks.md`
 <!-- SPECKIT END -->

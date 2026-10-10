@@ -30,8 +30,8 @@ from bs4 import BeautifulSoup
 from langgraph.types import interrupt
 
 from core import llm
-from core.models import JobPosting
-from core.paths import DB_PATH
+from core.models import JobPosting, posting_from_dict
+from core.paths import CV_PIPELINE_DIR, DB_PATH
 from core.scorer import extract_job_fields, evaluate_for_profile
 from core.storage import JobStorage
 
@@ -47,9 +47,8 @@ from core.cv_agent.prompts import (
 )
 from core.cv_agent.nextcloud_publish import publish_application
 from core.cv_agent.renderer import default_output_root, load_master, render_documents
-
-# Reconstruct a JobPosting from a DB row (job_actions' round-trip helper).
-from core.job_actions import _dict_to_posting
+from core.cv_agent.lint import retryable_failures, run_lint
+from core.cv_agent.review import write_review
 
 REVISION_LIMIT = 3  # hard integer bound on the revise loop (FR-010 / FR-012)
 
@@ -242,7 +241,7 @@ def resolve_reference(state: dict) -> dict:
                 "If this job only exists on the Live server, pass its URL or "
                 "use --paste instead."
             )
-        job = _dict_to_posting(row)
+        job = posting_from_dict(row)
         score_result = db.get_score_result(job.id, profile_id)
         return {
             "entry_kind": "id",
@@ -256,9 +255,15 @@ def resolve_reference(state: dict) -> dict:
     if kind == "url":
         return _persist_and_populate(_fetch_url_job(reference), db, profile_id, "url")
 
-    # paste: the reference *is* the posting text (from stdin).
-    job = JobPosting(source="paste", title="", company="", location="", url="",
-                     description=reference[:3000])
+    # paste: the reference *is* the posting text (from stdin). Title/company are
+    # seeded by the CLI (--title/--company, or an up-front prompt) because they
+    # drive job_id and the output folder — never LLM-extracted (Constitution §IV).
+    job = JobPosting(
+        source="paste",
+        title=(state.get("job_title") or "").strip(),
+        company=(state.get("job_company") or "").strip(),
+        location="", url="", description=reference[:3000],
+    )
     return _persist_and_populate(job, db, profile_id, "paste")
 
 
@@ -585,7 +590,59 @@ def render(state: dict) -> dict:
     }
 
 
-# ── node 12: publish (deterministic, optional) ─────────────────────────────
+# ── node 12: lint (deterministic) ──────────────────────────────────────────
+
+def _load_lint_allowlist() -> dict:
+    """Personal lint allowlist from a sidecar next to the master (clarify Q2).
+
+    The master carries the factual roles/figures, but an *extra* role or number
+    the agent may legitimately produce is allowlisted in ``cv_lint_allowlist.json``
+    in ``.cv_pipeline/``. It is personal data — never committed. Absent/unknown →
+    ``{}`` (the master alone is the allowlist).
+    """
+    sidecar = os.path.join(CV_PIPELINE_DIR, "cv_lint_allowlist.json")
+    if not os.path.isfile(sidecar):
+        return {}
+    try:
+        with open(sidecar, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def lint(state: dict) -> dict:
+    """Deterministic zero-LLM lint of the rendered CV (spec 036, US3/FR-008).
+
+    Reads the rendered ``cv_data_<slug>.json`` + PDF from ``output_paths`` and the
+    master (the factual source of truth), runs the nine pure-Python checks, and
+    writes ``lint`` / ``lint_ok``. On a retryable failure it also appends a
+    human-readable note to ``refine_notes`` (the existing list reducer) so the
+    revise loop can act on it (US5). No LLM, no network, no subprocess except the
+    ``pypdf`` page count (Constitution §IV: structure is deterministic).
+    """
+    output_paths = state.get("output_paths") or {}
+    json_path = output_paths.get("json")
+    pdf_path = output_paths.get("pdf")
+    if not json_path or not os.path.isfile(json_path):
+        return {"lint": [], "lint_ok": False}
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            rendered_data = json.load(f)
+    except Exception:
+        return {"lint": [], "lint_ok": False}
+
+    results, all_pass = run_lint(
+        rendered_data, pdf_path, load_master(), _load_lint_allowlist()
+    )
+    out = {"lint": results, "lint_ok": all_pass}
+    retryable = retryable_failures(results)
+    if retryable:
+        out["refine_notes"] = [f"lint: {r['id']} — {r['detail']}" for r in retryable]
+    return out
+
+
+# ── node 13: publish (deterministic, optional) ─────────────────────────────
 
 def publish(state: dict) -> dict:
     """Publish the rendered files to Nextcloud over WebDAV (FR-013).
@@ -610,7 +667,7 @@ def publish(state: dict) -> dict:
     }
 
 
-# ── node 13: approval_gate (gate) ──────────────────────────────────────────
+# ── node 14: approval_gate (gate) ──────────────────────────────────────────
 
 def approval_gate(state: dict) -> dict:
     """Second human-in-the-loop gate (FR-012). Pauses after render+publish.
@@ -623,6 +680,7 @@ def approval_gate(state: dict) -> dict:
         "nextcloud_web_url": state.get("nextcloud_web_url"),
         "reject_count": len(state.get("refine_notes") or []),
     }
+    write_review(state)  # fresh bundle on disk before every pause (FR-006)
     decision = interrupt(payload)
     if not isinstance(decision, dict):
         decision = {"approved": False}
@@ -634,7 +692,7 @@ def approval_gate(state: dict) -> dict:
     return out
 
 
-# ── node 14: file_and_record (deterministic) ───────────────────────────────
+# ── node 15: file_and_record (deterministic) ───────────────────────────────
 
 def file_and_record(state: dict) -> dict:
     """Record the application and mark the job ready (FR-013, research §6).
@@ -680,6 +738,21 @@ def route_after_critique(state: dict) -> str:
     if state.get("needs_revision") and state.get("revision_count", 0) < REVISION_LIMIT:
         return "tailor_cv"
     return "render"
+
+
+def route_after_lint(state: dict) -> str:
+    """Retryable lint failure under the cap → tailor_cv; else publish (FR-008).
+
+    This is a **conditional edge** — the retryable check set and the
+    ``REVISION_LIMIT`` bound are decided here in code, never by the model
+    (Constitution §IV). It shares the single ``revision_count`` reducer with the
+    critique loop, so a lint-driven revise counts against the same cap.
+    """
+    if state.get("revision_count", 0) < REVISION_LIMIT and retryable_failures(
+        state.get("lint") or []
+    ):
+        return "tailor_cv"
+    return "publish"
 
 
 def route_after_approval(state: dict) -> str:

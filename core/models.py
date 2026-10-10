@@ -58,6 +58,11 @@ class JobPosting:
     @property
     def id(self) -> str:
         """Deterministic ID derived from canonical URL (or raw URL, or title+company+source as fallback)."""
+        if not self.canonical_url and not self.url and (not self.title or not self.company):
+            raise ValueError(
+                "cannot compute job id: no URL and title or company is empty — "
+                "this would collide with another posting missing the same field"
+            )
         key = self.canonical_url or self.url or f"{self.title}::{self.company}::{self.source}"
         return hashlib.sha256(key.encode()).hexdigest()[:20]
 
@@ -107,3 +112,53 @@ class JobFilter:
     company_sizes: list[str] = field(default_factory=list)    # OR filter, empty = no filter
     contract_types: list[str] = field(default_factory=list)   # OR filter, empty = no filter
     allowed_geo_zones: list[str] = field(default_factory=list)  # OR filter, empty = no filter
+
+
+# Relocated from core.job_actions._dict_to_posting (spec 036, FR-009) — the
+# agents import this public name instead of the private helper, pinning the
+# agent ↔ domain boundary.
+def posting_from_dict(d: dict) -> JobPosting:
+    """Reconstruct a JobPosting from a DB row dict (for storage write calls).
+    Company-level fields (country, sector, size) come from companies table joins,
+    not from the jobs table — they are absent from raw jobs rows after Phase 5.
+    """
+    posted_date = None
+    raw_date = d.get("posted_date")
+    if raw_date:
+        try:
+            posted_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            pass
+    extracted_at = d.get("extracted_at")
+    if extracted_at:
+        try:
+            extracted_at = datetime.strptime(str(extracted_at)[:19], "%Y-%m-%dT%H:%M:%S")
+        except (ValueError, TypeError):
+            extracted_at = None
+    return JobPosting(
+        source=d.get("source") or "",
+        title=d.get("title") or "",
+        company=d.get("company") or "",
+        location=d.get("location") or "",
+        url=d.get("url") or "",
+        posted_date=posted_date,
+        description=d.get("description"),
+        tags=[],
+        salary=None,
+        work_mode=d.get("work_mode"),
+        base_location=d.get("base_location"),
+        summary=d.get("summary"),
+        company_size=d.get("company_size"),
+        contract_type=d.get("contract_type"),
+        geo_zone=d.get("geo_zone"),
+        country_code=d.get("country_code"),
+        salary_text=d.get("salary_text"),
+        comp_annual_eur=d.get("comp_annual_eur"),
+        company_country=d.get("company_country"),
+        industry_sector=d.get("industry_sector"),
+        language_required=d.get("language_required"),
+        extracted_at=extracted_at,
+        extracted_by=d.get("extracted_by"),
+        company_summary=d.get("company_summary"),
+        company_website=d.get("company_website"),
+    )

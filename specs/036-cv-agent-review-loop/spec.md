@@ -81,14 +81,29 @@ command and get a finished draft plus a review bundle, without answering any
 prompt.
 
 **Acceptance**
-1. `python -m core.cv_agent.cli --paste --auto [--contact swiss|french] [--directives "..."] [--title "..."] < posting.txt`
+1. `python -m core.cv_agent.cli --paste --auto --title "<job title>" --company "<company>" [--contact swiss|french] [--directives "..."] < posting.txt`
    resumes `analysis_gate` automatically with `decision=proceed` and the given
    overrides, runs to `approval_gate`, writes `review.json`, and exits 0 with
-   the checkpoint **left pending** at `approval_gate`.
+   the checkpoint **left pending** at `approval_gate`. `--title`/`--company`
+   are **required** for `--paste --auto` — they are the *job* title/company
+   (job-id inputs), not the CV header `title_override`.
 2. Last stdout line: `CV_AGENT_RESULT review <review.json path> <thread_id>`.
 3. `--auto` never auto-approves: nothing is recorded and the job status is not
    changed until an explicit approve (Story 2).
 4. Without `--auto`, behaviour is unchanged (interactive gates).
+
+**Scope note (2026-10-10)** — closes the pre-existing spec-029 `--paste` gap that
+`--auto` made reachable. A `--paste` entry starts with empty title/company (the
+scorer never fills them), and `JobPosting.id` derives deterministically from
+`title::company::source` (no URL on a paste). Two empty-title/company pastes
+therefore collided on one id (`b8d4448902a15c307dd9`) and one
+`cv_outputs/<Company - Role>/` folder, silently clobbering each other. Fix:
+`--paste --auto` **requires** `--title` and `--company` (fail fast, before any LLM
+call); `JobPosting.id` raises when title and company are both empty with no URL; and
+the renderer refuses to overwrite an existing `<Company - Title>` folder whose stored
+`job_id` differs. Interactive `--paste` is unchanged at the gate — the CLI collects
+title/company up-front (the same two fields the gate already required) so job_id is
+correct on that path too.
 
 ### User Story 2 — Approve or reject a pending run non-interactively (Priority: P1)
 
@@ -176,7 +191,7 @@ be moved to its own repo at no cost if that ever becomes worth it.
 
 ## Requirements
 
-- **FR-001** `--auto` flag with `--contact`, `--directives`, `--title` mapping onto the existing `analysis_gate` resume fields (`proposed_profile`, `user_directives`, `title_override`).
+- **FR-001** `--auto` flag with `--contact`, `--directives`, `--title`, `--company`. `--contact`/`--directives` map onto the `analysis_gate` resume fields (`proposed_profile`, `user_directives`); `--title`/`--company` seed the job's title/company (required for `--paste --auto` — job-id inputs, not the CV header `title_override`).
 - **FR-002** `--auto` stops at `approval_gate` and exits 0; the checkpoint stays resumable.
 - **FR-003** `--resume <thread_id>` with exactly one of `--approve` / `--reject "notes"`.
 - **FR-004** New deterministic module (e.g. `core/cv_agent/lint.py`) — no LLM calls, no network, unit-testable without the graph.

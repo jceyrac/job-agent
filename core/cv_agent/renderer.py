@@ -97,6 +97,29 @@ def _application_dir(job: dict, output_root: str) -> str:
     )
 
 
+def _refuse_clobber(outdir: str, job_id: str) -> None:
+    """Refuse to overwrite an existing application folder owned by another job.
+
+    The per-application folder is named ``<Company> - <Title>``; two distinct
+    postings can resolve to the same name only if their title/company collide.
+    We record the owning ``job_id`` inside the folder and refuse a render whose
+    ``job_id`` differs (spec 036, US1 — closes the spec-029 ``--paste`` gap that
+    let two empty-title/company pastes share one folder and one id).
+    """
+    if not job_id:
+        return
+    marker = os.path.join(outdir, "job_id")
+    if os.path.isfile(marker):
+        with open(marker, encoding="utf-8") as f:
+            existing = f.read().strip()
+        if existing and existing != job_id:
+            raise FileExistsError(
+                f"refusing to overwrite {outdir!r}: it belongs to job {existing}, "
+                f"not {job_id} — check --title/--company (two postings resolved to "
+                f"the same <Company - Title> folder)"
+            )
+
+
 def render_documents(cv_content: dict, proposed_profile: str, slug: str, job: dict, output_root: str,
                      title_override: str = "") -> dict:
     """Render the tailored CV to .json/.docx/.pdf into the job's subfolder of
@@ -132,7 +155,10 @@ def render_documents(cv_content: dict, proposed_profile: str, slug: str, job: di
     # The working folder holds all three deliverables (.json/.docx/.pdf); the
     # publish step then pushes them to Nextcloud via WebDAV (host-agnostic).
     outdir = _application_dir(job, output_root)
+    _refuse_clobber(outdir, (job.get("id") or "").strip())
     os.makedirs(outdir, exist_ok=True)
+    with open(os.path.join(outdir, "job_id"), "w", encoding="utf-8") as f:
+        f.write((job.get("id") or "") + "\n")
     data_path = os.path.join(outdir, f"cv_data_{slug}.json")
     with open(data_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

@@ -9,9 +9,11 @@ Fixed pipeline (also in ``contracts/node-io-contract.md``)::
           └─ proceed/adjust ──► tailor_cv → draft_cover_letter
                                 → draft_recruiter_message → self_critique
                                     ├─ needs_revision && revision_count < 3 ─► tailor_cv
-                                    └─ else ─► render → publish → approval_gate
-                                        ├─ approve ─► file_and_record ─► END
-                                        └─ reject (bounded) ─► tailor_cv
+                                    └─ else ─► render → lint
+                                        ├─ retryable fail && revision_count < 3 ─► tailor_cv
+                                        └─ else ─► publish → approval_gate
+                                            ├─ approve ─► file_and_record ─► END
+                                            └─ reject (bounded) ─► tailor_cv
 
 **HITL mechanics (the reusable foundation).** The two gates are terminal
 interactions. Each gate node calls ``langgraph.types.interrupt(payload)`` to pause
@@ -38,7 +40,7 @@ _NODE_NAMES = (
     "resolve_reference", "refresh_context", "extract_requirements",
     "analyze_and_plan", "analysis_gate", "mark_skipped", "tailor_cv",
     "draft_cover_letter", "draft_recruiter_message", "self_critique",
-    "render", "publish", "approval_gate", "file_and_record",
+    "render", "lint", "publish", "approval_gate", "file_and_record",
 )
 
 
@@ -82,8 +84,14 @@ def compile_graph(checkpointer):
         {"tailor_cv": "tailor_cv", "render": "render"},
     )
 
-    # Render → publish → approval_gate → conditional edge (approve vs bounded reject).
-    g.add_edge("render", "publish")
+    # Render → lint → (conditional: retryable revise vs publish) → approval_gate
+    # → conditional edge (approve vs bounded reject).
+    g.add_edge("render", "lint")
+    g.add_conditional_edges(
+        "lint",
+        nodes.route_after_lint,
+        {"tailor_cv": "tailor_cv", "publish": "publish"},
+    )
     g.add_edge("publish", "approval_gate")
     g.add_conditional_edges(
         "approval_gate",

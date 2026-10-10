@@ -6,7 +6,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-from core.models import JobPosting
+from core.models import JobPosting, posting_from_dict
 from core.paths import DB_PATH
 from core.profiles import ALL_PROFILES, SearchProfile
 from core.scorer import extract_job_fields, evaluate_for_profile
@@ -16,53 +16,6 @@ from core.storage import JobStorage
 # ---------------------------------------------------------------------------
 # Shared helpers (moved from score.py to break circular import)
 # ---------------------------------------------------------------------------
-
-def _dict_to_posting(d: dict) -> JobPosting:
-    """Reconstruct a JobPosting from a DB row dict (for storage write calls).
-    Company-level fields (country, sector, size) come from companies table joins,
-    not from the jobs table — they are absent from raw jobs rows after Phase 5.
-    """
-    posted_date = None
-    raw_date = d.get("posted_date")
-    if raw_date:
-        try:
-            posted_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            pass
-    extracted_at = d.get("extracted_at")
-    if extracted_at:
-        try:
-            extracted_at = datetime.strptime(str(extracted_at)[:19], "%Y-%m-%dT%H:%M:%S")
-        except (ValueError, TypeError):
-            extracted_at = None
-    return JobPosting(
-        source=d.get("source") or "",
-        title=d.get("title") or "",
-        company=d.get("company") or "",
-        location=d.get("location") or "",
-        url=d.get("url") or "",
-        posted_date=posted_date,
-        description=d.get("description"),
-        tags=[],
-        salary=None,
-        work_mode=d.get("work_mode"),
-        base_location=d.get("base_location"),
-        summary=d.get("summary"),
-        company_size=d.get("company_size"),
-        contract_type=d.get("contract_type"),
-        geo_zone=d.get("geo_zone"),
-        country_code=d.get("country_code"),
-        salary_text=d.get("salary_text"),
-        comp_annual_eur=d.get("comp_annual_eur"),
-        company_country=d.get("company_country"),
-        industry_sector=d.get("industry_sector"),
-        language_required=d.get("language_required"),
-        extracted_at=extracted_at,
-        extracted_by=d.get("extracted_by"),
-        company_summary=d.get("company_summary"),
-        company_website=d.get("company_website"),
-    )
-
 
 def _discover_contacts(job, description: str, company_id: int | None, db) -> tuple[int, int]:
     """Extract contacts from a job description via regex + optional gated LLM.
@@ -215,7 +168,7 @@ def extract_one(job_id: str) -> dict | None:
     if row is None:
         return None
 
-    job = _dict_to_posting(row)
+    job = posting_from_dict(row)
     if job.extracted_at is not None:
         return {"status": "already_extracted"}
 
@@ -291,7 +244,7 @@ def score_one(job_id: str, profile_id: str | None = None) -> dict | None:
         if ext is None or ext.get("status") == "error":
             return ext or {"status": "error", "error": "extraction failed"}
         row = db.get_job_for_prepare(job_id)
-    job = _dict_to_posting(row)
+    job = posting_from_dict(row)
     result = evaluate_for_profile(job, profile)
 
     if result is None:

@@ -6,6 +6,8 @@ Run::
     python -m cv_agent.cli <url>               # live careers/ATS URL
     python -m cv_agent.cli --paste --letter    # pasted posting text from stdin
     python -m cv_agent.cli <job_id> --profile unified_jc
+    python -m cv_agent.cli --paste --auto --contact swiss < posting.txt   # zero-prompt → review.json
+    python -m cv_agent.cli --resume <thread_id> --approve                  # finish a paused run
 
 The CLI seeds the state, runs the graph, and — because the two gates pause the
 graph via ``interrupt()`` — drives the resume loop: it reads the pending interrupt
@@ -15,6 +17,7 @@ payload, prompts the human, and resumes with ``Command(resume=<decision>)``. See
 
 import argparse
 import hashlib
+import os
 import re
 import sys
 
@@ -37,6 +40,19 @@ def parse_args(argv):
     p.add_argument("--paste", action="store_true", help="read the posting text from stdin")
     p.add_argument("--letter", action="store_true", help="force a cover letter even if unrequested")
     p.add_argument("--profile", help="profile id (default: active profile)")
+    p.add_argument("--auto", action="store_true",
+                   help="run non-interactively to the approval gate (never auto-approves)")
+    p.add_argument("--contact", choices=("swiss", "french"),
+                   help="contact profile override (only meaningful with --auto)")
+    p.add_argument("--directives", help="free-text user directives (only with --auto)")
+    p.add_argument("--title", help="job title (required with --paste --auto; drives job_id + output folder)")
+    p.add_argument("--company", help="company name (required with --paste --auto; drives job_id + output folder)")
+    p.add_argument("--resume", metavar="THREAD_ID",
+                   help="resume a run paused at the approval gate (requires --approve/--reject)")
+    p.add_argument("--approve", action="store_true",
+                   help="approve the resumed run (with --resume)")
+    p.add_argument("--reject", metavar="NOTES",
+                   help="reject the resumed run with revision notes (with --resume)")
     return p.parse_args(argv)
 
 
@@ -55,6 +71,18 @@ def _thread_id(reference: str) -> str:
     if re.fullmatch(r"[0-9a-f]{20}", reference):
         return reference
     return hashlib.sha256(reference.encode()).hexdigest()[:20]
+
+
+def _paste_thread_id(title: str, company: str) -> str:
+    """The checkpoint thread key for a ``--paste`` entry: the job's own id.
+
+    Mirrors ``JobPosting.id`` (key = ``{title}::{company}::paste``, no URL), so a
+    paste's thread id *is* its job_id — exactly like an id entry. This replaces
+    ``sha256(pasted text)``, which changed every time the posting text was re-pasted
+    and could not be derived from ``--resume <job_id>`` (spec 036, US1).
+    """
+    key = f"{title}::{company}::paste"
+    return hashlib.sha256(key.encode()).hexdigest()[:20]
 
 
 def _interrupt_payload(snapshot):
@@ -165,30 +193,71 @@ def prompt_approval_gate(payload) -> dict:
 
 # ── driver ──────────────────────────────────────────────────────────────────
 
+def _review_path(state: dict) -> str:
+    """The ``review.json`` path written by ``approval_gate`` (spec 036, US4)."""
+    local_dir = (state.get("output_paths") or {}).get("local_dir", "")
+    return os.path.join(local_dir, "review.json") if local_dir else ""
+
+
 def run(args) -> int:
+    if args.resume:
+        if args.paste or args.reference:
+            print("error: --resume takes no job reference", file=sys.stderr)
+            return 2
+        if bool(args.approve) == (args.reject is not None):  # need exactly one
+            print("error: --resume requires exactly one of --approve / --reject", file=sys.stderr)
+            return 2
+        return _run_resume(args)
+    return _run_fresh(args)
+
+
+def _run_fresh(args) -> int:
     if not args.paste and not args.reference:
         print("error: provide a job_id or URL (or --paste)", file=sys.stderr)
         return 2
-    if not llm.is_configured():
-        print("CV_AGENT_RESULT error  LLM not configured (set LLM_API_KEY / DEEPSEEK_API_KEY)",
-              file=sys.stderr)
-        return 3
+
+    title = (args.title or "").strip()
+    company = (args.company or "").strip()
 
     if args.paste:
         reference = sys.stdin.read().strip()
         if not reference:
             print("error: --paste but no text on stdin", file=sys.stderr)
             return 2
+        if args.auto and (not title or not company):
+            print("error: --paste --auto requires --title and --company "
+                  "(job_id and the output folder are derived from them)", file=sys.stderr)
+            return 2
+        if not args.auto:
+            # interactive paste: collect the two fields now — they drive job_id,
+            # so the analysis gate can't be the first place they are set.
+            if not title:
+                title = _require_field("Job title")
+            if not company:
+                company = _require_field("Company")
     else:
         reference = args.reference
 
+    if not llm.is_configured():
+        print("CV_AGENT_RESULT error  LLM not configured (set LLM_API_KEY / DEEPSEEK_API_KEY)",
+              file=sys.stderr)
+        return 3
+
     db = JobStorage(paths.DB_PATH)
     profile_id = _resolve_profile_id(db, args.profile)
+
+    # The checkpoint thread key is the job's own id for a paste (derived from
+    # --title/--company), else the id-entry/URL rule. Computed once so the
+    # initial state and the checkpointer config can never disagree.
+    thread_id = _paste_thread_id(title, company) if args.paste else _thread_id(reference)
 
     initial = {
         "reference": reference,
         "profile_id": profile_id,
         "force_letter": bool(args.letter),
+        "thread_id": thread_id,
+        "job_title": title,
+        "job_company": company,
         "revision_count": 0,
         "refine_notes": [],
     }
@@ -198,7 +267,7 @@ def run(args) -> int:
             paths.data_path("cv_agent_checkpoints.sqlite")
         ) as saver:
             app = compile_graph(checkpointer=saver)
-            config = {"configurable": {"thread_id": _thread_id(reference)}}
+            config = {"configurable": {"thread_id": thread_id}}
 
             app.invoke(initial, config)
 
@@ -210,8 +279,20 @@ def run(args) -> int:
                 node = snapshot.next[0]
                 payload = _interrupt_payload(snapshot)
                 if node == "analysis_gate":
-                    app.invoke(Command(resume=prompt_analysis_gate(payload)), config)
+                    if args.auto:
+                        decision = {
+                            "decision": "proceed",
+                            "user_directives": args.directives or "",
+                            "title_override": "",
+                        }
+                        if args.contact:
+                            decision["proposed_profile"] = args.contact
+                        app.invoke(Command(resume=decision), config)
+                    else:
+                        app.invoke(Command(resume=prompt_analysis_gate(payload)), config)
                 elif node == "approval_gate":
+                    if args.auto:
+                        break  # never auto-approve; stop here for the reviewer
                     app.invoke(Command(resume=prompt_approval_gate(payload)), config)
                 else:
                     print(f"CV_AGENT_RESULT error  unexpected pause at {node}", file=sys.stderr)
@@ -228,8 +309,58 @@ def run(args) -> int:
     if final.get("decision") == "abort":
         print(f"CV_AGENT_RESULT aborted   {final.get('job_id')}")
         return 0
+    if args.auto:
+        # review line: path + thread_id so the reviewer can --resume later.
+        print(f"CV_AGENT_RESULT review    {_review_path(final)}  {final.get('thread_id')}")
+        return 0
     pdf = (final.get("output_paths") or {}).get("pdf")
     print(f"CV_AGENT_RESULT ok        {pdf}")
+    return 0
+
+
+def _run_resume(args) -> int:
+    thread_id = args.resume
+    try:
+        with SqliteSaver.from_conn_string(
+            paths.data_path("cv_agent_checkpoints.sqlite")
+        ) as saver:
+            app = compile_graph(checkpointer=saver)
+            config = {"configurable": {"thread_id": thread_id}}
+
+            snapshot = app.get_state(config)
+            if tuple(snapshot.next or ()) != ("approval_gate",):
+                print(f"CV_AGENT_RESULT error  thread {thread_id} not paused at approval_gate",
+                      file=sys.stderr)
+                return 5
+
+            decision = {"approved": bool(args.approve), "approval_notes": args.reject or ""}
+            app.invoke(Command(resume=decision), config)
+
+            # Run to the next stop: approve → END; reject → re-stop at approval_gate.
+            while True:
+                snapshot = app.get_state(config)
+                if not snapshot.next:  # END (approved)
+                    break
+                node = snapshot.next[0]
+                if node == "approval_gate":  # rejected → re-paused for another --resume
+                    break
+                print(f"CV_AGENT_RESULT error  unexpected pause at {node}", file=sys.stderr)
+                return 4
+
+            final = app.get_state(config).values
+    except KeyboardInterrupt:
+        print("CV_AGENT_RESULT error  interrupted", file=sys.stderr)
+        return 130
+    except Exception as e:
+        print(f"CV_AGENT_RESULT error  {e}", file=sys.stderr)
+        return 1
+
+    if args.approve:
+        pdf = (final.get("output_paths") or {}).get("pdf")
+        print(f"CV_AGENT_RESULT ok        {pdf}")
+        return 0
+    # reject re-stopped at approval_gate → review line again.
+    print(f"CV_AGENT_RESULT review    {_review_path(final)}  {final.get('thread_id')}")
     return 0
 
 
