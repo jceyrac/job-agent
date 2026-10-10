@@ -203,8 +203,11 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ## Current focus (as of 2026-10-10)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Next: step 1d (archiving), then step 2 (assainissement).
+**API migration roadmap** — `docs/roadmap-api.md`. Next: step 1d (remove dead files — spec 035), then step 2 (assainissement).
 
 <!-- SPECKIT START -->
-No active spec — spec 034 (step 1c) shipped 2026-10-10; step 1d (archiving) is next and not yet specified.
+Current feature: **Remove Dead Files** (`specs/035-remove-dead-files/`, roadmap step 1d)
+- Spec: `specs/035-remove-dead-files/spec.md`
+- Plan: `specs/035-remove-dead-files/plan.md`
+- Tasks: `specs/035-remove-dead-files/tasks.md` (ready — run /speckit-implement)
 <!-- SPECKIT END -->
