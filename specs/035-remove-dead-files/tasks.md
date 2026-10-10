@@ -21,7 +21,7 @@ regression net (FR-002); the full existing suite is the rest of the net.
 
 **Purpose**: Record the green baseline before any change.
 
-- [ ] T001 Run `python -m pytest tests/` and confirm the full suite is green; note the count. Confirm the six target files exist (`ls *.py` shows the five `.py` one-offs plus `tracker.py`; `ls CONTEXT.md`).
+- [X] T001 Run `python -m pytest tests/` and confirm the full suite is green; note the count. Confirm the six target files exist (`ls *.py` shows the five `.py` one-offs plus `tracker.py`; `ls CONTEXT.md`).
 
 ---
 
@@ -35,12 +35,12 @@ root `.py`; the full suite is green.
 
 ### Implementation (single commit, T007)
 
-- [ ] T002 [US1] `git rm` the six files: `migrate_expired_status.py`, `migrate_single_status.py`, `migrate_profile_independent_tracking.py`, `tracker_legacy.py`, `test_wellfound.py`, `CONTEXT.md` (FR-001, FR-005).
-- [ ] T003 [P] [US1] Update `tests/test_installable_project.py`: remove the one-off allow-list of the five root modules so the root-module guard allows only `tracker.py` (FR-002, SC-001).
-- [ ] T004 [P] [US1] Update `CLAUDE.md`: remove the two bullets referencing the removed files — the NEVER-modify bullet "Migration files (`migrate_*.py`)" and the Safe-to-modify bullet "`tracker_legacy.py` — legacy reference" (FR-003).
-- [ ] T005 [P] [US1] Create `docs/history.md` (FR-004, SC-003): for each of the six removed files, a line with name, one-line purpose, the last commit containing it, and the retrieval command `git show <sha>:<path>`.
-- [ ] T006 [US1] Validate (SC-001/002/003): `ls *.py` → only `tracker.py`; `python -m pytest tests/` green; negative fixture — temporarily add a stray root `.py`, confirm the guard fails, then remove it; `git show` retrieves one removed file using the SHA from `docs/history.md`.
-- [ ] T007 [US1] Commit US1 on `035-remove-dead-files` (single commit): `chore(spec-035): remove six dead files, drop root-module allow-list, add docs/history.md`.
+- [X] T002 [US1] `git rm` the six files: `migrate_expired_status.py`, `migrate_single_status.py`, `migrate_profile_independent_tracking.py`, `tracker_legacy.py`, `test_wellfound.py`, `CONTEXT.md` (FR-001, FR-005).
+- [X] T003 [P] [US1] Update `tests/test_installable_project.py`: remove the one-off allow-list of the five root modules so the root-module guard allows only `tracker.py` (FR-002, SC-001).
+- [X] T004 [P] [US1] Update `CLAUDE.md`: remove the two bullets referencing the removed files — the NEVER-modify bullet "Migration files (`migrate_*.py`)" and the Safe-to-modify bullet "`tracker_legacy.py` — legacy reference" (FR-003).
+- [X] T005 [P] [US1] Create `docs/history.md` (FR-004, SC-003): for each of the six removed files, a line with name, one-line purpose, the last commit containing it, and the retrieval command `git show <sha>:<path>`.
+- [X] T006 [US1] Validate (SC-001/002/003): `ls *.py` → only `tracker.py`; `python -m pytest tests/` green; negative fixture — temporarily add a stray root `.py`, confirm the guard fails, then remove it; `git show` retrieves one removed file using the SHA from `docs/history.md`.
+- [X] T007 [US1] Commit US1 on `035-remove-dead-files` (single commit): `chore(spec-035): remove six dead files, drop root-module allow-list, add docs/history.md`.
 
 **Checkpoint**: `python -m pytest tests/` green; root has only `tracker.py`; exactly one commit (T007).
 
