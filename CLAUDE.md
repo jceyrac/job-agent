@@ -201,11 +201,11 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ## Current focus (as of 2026-10-10)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Next: step 1d (remove dead files — spec 035), then step 2 (assainissement).
+**API migration roadmap** — `docs/roadmap-api.md`. Next: spec 036 (CV agent review loop), then step 2 (assainissement).
 
 <!-- SPECKIT START -->
-Current feature: **Remove Dead Files** (`specs/035-remove-dead-files/`, roadmap step 1d)
-- Spec: `specs/035-remove-dead-files/spec.md`
-- Plan: `specs/035-remove-dead-files/plan.md`
-- Tasks: `specs/035-remove-dead-files/tasks.md` (ready — run /speckit-implement)
+Current feature: **CV agent review loop** (`specs/036-cv-agent-review-loop/`, not a roadmap step)
+- Spec: `specs/036-cv-agent-review-loop/spec.md` (draft — clarify next)
+- Plan: (pending)
+- Tasks: (pending)
 <!-- SPECKIT END -->

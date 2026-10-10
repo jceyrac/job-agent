@@ -56,12 +56,12 @@ merge + deploy, health and the next scheduled cron are green.
 
 ### Implementation (deploy-gated, on verva — see `docs/migration-checklist.md`)
 
-- [ ] T008 [US2] `git push` `035-remove-dead-files`; on verva `scripts/staging.sh up <full-sha>`. Confirm the staging tracker on :8502 serves the backup copy; health OK; parity fingerprint identical (candidate vs prod image, same backup copy, same `--as-of`); a quick look at the feed renders. **STOP — hand over for my quick look.**
-- [ ] T009 [US2] `scripts/staging.sh down` (verify no staging container, image, volume or worktree remains). **STOP — hand over for my go.**
-- [ ] T010 [US2] After the go: ff-only merge of the SHA onto `main` (`git merge --ff-only <full-sha>`; refuse non-ff).
-- [ ] T011 [US2] Run the deploy command (`./scripts/deploy.sh` on verva — hand over for me to run); then verify `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA and the health check is OK.
-- [ ] T012 [US2] Next scheduled cron: the latest `runs` row (`run_type='full'`) has `status='success'` and `ran_at` from last night.
-- [ ] T013 [US2] Closing commit on `main` recording the release (docs).
+- [X] T008 [US2] `git push` `035-remove-dead-files`; on verva `scripts/staging.sh up <full-sha>`. Confirm the staging tracker on :8502 serves the backup copy; health OK; parity fingerprint identical (candidate vs prod image, same backup copy, same `--as-of`); a quick look at the feed renders. **STOP — hand over for my quick look.**
+- [X] T009 [US2] `scripts/staging.sh down` (verify no staging container, image, volume or worktree remains). **STOP — hand over for my go.**
+- [X] T010 [US2] After the go: ff-only merge of the SHA onto `main` (`git merge --ff-only <full-sha>`; refuse non-ff).
+- [X] T011 [US2] Run the deploy command (`./scripts/deploy.sh` on verva — hand over for me to run); then verify `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA and the health check is OK.
+- [X] T012 [US2] Next scheduled cron: the latest `runs` row (`run_type='full'`) has `status='success'` and `ran_at` from last night.
+- [X] T013 [US2] Closing commit on `main` recording the release (docs).
 
 **Checkpoint**: deployed SHA = staged SHA; health OK; cron green; tracker fully operational.
 
