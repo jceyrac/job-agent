@@ -106,7 +106,7 @@ exposes `core`, `core.scrapers.*`, `core.cv_agent`, `tracker_views`, `scripts`,
 - [X] T017 [P] [US2] Update `tests/test_core_module_refs.py` FR-004 allow-list from `{paths.py}` to `{core/paths.py}` (post-move). FR-005 and FR-014 need no change (FR-005 resolves the now-`core.`-prefixed names; FR-014 asserts `SCRAPERS_SRC_DIR` still exists — now `core/scrapers/`).
 - [X] T018 [P] [US2] Update docs (FR-012): `CLAUDE.md` (commands, key files, NEVER-modify list → `core/` paths), `docs/*.md` references, and the constitution Stable-core list to `core/` paths (PATCH wording + Sync Impact Report per Governance).
 - [X] T019 [US2] Validate (SC-002): `pip install -e ".[dev]"`; `python -m pytest tests/` green; `grep` finds no root-form import of a moved module; `python -m core.cv_agent.cli --help` works and prints the same `CV_PIPELINE_DIR`/`MASTER_CV_PATH` (SC-004).
-- [ ] T020 [US2] Commit Phase B on `034-core-package` (single commit): `refactor(spec-034): move domain into core/ package`.
+- [X] T020 [US2] Commit Phase B on `034-core-package` (single commit): `refactor(spec-034): move domain into core/ package`.
 
 **Checkpoint**: one commit (T020) containing T010–T019; suite green; no domain module at the root.
 
@@ -123,12 +123,12 @@ deploy, health check, parity and next-night cron are green.
 
 ### Implementation (deploy-gated, on verva — see `docs/migration-checklist.md`)
 
-- [ ] T021 [US3] `git push` `034-core-package`; on verva `scripts/staging.sh up <full-sha>`. Confirm the staging tracker on 8502 serves the backup; click every background-launch button (Jobs: fetch/score/extract; Settings: scrape/monitored-only/score/extract) and confirm each runs `python -m core.*`; open `/job_detail?id=<id>`. **STOP — hand over for my manual checks.**
-- [ ] T022 [US3] Parity fingerprint identical (candidate vs prod image, same backup copy, same `--as-of`); `staging.sh run python -m core.scrape --source <one cheap source>` and `staging.sh run python -m core.score --extract` complete normally; `scripts/staging.sh down`. **STOP — hand over for my go.**
-- [ ] T023 [US3] After the go: ff-only merge of the SHA onto `main` (`git merge --ff-only <full-sha>`; refuse non-ff).
-- [ ] T024 [US3] Run the deploy command (`./scripts/deploy.sh` on verva); then verify `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA, `core.seed` ran OK, health check OK, and `tailscale serve --bg --tcp=8501 tcp://127.0.0.1:8501` is up.
-- [ ] T025 [US3] Next-night cron: the latest `runs` row (`run_type='full'`) has `status='success'`, produced by `docker compose run --rm agent` running `python -m core.main`. Confirm parity green and the tracker smoke test (feed, status change, job detail).
-- [ ] T026 [US3] Closing commit on `main` recording the release (docs), mirroring spec 033's `docs(spec-033): close …`.
+- [X] T021 [US3] `git push` `034-core-package`; on verva `scripts/staging.sh up <full-sha>`. Confirm the staging tracker on 8502 serves the backup; click every background-launch button (Jobs: fetch/score/extract; Settings: scrape/monitored-only/score/extract) and confirm each runs `python -m core.*`; open `/job_detail?id=<id>`. **STOP — hand over for my manual checks.**
+- [X] T022 [US3] Parity fingerprint identical (candidate vs prod image, same backup copy, same `--as-of`); `staging.sh run python -m core.scrape --source <one cheap source>` and `staging.sh run python -m core.score --extract` complete normally; `scripts/staging.sh down`. **STOP — hand over for my go.**
+- [X] T023 [US3] After the go: ff-only merge of the SHA onto `main` (`git merge --ff-only <full-sha>`; refuse non-ff).
+- [X] T024 [US3] Run the deploy command (`./scripts/deploy.sh` on verva); then verify `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA, `core.seed` ran OK, health check OK, and `tailscale serve --bg --tcp=8501 tcp://127.0.0.1:8501` is up.
+- [X] T025 [US3] Next-night cron: the latest `runs` row (`run_type='full'`) has `status='success'`, produced by `docker compose run --rm agent` running `python -m core.main`. Confirm parity green and the tracker smoke test (feed, status change, job detail).
+- [X] T026 [US3] Closing commit on `main` recording the release (docs), mirroring spec 033's `docs(spec-033): close …`.
 
 **Checkpoint**: deployed SHA = staged SHA; cron green; tracker fully operational.
 

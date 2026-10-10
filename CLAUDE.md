@@ -201,13 +201,10 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-08)
+## Current focus (as of 2026-10-10)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Next: step 1c (move domain into `core/` — spec 034), then step 1d (archiving).
+**API migration roadmap** — `docs/roadmap-api.md`. Next: step 1d (archiving), then step 2 (assainissement).
 
 <!-- SPECKIT START -->
-Current feature: **Domain Package `core/`** (`specs/034-core-package/`, roadmap step 1c)
-- Spec: `specs/034-core-package/spec.md`
-- Plan: `specs/034-core-package/plan.md`
-- Tasks: `specs/034-core-package/tasks.md` (ready — run /speckit-implement)
+No active spec — spec 034 (step 1c) shipped 2026-10-10; step 1d (archiving) is next and not yet specified.
 <!-- SPECKIT END -->
