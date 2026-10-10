@@ -43,7 +43,7 @@ The self-critique node uses the same model that wrote the draft, so it is weak
 at catching its own factual drift. Hard rules are therefore moved into a
 **deterministic, zero-LLM lint**.
 
-## Context (verified against source on branch `034-core-package`, 2026-10-09)
+## Context (verified against source at `9fab5fb`, 2026-10-10)
 
 - `core/cv_agent/cli.py` — `run()` invokes the graph, then loops on pending
   interrupts: `analysis_gate` → `prompt_analysis_gate()` (proceed / adjust /
