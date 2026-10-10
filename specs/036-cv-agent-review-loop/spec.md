@@ -1,7 +1,7 @@
 # Feature Specification: CV agent review loop (auto mode, deterministic lint, review bundle)
 
 **Feature branch**: `036-cv-agent-review-loop`
-**Status**: Draft (2026-10-09) — renumbered from 035 to 036 on 2026-10-10 (035 = roadmap step 1d)
+**Status**: Clarified (2026-10-10) — ready for `/speckit.plan`
 **Scope**: `core/cv_agent/` only. **Not part of the API roadmap** (`docs/roadmap-api.md`).
 
 ---
@@ -62,6 +62,16 @@ at catching its own factual drift. Hard rules are therefore moved into a
   never by the LLM.
 - Existing test: `tests/test_cv_agent_gate.py`.
 
+## Clarifications
+
+### Session 2026-10-10
+
+- Q: PDF page-count library → A: `pypdf` (already in `requirements.txt` as `pypdf>=3.0.0`, so present in both dev and the Docker image). Justify the choice in `plan.md` per Constitution V.
+- Q: Lint config location → A: split. Generic style rules (banned phrases, punctuation) live in `core/cv_agent/` (tracked). Personal data (allowed numbers, employers, claims) MUST NOT be in the repo (public on GitHub) — derive it from `cv_data_master.json` at runtime, or keep it next to the master in `.cv_pipeline/`.
+- Q: Em-dashes in master role titles → A: fix the master once (`—` → `–`). Verified neither `render_cv.js` nor `core/cv_agent/` splits role titles on `" — "` (titles render verbatim), so the fix is safe.
+- Q: job-agent project numbers → A: add the job-agent project to the master with current, verified figures (23 enabled scrapers today, not "11 sources") and a reference date.
+- Q: DEV DB on the Mac → A: yes, acceptable — application records written by the CV agent on the Mac stay in the local DEV DB and are not visible in the live tracker (status still updated manually in prod); resolved by roadmap step 6b (agents write through the API).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Run to review with zero terminal interaction (Priority: P1)
@@ -102,17 +112,17 @@ Checks (each individually unit-tested with a seeded defect):
 
 | id | Rule |
 |----|------|
-| `pages` | PDF has ≤ 2 pages |
+| `pages` | PDF has ≤ 2 pages (page count read with `pypdf`) |
 | `em_dash` | No `—` (U+2014) in any text field (title, profile, competencies, role title/sub/bullets, education). En-dash `–` in dates is allowed |
 | `facts_numbers` | Every numeric token in profile/competencies/bullets (e.g. `30%`, `£22M`, `~70%`, `1,000+`, `5–10`) appears in `cv_data_master.json` or in an allowlist |
-| `roles_match_master` | Every role's `dates` and `sub` (employer + location) match a master role exactly; allowlisted extra roles (e.g. the job-agent personal project) permitted |
+| `roles_match_master` | Every role's `dates` and `sub` (employer + location) match a master role exactly; allowlisted extra roles permitted |
 | `current_role_first` | A role whose dates end in `Present` is first |
 | `contact_consistency` | Profile/relocation text does not claim a base contradicting the contact profile (e.g. "Based in Lausanne" with `FR`) |
 | `in_progress_courses` | Any allowlisted in-progress course (Hugging Face AI Agents) is labelled "in progress" |
 | `banned_phrases` | None of a configurable list (e.g. "fully willing to relocate") |
 | `interests_present` | Interests section present |
 
-Allowlists and banned phrases live in one small config file (location decided at plan stage).
+Generic style rules (banned phrases, punctuation) live in one small config file under `core/cv_agent/` (tracked); personal allowlists (numbers, employers, claims) are derived from `cv_data_master.json` at runtime or kept next to the master in `.cv_pipeline/` — never committed to the repo.
 
 ### User Story 4 — One compact review bundle (Priority: P1)
 
@@ -180,7 +190,7 @@ be moved to its own repo at no cost if that ever becomes worth it.
 ## Non-goals
 
 - Anything API / `web/` / chat / tracker UI (roadmap steps 2–9).
-- DB schema changes; recording to the Live DB.
+- DB schema changes; recording to the Live DB — application records written by the CV agent on the Mac stay in the local DEV DB and are not visible in the live tracker (status still updated manually in prod); resolved by roadmap step 6b (agents write through the API).
 - An LLM-as-judge inside the agent; the reviewer (Claude in chat) stays outside the agent.
 - A golden-set regression runner (next spec, once this one is validated).
 - Changes to Nextcloud publication or to the scorer.
@@ -196,8 +206,4 @@ be moved to its own repo at no cost if that ever becomes worth it.
 
 ## Open questions (for `/speckit.clarify`)
 
-1. PDF page-count dependency: which library is already available in `.venv` and the Docker image (avoid adding one if possible)?
-2. Lint config location: next to the master in `~/AI-Suite/.cv_pipeline/` or in `core/cv_agent/`?
-3. `cv_data_master.json` role titles contain em-dashes (`Product Manager — Banking API`); fix the master once, or have the lint ignore master-inherited role titles?
-4. The job-agent personal-project role and its numbers (e.g. "11 sources") are not in the master: add them to the master, or to the allowlist?
-5. On the Mac, `--paste` persists the job into the local DEV DB (Live is on verva). Acceptable for this spec (recording to Live is out of scope)?
+All 5 open questions resolved in the Clarifications session (2026-10-10) — see `## Clarifications`.
