@@ -12,6 +12,7 @@ runtime surface and nothing is forgotten or accidentally published.
 
 import ast
 import os
+import subprocess
 import tomllib
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,11 +23,6 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # self-flag on its own string literals.
 SCAN_SKIP_DIRS = {".venv", ".git", "__pycache__", "specs"}
 SYS_PATH_ALLOW = {"scripts/backup_db.py"}
-
-# FR-007(b): the only root module legitimately excluded from py-modules is the
-# gitignored personal-data filler, which must never be packaged.
-ROOT_MODULE_ALLOW = {"fill_orp_pdf"}
-
 
 def _runtime_py_files():
     for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
@@ -72,15 +68,39 @@ def _declared_py_modules() -> set:
     return set(data["tool"]["setuptools"]["py-modules"])
 
 
+def _tracked_root_py_files() -> list[str]:
+    """Tracked ``*.py`` files at the repository root, via ``git ls-files``.
+
+    Only git-tracked files are checked, so untracked or gitignored files at the
+    root (e.g. the personal ``fill_orp_pdf.py``) are ignored. Fails clearly if
+    git is unavailable so the guard never silently passes.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--", "*.py"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        raise AssertionError(
+            "git is not available — cannot enumerate tracked root modules"
+        ) from None
+    if result.returncode != 0:
+        raise AssertionError(
+            "git ls-files failed — cannot enumerate tracked root modules:\n"
+            + (result.stderr.strip() or result.stdout.strip())
+        )
+    return [
+        path for path in result.stdout.splitlines()
+        if "/" not in path and path.endswith(".py")
+    ]
+
+
 def test_root_modules_declared_in_pyproject():
     declared = _declared_py_modules()
-    missing = []
-    for fn in sorted(os.listdir(REPO_ROOT)):
-        if not fn.endswith(".py"):
-            continue
-        name = fn[:-3]
-        if name in ROOT_MODULE_ALLOW:
-            continue
-        if name not in declared:
-            missing.append(fn)
+    missing = [
+        path for path in _tracked_root_py_files()
+        if path[:-3] not in declared
+    ]
     assert not missing, "root modules missing from pyproject.toml py-modules:\n" + "\n".join(missing)
