@@ -204,4 +204,7 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` â
 **API migration roadmap** â€” `docs/roadmap-api.md`. Next: step 2 (assainissement).
 
 <!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+at specs/037-single-db-access-path/plan.md
 <!-- SPECKIT END -->
