@@ -158,7 +158,7 @@ As the maintainer and as a future new user, I want the app to configure and chec
 ### Non-goals
 
 - No schema change; no `user_id` (step 3); no `user_companies` (step 3).
-- No change to the background-task mechanism (`subprocess` + thread) — step 2b, spec 038.
+- No change to the background-task mechanism (`subprocess` + thread) — step 2b, separate spec (number assigned when started; 038 is taken by `038-cv-contact-profile-eu-rule`).
 - No UI change (no mockup required): same screens, same actions, same results.
 - No change to `core/storage.py` existing methods' behaviour; only additions (and reuse).
 - No refactoring of `JobStorage` into repositories.
@@ -181,5 +181,5 @@ As the maintainer and as a future new user, I want the app to configure and chec
 
 ## Assumptions
 
-- No in-flight work on the touched UI files (spec 036 is merged; spec 038 not started).
+- No in-flight work on the touched UI files (spec 036 is merged; the step-2b spec is not started).
 - Deploy avoids the cron windows (07:00, 11:00, 16:00) and the month-end status batch.
