@@ -106,5 +106,10 @@ def call(
 
 
 def is_configured() -> bool:
-    """Return True if the LLM client is ready to use."""
-    return _client is not None
+    """Return True if the required LLM env vars are present and non-empty.
+
+    Reads the environment directly (not the import-time ``_client``), so a key
+    saved after import is reflected immediately. In-process ``call()`` still
+    uses the cached ``_client`` until the tracker restarts (spec 037 limitation).
+    """
+    return bool(os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY"))

@@ -109,3 +109,19 @@ def test_fr009_non_llm_key_flagged():
 
 def test_fr009_comment_flagged():
     assert _env_example_violations("# Groq API key\n") != []
+
+
+# ---------------------------------------------------------------------------
+# FR-007 — llm.is_configured() reads the environment, not the cached client
+# ---------------------------------------------------------------------------
+
+def test_fr007_is_configured_reads_env_live(monkeypatch):
+    """A key saved after import is reflected without re-importing the module."""
+    import core.llm as llm
+
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    assert llm.is_configured() is False
+
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    assert llm.is_configured() is True

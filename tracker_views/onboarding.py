@@ -6,7 +6,8 @@ Flow: Template → Questionnaire → CV → Generate → Review/Refine → Save
 import sys
 import streamlit as st
 
-from tracker_views.shared import get_db, set_secret, env_is_set, SECTOR_LABELS, COUNTRY_OPTIONS
+from core import llm
+from tracker_views.shared import get_db, set_secret, SECTOR_LABELS, COUNTRY_OPTIONS
 
 # ── Template defaults ─────────────────────────────────────────────────────
 # Each template pre-fills the questionnaire dict.  Empty fields use the
@@ -434,7 +435,7 @@ def _render_generate():
 
     # Guard: LLM_API_KEY must be set — offer inline entry (Settings is
     # unreachable during first-run gating, so the user must set it here).
-    if not env_is_set("LLM_API_KEY"):
+    if not llm.is_configured():
         st.info(
             "To write your scoring rubric, the app needs an LLM API key. "
             "It's used only on your machine."
