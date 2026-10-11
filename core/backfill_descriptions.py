@@ -2,11 +2,11 @@
 
 import json
 import re
-import sqlite3
 import time
 import sys
 
 from core.paths import DB_PATH
+from core.storage import JobStorage
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
@@ -71,12 +71,9 @@ def _fetch_description(url: str, source: str) -> str | None:
 
 
 def main():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    db = JobStorage(DB_PATH)
 
-    rows = conn.execute(
-        "SELECT id, url, source FROM jobs WHERE description IS NULL ORDER BY source, last_seen DESC"
-    ).fetchall()
+    rows = db.get_jobs_missing_description()
 
     if not rows:
         print("No jobs with NULL description — nothing to do.")
@@ -97,11 +94,7 @@ def main():
         description = _fetch_description(url, source)
 
         if description:
-            conn.execute(
-                "UPDATE jobs SET description = ? WHERE id = ?",
-                (description[:3000], job_id),
-            )
-            conn.commit()
+            db.set_job_description(job_id, description[:3000])
             print(f"→ {len(description)} chars")
             updated += 1
         else:

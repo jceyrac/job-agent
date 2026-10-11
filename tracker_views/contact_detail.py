@@ -74,31 +74,19 @@ def _render_detail(contact_id: int):
         if ct.get("is_unverified"):
             if st.button("✅ Mark Verified", use_container_width=True):
                 now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-                with db._conn() as conn:
-                    conn.execute(
-                        "UPDATE contacts SET is_unverified = 0, last_verified_at = ? WHERE id = ?",
-                        (now, contact_id),
-                    )
+                db.update_contact_fields(contact_id, {"is_unverified": 0, "last_verified_at": now})
                 st.cache_data.clear()
                 st.rerun()
         else:
             if st.button("⚠️ Mark Unverified", use_container_width=True):
-                with db._conn() as conn:
-                    conn.execute(
-                        "UPDATE contacts SET is_unverified = 1 WHERE id = ?",
-                        (contact_id,),
-                    )
+                db.update_contact_fields(contact_id, {"is_unverified": 1})
                 st.cache_data.clear()
                 st.rerun()
 
     with c2:
         if ct.get("is_current"):
             if st.button("🚪 No longer at company", use_container_width=True):
-                with db._conn() as conn:
-                    conn.execute(
-                        "UPDATE contacts SET is_current = 0 WHERE id = ?",
-                        (contact_id,),
-                    )
+                db.update_contact_fields(contact_id, {"is_current": 0})
                 st.cache_data.clear()
                 st.rerun()
 
@@ -131,11 +119,7 @@ def _render_detail(contact_id: int):
     new_notes = st.text_area("Notes", value=current_notes, height=100, key="ct_detail_notes")
     if new_notes != current_notes:
         if st.button("Save Notes", key="ct_save_notes"):
-            with db._conn() as conn:
-                conn.execute(
-                    "UPDATE contacts SET notes = ? WHERE id = ?",
-                    (new_notes, contact_id),
-                )
+            db.update_contact_fields(contact_id, {"notes": new_notes})
             st.cache_data.clear()
             st.rerun()
 

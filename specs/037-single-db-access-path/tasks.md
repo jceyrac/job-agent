@@ -26,7 +26,7 @@ are still present); the unit tests are written alongside each new `JobStorage` m
 
 **Purpose**: Confirm a clean, green starting point before any migration.
 
-- [ ] T001 Checkout branch `037-single-db-access-path`, activate `.venv/`, and run `python -m pytest tests/ -q` — confirm the full suite is green before touching code.
+- [X] T001 Checkout branch `037-single-db-access-path`, activate `.venv/`, and run `python -m pytest tests/ -q` — confirm the full suite is green before touching code.
 
 ---
 
@@ -36,8 +36,8 @@ are still present); the unit tests are written alongside each new `JobStorage` m
 confirm each FAILS on current HEAD (proving the guard is not vacuous), then they go GREEN as US1
 and US2 land.
 
-- [ ] T002 [P] Write `tests/test_guard_db_access.py` — AST guard (spec FR-005) walking `core/` (minus `core/storage.py`), `tracker_views/`, `tracker.py`, failing on `_conn` attribute access on a non-`self` object, `sqlite3.connect`, and `import sqlite3`; include a negative fixture per form; confirm it FAILS now (raw SQL present).
-- [ ] T003 [P] Write `tests/test_guard_llm_provider.py` — text-scan guard (spec FR-009) over runtime `*.py` (minus `core/llm.py`), `.env.example`, `docker-compose.yml`, failing case-insensitively on `groq|openai|anthropic|deepseek|ollama`; include a negative fixture; confirm it FAILS now (Groq + DeepSeek residue present).
+- [X] T002 [P] Write `tests/test_guard_db_access.py` — AST guard (spec FR-005) walking `core/` (minus `core/storage.py`), `tracker_views/`, `tracker.py`, failing on `_conn` attribute access on a non-`self` object, `sqlite3.connect`, and `import sqlite3`; include a negative fixture per form; confirm it FAILS now (raw SQL present).
+- [X] T003 [P] Write `tests/test_guard_llm_provider.py` — text-scan guard (spec FR-009) over runtime `*.py` (minus `core/llm.py`), `.env.example`, `docker-compose.yml`, failing case-insensitively on `groq|openai|anthropic|deepseek|ollama`; include a negative fixture; confirm it FAILS now (Groq + DeepSeek residue present).
 
 **Checkpoint**: Both guard tests exist and FAIL on current HEAD — they detect the violations they
 are meant to prevent.
@@ -54,17 +54,17 @@ are meant to prevent.
 > All new methods go into `core/storage.py`; unit tests into `tests/test_storage.py` (in-memory DB).
 > Tasks share those two files, so they run sequentially in order.
 
-- [ ] T004 [US1] Add `get_database_stats()` and `get_contacts_by_role_family()` to `core/storage.py` + unit tests in `tests/test_storage.py`; wire `tracker_views/dashboard.py:115` and `tracker_views/settings.py:780` to the **shared** `get_database_stats()` (FR-003) and `tracker_views/settings.py:798` to `get_contacts_by_role_family()`.
-- [ ] T005 [US1] Add `update_contact_fields()` (allowlist `{is_unverified, last_verified_at, is_current, notes}`) and `bulk_mark_contacts_verified()` to `core/storage.py` + unit tests; wire `tracker_views/contact_detail.py:77,86,97,134` and `tracker_views/contacts.py:81` (bulk-verify keeps one `with self._conn()` transaction).
-- [ ] T006 [US1] Add `get_tracking_status()` and `get_contacts_discovered_for_job()` to `core/storage.py` + unit tests; wire `tracker_views/job_detail.py:67` and `:340`.
-- [ ] T007 [US1] Add `"notes"` to `_ALLOWED_COMPANY_FIELDS` in `core/storage.py:2650`; wire `tracker_views/settings.py:488,509` → `set_company_monitored`, and `tracker_views/company_detail.py:280` + `tracker_views/forms.py:52` → `update_company_fields` (reused, unchanged behaviour).
-- [ ] T008 [US1] Add `get_calibration_signals()` to `core/storage.py` + unit test (all 8 SELECTs → structured dict); refactor `core/context_tuner.py:41` to call it (module keeps only prompt-building).
-- [ ] T009 [US1] Add `delete_scores_for_profile()` and `get_jobs_to_score()` to `core/storage.py` + unit tests; wire `core/score.py:175` and `:317` (keep the same SQL and call shape — no N+1).
-- [ ] T010 [US1] Add `get_best_score_profile_id()` to `core/storage.py` + unit test; wire `core/prepare.py:552`.
-- [ ] T011 [US1] Add `get_export_seed_companies()` to `core/storage.py` + unit test; wire `core/export_seed.py:20`.
-- [ ] T012 [US1] Add `get_jobs_missing_description()` and `set_job_description()` to `core/storage.py` + unit tests; wire `core/backfill_descriptions.py:74`.
-- [ ] T013 [US1] Add the 8 preference-report methods to `core/storage.py` (`get_cohort_jobs`, `get_applications_count`, `get_classified_jobs`, `get_company_sector`, `get_calibration_deltas`, `get_archived_notes`, `get_few_shot_anchors`, `get_action_item_candidates`) + unit tests; refactor `core/preference_report.py` to call them (drop its `_connect()`/`sqlite3`/`PRAGMA query_only`); reuse `get_database_stats()` for `_section_header` counts.
-- [ ] T014 [US1] Run `python -m pytest tests/ -q` and the quickstart sweep `#4`/`#5` — DB guard test GREEN, zero raw SQL outside `core/storage.py` + allow-list.
+- [X] T004 [US1] Add `get_database_stats()` and `get_contacts_by_role_family()` to `core/storage.py` + unit tests in `tests/test_storage.py`; wire `tracker_views/dashboard.py:115` and `tracker_views/settings.py:780` to the **shared** `get_database_stats()` (FR-003) and `tracker_views/settings.py:798` to `get_contacts_by_role_family()`.
+- [X] T005 [US1] Add `update_contact_fields()` (allowlist `{is_unverified, last_verified_at, is_current, notes}`) and `bulk_mark_contacts_verified()` to `core/storage.py` + unit tests; wire `tracker_views/contact_detail.py:77,86,97,134` and `tracker_views/contacts.py:81` (bulk-verify keeps one `with self._conn()` transaction).
+- [X] T006 [US1] Add `get_tracking_status()` and `get_contacts_discovered_for_job()` to `core/storage.py` + unit tests; wire `tracker_views/job_detail.py:67` and `:340`.
+- [X] T007 [US1] Add `"notes"` to `_ALLOWED_COMPANY_FIELDS` in `core/storage.py:2650`; wire `tracker_views/settings.py:488,509` → `set_company_monitored`, and `tracker_views/company_detail.py:280` + `tracker_views/forms.py:52` → `update_company_fields` (reused, unchanged behaviour).
+- [X] T008 [US1] Add `get_calibration_signals()` to `core/storage.py` + unit test (all 8 SELECTs → structured dict); refactor `core/context_tuner.py:41` to call it (module keeps only prompt-building).
+- [X] T009 [US1] Add `delete_scores_for_profile()` and `get_jobs_to_score()` to `core/storage.py` + unit tests; wire `core/score.py:175` and `:317` (keep the same SQL and call shape — no N+1). *Deviation: `_get_jobs_to_score` was dead code (never called) AND referenced `s.status` (no such column since Phase 1e.4) — removed instead of migrated; the live path already uses `get_jobs_for_scoring`.*
+- [X] T010 [US1] Add `get_best_score_profile_id()` to `core/storage.py` + unit test; wire `core/prepare.py:552`.
+- [X] T011 [US1] Add `get_export_seed_companies()` to `core/storage.py` + unit test; wire `core/export_seed.py:20`.
+- [X] T012 [US1] Add `get_jobs_missing_description()` and `set_job_description()` to `core/storage.py` + unit tests; wire `core/backfill_descriptions.py:74`.
+- [X] T013 [US1] Add the 8 preference-report methods to `core/storage.py` (`get_cohort_jobs`, `get_applications_count`, `get_classified_jobs`, `get_company_sector`, `get_calibration_deltas`, `get_archived_notes`, `get_few_shot_anchors`, `get_action_item_candidates`) + unit tests; refactor `core/preference_report.py` to call them (drop its `_connect()`/`sqlite3`/`PRAGMA query_only`); reuse `get_database_stats()` for `_section_header` counts. *Deviation: fixed a stale `j.company_country` → `c.company_country` (+ `LEFT JOIN companies`) in the action-items country-candidates query — same latent bug as T008.*
+- [X] T014 [US1] Run `python -m pytest tests/ -q` and the quickstart sweep `#4`/`#5` — DB guard test GREEN, zero raw SQL outside `core/storage.py` + allow-list. *Sweep #4 (provider residue) still red — that is US2's guard, expected until T015–T021.*
 
 **Checkpoint**: US1 complete — all DB access routes through `JobStorage`; DB guard test green.
 

@@ -485,11 +485,7 @@ def _render_company_monitoring(db):
                         if st.button("🔕", key=f"unmonitor_{comp.get('id', comp.get('ats_identifier'))}",
                                      help=f"Stop monitoring {cname}"):
                             # Use existing storage method to clear monitored flag
-                            with db._conn() as conn:
-                                conn.execute(
-                                    "UPDATE companies SET monitored = 0 WHERE id = ?",
-                                    (comp.get("id"),),
-                                )
+                            db.set_company_monitored(comp.get("id"), False)
                             st.cache_data.clear()
                             st.rerun()
             else:
@@ -506,11 +502,7 @@ def _render_company_monitoring(db):
                 )
                 if selected_label and st.button("➕ Monitor", key=f"btn_mon_{provider_key}"):
                     comp = options[selected_label]
-                    with db._conn() as conn:
-                        conn.execute(
-                            "UPDATE companies SET monitored = 1 WHERE id = ?",
-                            (comp.get("id"),),
-                        )
+                    db.set_company_monitored(comp.get("id"), True)
                     # Cascade re-arm: flip master switch back on if paused
                     if not gate_enabled:
                         db.set_config(f"monitoring.ats.{provider_key}.enabled", "true")
@@ -777,16 +769,14 @@ def _render_stats_actions(db):
     st.subheader("Database Stats")
 
     # Total counts
-    with db._conn() as conn:
-        total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        total_scored = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
-        total_jobs_no_score = total_jobs - conn.execute(
-            "SELECT COUNT(DISTINCT job_id) FROM job_scores"
-        ).fetchone()[0]
-        total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
-        total_contacts = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
-        unverified = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_unverified = 1").fetchone()[0]
-        total_interactions = conn.execute("SELECT COUNT(*) FROM interactions").fetchone()[0]
+    stats = db.get_database_stats()
+    total_jobs = stats["total_jobs"]
+    total_scored = stats["total_scores"]
+    total_jobs_no_score = total_jobs - stats["distinct_scored"]
+    total_companies = stats["total_companies"]
+    total_contacts = stats["total_contacts"]
+    unverified = stats["unverified_contacts"]
+    total_interactions = stats["total_interactions"]
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Jobs", total_jobs, f"{total_scored} scored")
@@ -795,10 +785,7 @@ def _render_stats_actions(db):
     c4.metric("Interactions", total_interactions)
 
     # Contacts by role_family
-    with db._conn() as conn:
-        by_role = conn.execute(
-            "SELECT role_family, COUNT(*) FROM contacts GROUP BY role_family ORDER BY COUNT(*) DESC"
-        ).fetchall()
+    by_role = db.get_contacts_by_role_family()
     if by_role:
         st.caption("Contacts by role: " + " · ".join(
             f"**{r[0] or 'unknown'}**: {r[1]}" for r in by_role

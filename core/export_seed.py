@@ -6,10 +6,10 @@ synced from Dev to Live via git push/pull.
 """
 
 import json
-import sqlite3
 import sys
 
 from core.paths import DB_PATH, data_path
+from core.storage import JobStorage
 
 
 def main():
@@ -17,20 +17,7 @@ def main():
         print("DB_PATH must point to a .db file.", file=sys.stderr)
         sys.exit(1)
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        """SELECT name, website, careers_url, ats_provider, ats_identifier,
-                  scraping_method, monitoring_status,
-                  research_notes, research_confidence, x_handle,
-                  industry_sector, company_country, notes
-           FROM companies
-           WHERE monitoring_status != 'unmonitored'
-              OR ats_provider IS NOT NULL
-              OR scraper_id IS NOT NULL
-           ORDER BY name"""
-    ).fetchall()
-    conn.close()
+    rows = JobStorage(DB_PATH).get_export_seed_companies()
 
     companies = []
     for row in rows:

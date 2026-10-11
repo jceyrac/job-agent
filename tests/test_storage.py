@@ -3186,6 +3186,413 @@ def test_count_purgeable_jobs_matches_purge_count():
     assert purged == expected, f"count={expected} but purged={purged}"
 
 
+# ---------------------------------------------------------------------------
+# Spec 037 — single DB access path (new JobStorage methods)
+# ---------------------------------------------------------------------------
+
+
+def test_get_database_stats_counts():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    db.save_scored(_job("https://example.com/jobs/1", title="PM role"), _score(8), PROFILE_ID)
+    db.save_scored(_job("https://example.com/jobs/2", title="Eng role"), _score(6), PROFILE_ID)
+    db.save_unscored(_job("https://example.com/jobs/3", title="Design role"))
+    cid = db.upsert_company("TestCo")
+    db.upsert_contact(company_id=cid, email="a@testco.com", is_unverified=True)
+    db.upsert_contact(company_id=cid, email="b@testco.com")
+    db.log_interaction(company_id=cid, type="outreach_sent")
+
+    s = db.get_database_stats()
+    assert s["total_jobs"] == 3
+    assert s["total_scores"] == 2
+    assert s["distinct_scored"] == 2
+    assert s["total_companies"] == 1
+    assert s["total_contacts"] == 2
+    assert s["unverified_contacts"] == 1
+    assert s["total_interactions"] == 1
+
+
+def test_get_database_stats_empty_db():
+    db = JobStorage(":memory:")
+    s = db.get_database_stats()
+    assert s == {
+        "total_jobs": 0,
+        "total_scores": 0,
+        "distinct_scored": 0,
+        "total_companies": 0,
+        "total_contacts": 0,
+        "unverified_contacts": 0,
+        "total_interactions": 0,
+    }
+
+
+def test_get_contacts_by_role_family():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    db.upsert_contact(company_id=cid, email="a@testco.com", role_family="recruiter")
+    db.upsert_contact(company_id=cid, email="b@testco.com", role_family="recruiter")
+    db.upsert_contact(company_id=cid, email="c@testco.com", role_family="hiring_manager")
+    rows = db.get_contacts_by_role_family()
+    assert rows == [("recruiter", 2), ("hiring_manager", 1)]
+
+
+def test_update_contact_fields_updates_allowlisted():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    contact_id = db.upsert_contact(company_id=cid, email="a@testco.com", is_unverified=True)
+    db.update_contact_fields(contact_id, {"is_unverified": 0, "notes": "vetted"})
+    ct = db.get_contact(contact_id)
+    assert ct["is_unverified"] == 0
+    assert ct["notes"] == "vetted"
+
+
+def test_update_contact_fields_rejects_unknown():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    contact_id = db.upsert_contact(company_id=cid, email="a@testco.com")
+    try:
+        db.update_contact_fields(contact_id, {"email": "evil@x.com"})
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "email" in str(e)
+
+
+def test_bulk_mark_contacts_verified():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    id1 = db.upsert_contact(company_id=cid, email="a@testco.com", is_unverified=True)
+    id2 = db.upsert_contact(company_id=cid, email="b@testco.com", is_unverified=True)
+    db.bulk_mark_contacts_verified([id1, id2], "2026-10-11T00:00:00+00:00")
+    assert db.get_contact(id1)["is_unverified"] == 0
+    assert db.get_contact(id1)["last_verified_at"] == "2026-10-11T00:00:00+00:00"
+    assert db.get_contact(id2)["is_unverified"] == 0
+
+
+def test_get_tracking_status_untracked():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    db.save_scored(job, _score(), PROFILE_ID)
+    assert db.get_tracking_status(job.id) is None
+
+
+def test_get_tracking_status_returns_status():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    db.save_scored(job, _score(), PROFILE_ID)
+    db.set_status(job.id, "applied")
+    assert db.get_tracking_status(job.id) == "applied"
+
+
+def test_get_contacts_discovered_for_job():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    contact_id = db.upsert_contact(company_id=cid, email="a@testco.com")
+    job = _job()
+    db.save_unscored(job)
+    db.log_interaction(company_id=cid, contact_id=contact_id, job_id=job.id,
+                       type="discovered_on_posting")
+    rows = db.get_contacts_discovered_for_job(job.id)
+    assert [r["id"] for r in rows] == [contact_id]
+
+
+def test_get_contacts_discovered_for_job_empty():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    contact_id = db.upsert_contact(company_id=cid, email="a@testco.com")
+    job = _job()
+    db.save_unscored(job)
+    db.log_interaction(company_id=cid, contact_id=contact_id, job_id=job.id,
+                       type="outreach_sent")
+    assert db.get_contacts_discovered_for_job(job.id) == []
+
+
+def test_update_company_fields_notes_allowed():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    db.update_company_fields(cid, {"notes": "hello"})
+    assert db.get_company_by_id(cid)["notes"] == "hello"
+
+
+def test_set_company_monitored_toggles():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("TestCo")
+    db.set_company_monitored(cid, True)
+    assert db.get_company_by_id(cid)["monitored"] == 1
+    db.set_company_monitored(cid, False)
+    assert db.get_company_by_id(cid)["monitored"] == 0
+
+
+def test_get_calibration_signals():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    j_high = _job("https://example.com/jobs/high", title="Over-scored job")
+    db.save_scored(j_high, _score(9), PROFILE_ID)
+    db.set_status(j_high.id, "archived", notes="passed")
+
+    j_low = _job("https://example.com/jobs/low", title="Under-scored job")
+    db.save_scored(j_low, _score(4), PROFILE_ID)
+    db.set_status(j_low.id, "applied")
+
+    signals = db.get_calibration_signals(PROFILE_ID)
+
+    assert [r[2] for r in signals["over_scored"]] == [9]
+    assert [r[2] for r in signals["under_scored"]] == [4]
+    buckets = {label: (rel, tn) for label, rel, tn in signals["score_buckets"]}
+    assert buckets["0-4"] == (1, 0)    # relevant: applied score-4 job
+    assert buckets["9-10"] == (0, 1)   # true-negative: archived score-9 job
+
+
+def test_delete_scores_for_profile():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    db.upsert_profile(_FakeProfile2())
+    db.save_scored(_job("https://example.com/jobs/1", title="A role"), _score(8), PROFILE_ID)
+    db.save_scored(_job("https://example.com/jobs/2", title="B role"), _score(6), PROFILE_ID)
+    db.save_scored(_job("https://example.com/jobs/3", title="C role"), _score(7), PROFILE_ID2)
+
+    deleted = db.delete_scores_for_profile(PROFILE_ID)
+    assert deleted == 2
+    assert db.get_stats(PROFILE_ID)["scored"] == 0
+    assert db.get_stats(PROFILE_ID2)["scored"] == 1
+    # search_profiles row untouched (unlike delete_profile)
+    assert db.get_profile(PROFILE_ID) is not None
+
+
+def test_get_best_score_profile_id():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    db.upsert_profile(_FakeProfile2())
+    job = _job()
+    db.save_scored(job, _score(6), PROFILE_ID)
+    db.save_scored(job, _score(9), PROFILE_ID2)
+    assert db.get_best_score_profile_id(job.id) == PROFILE_ID2
+
+
+def test_get_best_score_profile_id_none():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    db.save_unscored(job)
+    assert db.get_best_score_profile_id(job.id) is None
+
+
+def test_get_export_seed_companies():
+    db = JobStorage(":memory:")
+    cid_in = db.upsert_company("IncludedCo")
+    db.set_monitoring_status(cid_in, "watching")
+    db.upsert_company("ExcludedCo")  # stays unmonitored, no ATS/scraper source
+
+    rows = db.get_export_seed_companies()
+    names = [r["name"] for r in rows]
+    assert "IncludedCo" in names
+    assert "ExcludedCo" not in names
+
+
+def test_get_jobs_missing_description_and_set():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    j_desc = _job("https://example.com/jobs/desc", title="Has desc")
+    db.save_unscored(j_desc)
+    j_null = _job("https://example.com/jobs/nodesc", title="No desc", description=None)
+    db.save_unscored(j_null)
+
+    missing = db.get_jobs_missing_description()
+    assert [r["id"] for r in missing] == [j_null.id]
+
+    db.set_job_description(j_null.id, "Fetched description")
+    assert db.get_jobs_missing_description() == []
+
+
+def test_get_cohort_jobs():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    cid = db.upsert_company("Acme Corp")
+    db.update_company_fields(cid, {
+        "industry_sector": "web3_crypto",
+        "company_country": "France",
+        "company_size": "startup",
+    })
+
+    j_applied = _job("https://example.com/jobs/a", title="Applied PM")
+    db.save_scored(j_applied, _score(8), PROFILE_ID, company_id=cid)
+    db.set_status(j_applied.id, "applied")
+
+    j_archived = _job("https://example.com/jobs/b", title="Archived Eng")
+    db.save_scored(j_archived, _score(5), PROFILE_ID, company_id=cid)
+    db.set_status(j_archived.id, "archived")
+
+    applied = db.get_cohort_jobs(["applied"])
+    assert [r["id"] for r in applied] == [j_applied.id]
+    assert applied[0]["industry_sector"] == "web3_crypto"
+    assert applied[0]["company_country"] == "France"
+    assert applied[0]["company_size"] == "startup"
+    assert applied[0]["status"] == "applied"
+
+
+def test_get_applications_count():
+    db = JobStorage(":memory:")
+    assert db.get_applications_count() == 0
+    db.upsert_profile(_FakeProfile())
+    job = _job()
+    db.save_scored(job, _score(), PROFILE_ID)
+    db.save_application(job.id, "analysis text", "cover letter")
+    assert db.get_applications_count() == 1
+
+
+def test_get_classified_jobs():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    j_tp = _job("https://example.com/jobs/tp", title="TP")
+    db.save_scored(j_tp, _score(8), PROFILE_ID)
+    db.set_status(j_tp.id, "applied")
+
+    s_us = _score(2); s_us["scored_by"] = "tier_0"
+    j_us = _job("https://example.com/jobs/us", title="US")
+    db.save_scored(j_us, s_us, PROFILE_ID)
+    db.set_status(j_us.id, "applied")
+
+    j_tn = _job("https://example.com/jobs/tn", title="TN")
+    db.save_scored(j_tn, _score(6), PROFILE_ID)
+    db.set_status(j_tn.id, "archived")
+
+    s_fc = _score(3); s_fc["scored_by"] = "tier_0"
+    j_fc = _job("https://example.com/jobs/fc", title="FC")
+    db.save_scored(j_fc, s_fc, PROFILE_ID)
+    db.set_status(j_fc.id, "archived")
+
+    tp, us, tn, fc = db.get_classified_jobs(PROFILE_ID)
+    assert [r["id"] for r in tp] == [j_tp.id]
+    assert [r["id"] for r in us] == [j_us.id]
+    assert [r["id"] for r in tn] == [j_tn.id]
+    assert [r["id"] for r in fc] == [j_fc.id]
+
+
+def test_get_company_sector():
+    db = JobStorage(":memory:")
+    cid = db.upsert_company("Acme Corp")
+    db.update_company_fields(cid, {"industry_sector": "web3_crypto"})
+    assert db.get_company_sector("Acme Corp") == "web3_crypto"
+    assert db.get_company_sector("Unknown Corp") == "other"
+
+
+def test_get_calibration_deltas():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    j_over = _job("https://example.com/jobs/over", title="Over")
+    db.save_scored(j_over, _score(9), PROFILE_ID)
+    db.set_status(j_over.id, "archived", notes="not a fit")
+
+    j_under = _job("https://example.com/jobs/under", title="Under")
+    db.save_scored(j_under, _score(4), PROFILE_ID)
+    db.set_status(j_under.id, "applied")
+
+    d = db.get_calibration_deltas()
+    assert [r["title"] for r in d["over_scored"]] == ["Over"]
+    assert [r["title"] for r in d["under_scored"]] == ["Under"]
+    assert d["over_scored"][0]["score"] == 9
+    assert d["under_scored"][0]["score"] == 4
+
+
+def test_get_archived_notes():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    j1 = _job("https://example.com/jobs/n1", title="With note")
+    db.save_scored(j1, _score(5), PROFILE_ID)
+    db.set_status(j1.id, "archived", notes="salary too low")
+
+    j2 = _job("https://example.com/jobs/n2", title="No note")
+    db.save_scored(j2, _score(5), PROFILE_ID)
+    db.set_status(j2.id, "archived")  # no notes
+
+    rows = db.get_archived_notes()
+    assert [r["notes"] for r in rows] == ["salary too low"]
+
+
+def test_get_few_shot_anchors():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    cid = db.upsert_company("Acme Corp")
+    db.update_company_fields(cid, {
+        "industry_sector": "web3_crypto",
+        "company_country": "France",
+    })
+
+    j_pos = _job("https://example.com/jobs/pos", title="Strong match")
+    db.save_scored(j_pos, _score(9), PROFILE_ID, company_id=cid)
+    db.set_status(j_pos.id, "applied")
+
+    j_neg = _job("https://example.com/jobs/neg", title="Clear reject")
+    db.save_scored(j_neg, _score(2), PROFILE_ID, company_id=cid)
+    db.set_status(j_neg.id, "archived", notes="wrong domain")
+
+    a = db.get_few_shot_anchors(PROFILE_ID)
+    assert [r["title"] for r in a["pos"]] == ["Strong match"]
+    assert [r["title"] for r in a["neg"]] == ["Clear reject"]
+    assert a["pos"][0]["sector"] == "web3_crypto"
+    assert a["neg"][0]["country"] == "France"
+
+
+def test_get_action_item_candidates():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+
+    j_over = _job("https://example.com/jobs/over", title="Over")
+    db.save_scored(j_over, _score(9), PROFILE_ID)
+    db.set_status(j_over.id, "archived", notes="meh")
+
+    j_under = _job("https://example.com/jobs/under", title="Under")
+    db.save_scored(j_under, _score(4), PROFILE_ID)
+    db.set_status(j_under.id, "applied")
+
+    bad_cid = db.upsert_company("BadCo")
+    db.update_company_fields(bad_cid, {
+        "company_country": "Neverland", "industry_sector": "gambling",
+    })
+    for i in range(3):
+        jb = _job(f"https://example.com/jobs/bad{i}", title=f"Bad {i}", company="BadCo")
+        db.save_scored(jb, _score(5), PROFILE_ID, company_id=bad_cid)
+        db.set_status(jb.id, "archived", notes="no")
+
+    country_cid = db.upsert_company("CountryCo")
+    db.update_company_fields(country_cid, {
+        "company_country": "Atlantis", "industry_sector": "web3_crypto",
+    })
+    for i in range(3):
+        jc = _job(f"https://example.com/jobs/country{i}", title=f"Country {i}", company="CountryCo")
+        db.save_scored(jc, _score(5), PROFILE_ID, company_id=country_cid)
+        db.set_status(jc.id, "archived", notes="no")
+
+    cands = db.get_action_item_candidates(PROFILE_ID)
+    assert [r["title"] for r in cands["over_scored"]] == ["Over"]
+    assert [r["title"] for r in cands["under_scored"]] == ["Under"]
+
+    deny = {r["company"]: r["n"] for r in cands["denylist"]}
+    assert deny.get("BadCo") == 3
+    assert deny.get("CountryCo") == 3
+
+    countries = {r["country"]: r["n"] for r in cands["countries"]}
+    assert countries.get("Atlantis") == 3
+    assert countries.get("Neverland") == 3
+
+
+def test_get_action_item_candidates_source_quality():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    for i in range(5):
+        j = _job(f"https://example.com/jobs/src{i}", title=f"Src {i}", source="DeadSource")
+        db.save_scored(j, _score(3), PROFILE_ID)
+
+    cands = db.get_action_item_candidates(PROFILE_ID)
+    sources = {r["source"]: (r["total"], r["strong"]) for r in cands["sources"]}
+    assert sources["DeadSource"] == (5, 0)
+
+
 if __name__ == "__main__":
     print("Storage tests (in-memory DB)\n")
     results = run_storage_tests()

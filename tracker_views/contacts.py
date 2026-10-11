@@ -78,13 +78,8 @@ def _render_list():
             if selected_for_verify and st.button("✅ Mark selected as verified"):
                 db = get_db()
                 now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-                with db._conn() as conn:
-                    for ct in selected_for_verify:
-                        conn.execute(
-                            "UPDATE contacts SET is_unverified = 0, last_verified_at = ? WHERE id = ?",
-                            (now, ct["id"]),
-                        )
-                    st.cache_data.clear()
+                db.bulk_mark_contacts_verified([ct["id"] for ct in selected_for_verify], now)
+                st.cache_data.clear()
                 st.rerun()
 
     # Contact cards

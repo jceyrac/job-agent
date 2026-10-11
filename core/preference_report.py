@@ -7,11 +7,12 @@ Read-only. No LLM calls. No DB writes. Stdlib only.
 import argparse
 import os
 import re
-import sqlite3
 from collections import Counter
 from datetime import date
 
 from core.paths import DB_PATH
+from core.storage import JobStorage
+
 OUTPUT_DIR = "outputs/preference_reports"
 
 STOPWORDS = {
@@ -45,91 +46,6 @@ def _get_default_profiles() -> list[str]:
     return [get_active_profile().id]
 
 
-# ── DB helpers ──────────────────────────────────────────────────────────────────
-
-def _connect():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only = 1")
-    return conn
-
-
-def _get_cohort_jobs(conn, statuses: list[str]):
-    placeholders = ",".join("?" * len(statuses))
-    rows = conn.execute(
-        f"""SELECT j.id, j.title, j.company, j.company_id, j.url,
-                   t.status, t.notes,
-                   COALESCE(c.industry_sector, 'other') AS industry_sector,
-                   COALESCE(j.work_mode, 'unknown')     AS work_mode,
-                   COALESCE(j.geo_zone, 'unknown')      AS geo_zone,
-                   COALESCE(c.company_country, 'unknown') AS company_country,
-                   COALESCE(j.language_required, 'unknown') AS language_required,
-                   COALESCE(c.company_size, 'unknown')  AS company_size
-              FROM jobs j
-              JOIN job_tracking t ON j.id = t.job_id
-              LEFT JOIN companies c ON j.company_id = c.id
-             WHERE t.status IN ({placeholders})""",
-        statuses,
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def _get_applications_count(conn):
-    return conn.execute("SELECT COUNT(*) FROM job_applications").fetchone()[0]
-
-
-def _get_classified_jobs(conn, profile_id: str):
-    """Return (true_positive, llm_under_scored, true_negative, filter_cleanup)
-    as lists of job dicts with score info, classified per-profile."""
-    rows = conn.execute(
-        """SELECT j.id, j.title, j.company, j.company_id, j.url,
-                  t.status, t.notes,
-                  COALESCE(c.industry_sector, 'other') AS industry_sector,
-                  COALESCE(j.work_mode, 'unknown')     AS work_mode,
-                  COALESCE(j.geo_zone, 'unknown')      AS geo_zone,
-                  COALESCE(c.company_country, 'unknown') AS company_country,
-                  COALESCE(j.language_required, 'unknown') AS language_required,
-                  COALESCE(c.company_size, 'unknown')  AS company_size,
-                  s.score, s.reason AS score_reason, s.scored_by
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             LEFT JOIN companies c ON j.company_id = c.id
-             LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'archived')""",
-        (profile_id,),
-    ).fetchall()
-
-    tp, us, tn, fc = [], [], [], []
-    for r in rows:
-        d = dict(r)
-        status = d["status"]
-        sb = (d.get("scored_by") or "")
-        score = d.get("score")
-        is_tier0_reject = sb.startswith("tier_0") and score is not None and score <= 3
-
-        if status in ("applied", "interviewing", "offer", "rejected", "withdrawn"):
-            if is_tier0_reject:
-                us.append(d)
-            else:
-                tp.append(d)
-        else:  # archived
-            if is_tier0_reject:
-                fc.append(d)
-            else:
-                tn.append(d)
-
-    assert len(tp) + len(us) + len(tn) + len(fc) == len(rows), \
-        "cohort classification is not exhaustive"
-    return tp, us, tn, fc
-
-
-def _get_company_sector(conn, company_name: str) -> str:
-    row = conn.execute(
-        "SELECT industry_sector FROM companies WHERE name = ?", (company_name,)
-    ).fetchone()
-    return (row["industry_sector"] or "other") if row else "other"
-
-
 # ── Tokenisation ────────────────────────────────────────────────────────────────
 
 def _tokenize(text: str) -> list[str]:
@@ -139,10 +55,11 @@ def _tokenize(text: str) -> list[str]:
 
 # ── Report sections ─────────────────────────────────────────────────────────────
 
-def _section_header(conn, profiles: list[str]) -> list[str]:
-    total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-    scored = conn.execute("SELECT COUNT(DISTINCT job_id) FROM job_scores").fetchone()[0]
-    prepared = _get_applications_count(conn)
+def _section_header(db, profiles: list[str]) -> list[str]:
+    stats = db.get_database_stats()
+    total_jobs = stats["total_jobs"]
+    scored = stats["distinct_scored"]
+    prepared = db.get_applications_count()
 
     lines = [
         f"# Preference Report — {date.today().isoformat()}",
@@ -157,7 +74,7 @@ def _section_header(conn, profiles: list[str]) -> list[str]:
     ]
 
     for pid in profiles:
-        tp, us, tn, fc = _get_classified_jobs(conn, pid)
+        tp, us, tn, fc = db.get_classified_jobs(pid)
         relevant = len(tp) + len(us)
         lines.append(f"### {pid}")
         lines.append("")
@@ -174,7 +91,7 @@ def _section_header(conn, profiles: list[str]) -> list[str]:
     return lines
 
 
-def _section_score_distribution(conn, profiles: list[str]) -> list[str]:
+def _section_score_distribution(db, profiles: list[str]) -> list[str]:
     lines = ["## Score Distribution by Cohort", ""]
     buckets = [
         ("9-10", lambda s: s >= 9),
@@ -184,7 +101,7 @@ def _section_score_distribution(conn, profiles: list[str]) -> list[str]:
     ]
 
     for pid in profiles:
-        tp, us, tn, fc = _get_classified_jobs(conn, pid)
+        tp, us, tn, fc = db.get_classified_jobs(pid)
         relevant = tp + us
 
         scored_relevant = [j for j in relevant if j.get("score") is not None]
@@ -218,7 +135,7 @@ def _section_score_distribution(conn, profiles: list[str]) -> list[str]:
     return lines
 
 
-def _section_categorical(conn, profiles: list[str]) -> list[str]:
+def _section_categorical(db, profiles: list[str]) -> list[str]:
     """Categorical breakdowns per profile using true_positive+llm_under as
     relevant and true_negative as not_relevant."""
     lines = ["## Categorical Breakdowns", ""]
@@ -228,7 +145,7 @@ def _section_categorical(conn, profiles: list[str]) -> list[str]:
     ]
 
     for pid in profiles:
-        tp, us, tn, fc = _get_classified_jobs(conn, pid)
+        tp, us, tn, fc = db.get_classified_jobs(pid)
         rel = tp + us
 
         if not rel and not tn:
@@ -274,11 +191,11 @@ def _section_categorical(conn, profiles: list[str]) -> list[str]:
     return lines
 
 
-def _section_company_hotspots(conn, profiles: list[str]) -> list[str]:
+def _section_company_hotspots(db, profiles: list[str]) -> list[str]:
     lines = ["## Company Hotspots", ""]
 
     for pid in profiles:
-        tp, us, tn, fc = _get_classified_jobs(conn, pid)
+        tp, us, tn, fc = db.get_classified_jobs(pid)
         rel = tp + us
 
         rel_by_co = Counter(j["company"] for j in rel)
@@ -331,12 +248,12 @@ def _section_company_hotspots(conn, profiles: list[str]) -> list[str]:
     return lines
 
 
-def _section_llm_under_scored(conn, profiles: list[str]) -> list[str]:
+def _section_llm_under_scored(db, profiles: list[str]) -> list[str]:
     """New section: jobs applied to despite Tier-0 rejection."""
     lines = ["## 🚨 LLM under-scored — applied despite Tier-0 rejection", ""]
 
     for pid in profiles:
-        _, us, _, _ = _get_classified_jobs(conn, pid)
+        _, us, _, _ = db.get_classified_jobs(pid)
         if not us:
             lines.append(f"### {pid} — none")
             lines.append("")
@@ -378,19 +295,13 @@ def _section_llm_under_scored(conn, profiles: list[str]) -> list[str]:
     return lines
 
 
-def _section_calibration_deltas(conn) -> list[str]:
+def _section_calibration_deltas(db) -> list[str]:
     lines = ["## Calibration Deltas", ""]
 
+    deltas = db.get_calibration_deltas()
+
     # Over-scored: score ≥ 8 but archived AND not a Tier-0 cleanup
-    over_rows = conn.execute(
-        """SELECT j.title, j.company, s.score, s.profile_id, t.notes, s.scored_by
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             JOIN job_scores s   ON j.id = s.job_id
-            WHERE t.status = 'archived' AND s.score >= 8
-            ORDER BY s.score DESC
-            LIMIT 15"""
-    ).fetchall()
+    over_rows = deltas["over_scored"]
 
     # Filter out Tier-0 cleanup (the LLM didn't over-score these)
     real_over = [r for r in over_rows
@@ -412,14 +323,7 @@ def _section_calibration_deltas(conn) -> list[str]:
     lines.append("")
 
     # Under-scored: score ≤ 6 but applied or rejected
-    under_rows = conn.execute(
-        """SELECT j.title, j.company, s.score, s.profile_id, t.status
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             JOIN job_scores s   ON j.id = s.job_id
-            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
-            ORDER BY s.score ASC"""
-    ).fetchall()
+    under_rows = deltas["under_scored"]
 
     lines.append("### Under-scored (LLM score ≤ 6 but applied or rejected)")
     lines.append("")
@@ -437,11 +341,9 @@ def _section_calibration_deltas(conn) -> list[str]:
     return lines
 
 
-def _section_archive_themes(conn) -> list[str]:
+def _section_archive_themes(db) -> list[str]:
     lines = ["## Archive Note Themes", ""]
-    rows = conn.execute(
-        "SELECT notes FROM job_tracking WHERE status = 'archived' AND notes IS NOT NULL AND notes != ''"
-    ).fetchall()
+    rows = db.get_archived_notes()
 
     word_counts = Counter()
     for r in rows:
@@ -457,10 +359,10 @@ def _section_archive_themes(conn) -> list[str]:
     return lines
 
 
-def _section_title_keywords(conn) -> list[str]:
+def _section_title_keywords(db) -> list[str]:
     lines = ["## Title Keyword Frequency Deltas", ""]
-    rel = _get_cohort_jobs(conn, ["applied", "interviewing", "offer", "rejected", "withdrawn"])
-    nrel = _get_cohort_jobs(conn, ["archived"])
+    rel = db.get_cohort_jobs(["applied", "interviewing", "offer", "rejected", "withdrawn"])
+    nrel = db.get_cohort_jobs(["archived"])
 
     rel_words = Counter()
     for j in rel:
@@ -506,7 +408,7 @@ def _section_title_keywords(conn) -> list[str]:
     return lines
 
 
-def _section_suggestions(conn, profiles: list[str]) -> list[str]:
+def _section_suggestions(db, profiles: list[str]) -> list[str]:
     lines = ["## Suggested Edits to profiles.py", ""]
 
     try:
@@ -517,7 +419,7 @@ def _section_suggestions(conn, profiles: list[str]) -> list[str]:
     skipped_all = set()
 
     for pid in profiles:
-        tp, us, tn, fc = _get_classified_jobs(conn, pid)
+        tp, us, tn, fc = db.get_classified_jobs(pid)
         rel = tp + us
 
         current = CURRENT_PROFILES.get(pid)
@@ -560,7 +462,7 @@ def _section_suggestions(conn, profiles: list[str]) -> list[str]:
             if co in already_denylisted:
                 skipped_all.add(f"company:{co}")
                 continue
-            sector = _get_company_sector(conn, co)
+            sector = db.get_company_sector(co)
             if sector in already_excluded_sectors or sector in ("other", "unknown"):
                 deny_direct.append((co, cnt, sector))
             else:
@@ -628,40 +530,13 @@ def export_few_shot_anchors(profile_id: str | None = None) -> str:
     from core.profiles import get_active_profile
 
     pid = profile_id or get_active_profile().id
-    conn = _connect()
+    db = JobStorage(DB_PATH)
 
     # ── Positives: applied, rejected, ready, queued (strong interest) ────────
-    pos_rows = conn.execute(
-        """SELECT j.title, j.company, COALESCE(c.industry_sector, 'other') AS sector,
-                  COALESCE(j.work_mode, 'unknown') AS work_mode,
-                  COALESCE(c.company_country, 'unknown') AS country,
-                  s.score, s.reason AS score_reason
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-             LEFT JOIN companies c ON j.company_id = c.id
-            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'ready', 'queued')
-              AND s.score IS NOT NULL
-            ORDER BY s.score DESC""",
-        (pid,),
-    ).fetchall()
-
     # ── Negatives: archived with clear rejection pattern ─────────────────────
-    neg_rows = conn.execute(
-        """SELECT j.title, j.company, COALESCE(c.industry_sector, 'other') AS sector,
-                  COALESCE(j.work_mode, 'unknown') AS work_mode,
-                  COALESCE(c.company_country, 'unknown') AS country,
-                  s.score, s.reason AS score_reason, t.notes
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-             LEFT JOIN companies c ON j.company_id = c.id
-            WHERE t.status = 'archived'
-              AND s.score IS NOT NULL
-            ORDER BY s.score ASC""",
-        (pid,),
-    ).fetchall()
-    conn.close()
+    anchors = db.get_few_shot_anchors(pid)
+    pos_rows = anchors["pos"]
+    neg_rows = anchors["neg"]
 
     def _sig(row) -> str:
         """One-line compressed signature."""
@@ -754,20 +629,19 @@ def generate_report(profile_id: str | None = None,
                     output_dir: str | None = None) -> str:
     """Generate the report and return the output file path."""
     profiles = [profile_id] if profile_id else _get_default_profiles()
-    conn = _connect()
+    db = JobStorage(DB_PATH)
 
     sections = [
-        _section_header(conn, profiles),
-        _section_score_distribution(conn, profiles),
-        _section_categorical(conn, profiles),
-        _section_company_hotspots(conn, profiles),
-        _section_llm_under_scored(conn, profiles),
-        _section_calibration_deltas(conn),
-        _section_archive_themes(conn),
-        _section_title_keywords(conn),
-        _section_suggestions(conn, profiles),
+        _section_header(db, profiles),
+        _section_score_distribution(db, profiles),
+        _section_categorical(db, profiles),
+        _section_company_hotspots(db, profiles),
+        _section_llm_under_scored(db, profiles),
+        _section_calibration_deltas(db),
+        _section_archive_themes(db),
+        _section_title_keywords(db),
+        _section_suggestions(db, profiles),
     ]
-    conn.close()
 
     report = "\n".join(line for sec in sections for line in sec)
 
@@ -812,103 +686,29 @@ def generate_action_items(
     today = date.today().isoformat()
     output_path = os.path.join(out_dir, f"action_items_{today}.md")
 
-    conn = _connect()
+    db = JobStorage(DB_PATH)
+    cands = db.get_action_item_candidates(pid)
 
     # ── Calibration data ────────────────────────────────────────────────────
     # Over-scored: archived with score >= 8, not Tier-0 cleanup
-    over_rows = conn.execute(
-        """SELECT j.title, j.company, s.score, t.notes, s.profile_id
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             JOIN job_scores s   ON j.id = s.job_id
-            WHERE t.status = 'archived' AND s.score >= 8
-              AND s.profile_id = ?
-              AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
-            ORDER BY s.score DESC""",
-        (pid,),
-    ).fetchall()
+    over_rows = cands["over_scored"]
 
     # Under-scored: applied or rejected with score <= 6
-    under_rows = conn.execute(
-        """SELECT j.title, j.company, s.score, t.status, s.profile_id
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             JOIN job_scores s   ON j.id = s.job_id
-            WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
-              AND s.profile_id = ?
-            ORDER BY s.score ASC""",
-        (pid,),
-    ).fetchall()
+    under_rows = cands["under_scored"]
 
-    tp, us, tn, fc = _get_classified_jobs(conn, pid)
+    tp, us, tn, fc = db.get_classified_jobs(pid)
 
     # ── Denylist candidates: companies with ≥3 archived, 0 applied/rejected ──
-    deny_rows = conn.execute(
-        """SELECT j.company, COUNT(*) AS n
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-            WHERE t.status = 'archived'
-              AND j.company_id IS NOT NULL
-              AND j.company NOT IN (
-                  SELECT DISTINCT j2.company FROM jobs j2
-                  JOIN job_tracking t2 ON j2.id = t2.job_id
-                  WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
-              )
-            GROUP BY j.company
-            HAVING COUNT(*) >= 3
-            ORDER BY n DESC""",
-    ).fetchall()
+    deny_rows = cands["denylist"]
 
     # ── Sector exclusions: sectors with ≥5 archived, 0 applied/rejected ─────
-    sector_rows = conn.execute(
-        """SELECT COALESCE(c.industry_sector, 'other') AS sector, COUNT(*) AS n
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-             LEFT JOIN companies c ON j.company_id = c.id
-            WHERE t.status = 'archived'
-              AND COALESCE(c.industry_sector, 'other') NOT IN (
-                  SELECT DISTINCT COALESCE(c2.industry_sector, 'other')
-                  FROM jobs j2
-                  JOIN job_tracking t2 ON j2.id = t2.job_id
-                  LEFT JOIN companies c2 ON j2.company_id = c2.id
-                  WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
-              )
-            GROUP BY 1
-            HAVING COUNT(*) >= 5
-            ORDER BY n DESC""",
-    ).fetchall()
+    sector_rows = cands["sectors"]
 
     # ── Banned country candidates: ≥3 archived, 0 applied/rejected ─────────
-    country_rows = conn.execute(
-        """SELECT COALESCE(j.company_country, 'unknown') AS country, COUNT(*) AS n
-             FROM jobs j
-             JOIN job_tracking t ON j.id = t.job_id
-            WHERE t.status = 'archived'
-              AND j.company_country IS NOT NULL
-              AND j.company_country != 'unknown'
-              AND j.company_country NOT IN (
-                  SELECT DISTINCT j2.company_country FROM jobs j2
-                  JOIN job_tracking t2 ON j2.id = t2.job_id
-                  WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
-                    AND j2.company_country IS NOT NULL
-              )
-            GROUP BY 1
-            HAVING COUNT(*) >= 3
-            ORDER BY n DESC""",
-    ).fetchall()
+    country_rows = cands["countries"]
 
     # ── Source quality: sources with 0 strong matches in scored jobs ────────
-    source_rows = conn.execute(
-        """SELECT j.source, COUNT(*) AS total,
-                  COUNT(CASE WHEN s.score >= 8 THEN 1 END) AS strong
-             FROM jobs j
-             LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-            WHERE j.source IS NOT NULL AND j.source != ''
-            GROUP BY j.source
-            HAVING total >= 5 AND strong = 0
-            ORDER BY total DESC""",
-        (pid,),
-    ).fetchall()
+    source_rows = cands["sources"]
 
     # ── Few-shot anchor staleness ───────────────────────────────────────────
     anchor_stale = False
@@ -927,8 +727,6 @@ def generate_action_items(
             anchor_age_days = (date.today() - date.fromtimestamp(anchor_mtime)).days
             anchor_stale = anchor_age_days > 14
             anchor_date = date.fromtimestamp(anchor_mtime).isoformat()
-
-    conn.close()
 
     # ── Classify into prompt fixes and code fixes ───────────────────────────
     prompt_items: list[str] = []
@@ -978,7 +776,7 @@ def generate_action_items(
         from core.profiles import ALL_PROFILES as _CURRENT
         current = _CURRENT.get(pid)
         already_denied = set(current.denylisted_companies) if current else set()
-        new_deny = [(co, n) for co, n in deny_rows if co not in already_denied]
+        new_deny = [(r["company"], r["n"]) for r in deny_rows if r["company"] not in already_denied]
         if new_deny:
             for co, n in new_deny:
                 c1_lines.append(f"- **{co}** ({n} archived)")
@@ -1002,8 +800,8 @@ def generate_action_items(
         from core.profiles import ALL_PROFILES as _C2
         current2 = _C2.get(pid)
         already_excluded = set(current2.excluded_sectors) if current2 else set()
-        new_sectors = [(s, n) for s, n in sector_rows
-                       if s not in already_excluded and s != "other"]
+        new_sectors = [(r["sector"], r["n"]) for r in sector_rows
+                       if r["sector"] not in already_excluded and r["sector"] != "other"]
         if new_sectors:
             for s, n in new_sectors:
                 c2_lines.append(f"- `{s}` ({n} archived, 0 applied)")
@@ -1026,7 +824,7 @@ def generate_action_items(
         ]
         current3 = _CURRENT.get(pid) if '_CURRENT' in dir() else None
         already_banned = set(current3.banned_countries) if current3 else set()
-        new_countries = [(c, n) for c, n in country_rows if c not in already_banned]
+        new_countries = [(r["country"], r["n"]) for r in country_rows if r["country"] not in already_banned]
         if new_countries:
             for c, n in new_countries:
                 c3_lines.append(f"- **{c}** ({n} archived, 0 applied)")

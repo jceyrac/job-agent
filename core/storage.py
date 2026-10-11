@@ -2650,7 +2650,7 @@ class JobStorage:
     _ALLOWED_COMPANY_FIELDS = frozenset({
         "name", "website", "company_country", "industry_sector", "company_size",
         "x_handle", "careers_url", "ats_provider", "ats_identifier",
-        "scraping_method", "research_notes",
+        "scraping_method", "research_notes", "notes",
     })
 
     def update_company_fields(self, company_id: int, fields: dict) -> None:
@@ -3870,6 +3870,506 @@ class JobStorage:
                     "SELECT * FROM runs ORDER BY ran_at DESC, id DESC LIMIT 1"
                 ).fetchone()
             return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Catalogue stats + contact role breakdown (spec 037)
+    # ------------------------------------------------------------------
+
+    def get_database_stats(self) -> dict:
+        """Profile-independent catalogue counts (dashboard + settings overview).
+
+        Returns ``total_jobs``, ``total_scores`` (COUNT(job_scores)),
+        ``distinct_scored`` (COUNT DISTINCT job_id), ``total_companies``,
+        ``total_contacts``, ``unverified_contacts``, ``total_interactions``.
+        """
+        with self._conn() as conn:
+            total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+            total_scores = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
+            distinct_scored = conn.execute(
+                "SELECT COUNT(DISTINCT job_id) FROM job_scores"
+            ).fetchone()[0]
+            total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+            total_contacts = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+            unverified_contacts = conn.execute(
+                "SELECT COUNT(*) FROM contacts WHERE is_unverified = 1"
+            ).fetchone()[0]
+            total_interactions = conn.execute(
+                "SELECT COUNT(*) FROM interactions"
+            ).fetchone()[0]
+        return {
+            "total_jobs": total_jobs,
+            "total_scores": total_scores,
+            "distinct_scored": distinct_scored,
+            "total_companies": total_companies,
+            "total_contacts": total_contacts,
+            "unverified_contacts": unverified_contacts,
+            "total_interactions": total_interactions,
+        }
+
+    def get_contacts_by_role_family(self) -> list[tuple[str, int]]:
+        """Contacts grouped by role_family, most common first."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT role_family, COUNT(*) FROM contacts GROUP BY role_family ORDER BY COUNT(*) DESC"
+            ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    _ALLOWED_CONTACT_FIELDS = frozenset({
+        "is_unverified", "last_verified_at", "is_current", "notes",
+    })
+
+    def update_contact_fields(self, contact_id: int, fields: dict) -> None:
+        """Update allowlisted contact columns. Mirrors ``update_company_fields``."""
+        invalid = set(fields) - self._ALLOWED_CONTACT_FIELDS
+        if invalid:
+            raise ValueError(f"Unknown contact fields: {invalid}")
+        if not fields:
+            return
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [contact_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE contacts SET {cols} WHERE id = ?", vals)
+
+    def bulk_mark_contacts_verified(self, contact_ids: list[int], last_verified_at: str) -> None:
+        """Mark many contacts verified in a single transaction."""
+        if not contact_ids:
+            return
+        with self._conn() as conn:
+            for cid in contact_ids:
+                conn.execute(
+                    "UPDATE contacts SET is_unverified = 0, last_verified_at = ? WHERE id = ?",
+                    (last_verified_at, cid),
+                )
+
+    def get_tracking_status(self, job_id: str) -> str | None:
+        """Current tracking status for a job, or ``None`` when untracked."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        return row["status"] if row else None
+
+    def get_contacts_discovered_for_job(self, job_id: str) -> list[dict]:
+        """Contacts linked to a job via ``discovered_on_posting`` interactions."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT ct.* FROM contacts ct
+                   JOIN interactions i ON i.contact_id = ct.id
+                   WHERE i.job_id = ? AND i.type = 'discovered_on_posting'
+                   ORDER BY ct.last_seen_at DESC""",
+                (job_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_calibration_signals(self, profile_id: str) -> dict:
+        """Read-only calibration signals for ``context_tuner`` (spec 037).
+
+        Returns ``over_scored`` / ``under_scored`` (tuples), ``score_buckets``
+        (``(label, relevant, true_negative)``), and ``top_sectors`` /
+        ``top_countries`` — all derived from archived/applied cohorts.
+        """
+        with self._conn() as conn:
+            conn.row_factory = None  # plain tuples, matching the original caller
+
+            over_rows = conn.execute(
+                """SELECT j.title, j.company, s.score, t.notes
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s   ON j.id = s.job_id
+                    WHERE t.status = 'archived' AND s.score >= 8
+                      AND s.profile_id = ?
+                      AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
+                    ORDER BY s.score DESC
+                    LIMIT 10""",
+                (profile_id,),
+            ).fetchall()
+
+            under_rows = conn.execute(
+                """SELECT j.title, j.company, s.score, t.status
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s   ON j.id = s.job_id
+                    WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
+                      AND s.profile_id = ?
+                    ORDER BY s.score ASC
+                    LIMIT 10""",
+                (profile_id,),
+            ).fetchall()
+
+            buckets = [
+                ("9-10", "s.score >= 9"),
+                ("7-8",  "s.score BETWEEN 7 AND 8"),
+                ("5-6",  "s.score BETWEEN 5 AND 6"),
+                ("0-4",  "s.score <= 4"),
+            ]
+            score_buckets = []
+            for label, cond in buckets:
+                rel = conn.execute(
+                    f"""SELECT COUNT(*) FROM jobs j
+                         JOIN job_tracking t ON j.id = t.job_id
+                         JOIN job_scores s ON j.id = s.job_id
+                        WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
+                          AND s.profile_id = ?
+                          AND {cond}
+                          AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)""",
+                    (profile_id,),
+                ).fetchone()[0]
+                tn = conn.execute(
+                    f"""SELECT COUNT(*) FROM jobs j
+                         JOIN job_tracking t ON j.id = t.job_id
+                         JOIN job_scores s ON j.id = s.job_id
+                        WHERE t.status = 'archived'
+                          AND s.profile_id = ?
+                          AND {cond}
+                          AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)""",
+                    (profile_id,),
+                ).fetchone()[0]
+                score_buckets.append((label, rel, tn))
+
+            sector_over = conn.execute(
+                """SELECT COALESCE(c.industry_sector, 'other'), COUNT(*) AS n
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s ON j.id = s.job_id
+                     LEFT JOIN companies c ON j.company_id = c.id
+                    WHERE t.status = 'archived' AND s.score >= 8
+                      AND s.profile_id = ?
+                      AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
+                    GROUP BY 1 ORDER BY n DESC LIMIT 5""",
+                (profile_id,),
+            ).fetchall()
+
+            country_over = conn.execute(
+                """SELECT COALESCE(c.company_country, 'unknown'), COUNT(*) AS n
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s ON j.id = s.job_id
+                     LEFT JOIN companies c ON j.company_id = c.id
+                    WHERE t.status = 'archived' AND s.score >= 8
+                      AND s.profile_id = ?
+                      AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
+                    GROUP BY 1 ORDER BY n DESC LIMIT 5""",
+                (profile_id,),
+            ).fetchall()
+
+        return {
+            "over_scored": over_rows,
+            "under_scored": under_rows,
+            "score_buckets": score_buckets,
+            "top_sectors": sector_over,
+            "top_countries": country_over,
+        }
+
+    def delete_scores_for_profile(self, profile_id: str) -> int:
+        """Delete all scores for a profile (does NOT touch ``search_profiles``).
+
+        Returns the number of rows deleted.
+        """
+        with self._conn() as conn:
+            conn.execute("DELETE FROM job_scores WHERE profile_id = ?", (profile_id,))
+            return conn.execute("SELECT changes()").fetchone()[0]
+
+    def get_best_score_profile_id(self, job_id: str) -> str | None:
+        """The profile_id with the highest score for a job, or ``None``."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT profile_id FROM job_scores
+                   WHERE job_id = ? AND score IS NOT NULL
+                   ORDER BY score DESC LIMIT 1""",
+                (job_id,),
+            ).fetchone()
+        return row["profile_id"] if row else None
+
+    def get_export_seed_companies(self) -> list[dict]:
+        """Companies suitable for git-versioned seed export (excludes env fields)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT name, website, careers_url, ats_provider, ats_identifier,
+                          scraping_method, monitoring_status,
+                          research_notes, research_confidence, x_handle,
+                          industry_sector, company_country, notes
+                   FROM companies
+                   WHERE monitoring_status != 'unmonitored'
+                      OR ats_provider IS NOT NULL
+                      OR scraper_id IS NOT NULL
+                   ORDER BY name"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_jobs_missing_description(self) -> list[dict]:
+        """Jobs with a NULL description, for the backfill-descriptions worker."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, url, source FROM jobs WHERE description IS NULL ORDER BY source, last_seen DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_job_description(self, job_id: str, description: str) -> None:
+        """Store a fetched description for a job."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE jobs SET description = ? WHERE id = ?",
+                (description, job_id),
+            )
+
+    # ------------------------------------------------------------------
+    # Preference report + action items (spec 037)
+    # ------------------------------------------------------------------
+
+    def get_cohort_jobs(self, statuses: list[str]) -> list[dict]:
+        """Jobs in the given tracking statuses, with company/cohort columns."""
+        placeholders = ",".join("?" * len(statuses))
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""SELECT j.id, j.title, j.company, j.company_id, j.url,
+                           t.status, t.notes,
+                           COALESCE(c.industry_sector, 'other') AS industry_sector,
+                           COALESCE(j.work_mode, 'unknown')     AS work_mode,
+                           COALESCE(j.geo_zone, 'unknown')      AS geo_zone,
+                           COALESCE(c.company_country, 'unknown') AS company_country,
+                           COALESCE(j.language_required, 'unknown') AS language_required,
+                           COALESCE(c.company_size, 'unknown')  AS company_size
+                      FROM jobs j
+                      JOIN job_tracking t ON j.id = t.job_id
+                      LEFT JOIN companies c ON j.company_id = c.id
+                     WHERE t.status IN ({placeholders})""",
+                statuses,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_applications_count(self) -> int:
+        """Number of prepared applications (rows in ``job_applications``)."""
+        with self._conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM job_applications").fetchone()[0]
+
+    def get_classified_jobs(self, profile_id: str) -> tuple:
+        """Per-profile cohort classification for the preference report.
+
+        Returns ``(true_positive, llm_under_scored, true_negative, filter_cleanup)``.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT j.id, j.title, j.company, j.company_id, j.url,
+                          t.status, t.notes,
+                          COALESCE(c.industry_sector, 'other') AS industry_sector,
+                          COALESCE(j.work_mode, 'unknown')     AS work_mode,
+                          COALESCE(j.geo_zone, 'unknown')      AS geo_zone,
+                          COALESCE(c.company_country, 'unknown') AS company_country,
+                          COALESCE(j.language_required, 'unknown') AS language_required,
+                          COALESCE(c.company_size, 'unknown')  AS company_size,
+                          s.score, s.reason AS score_reason, s.scored_by
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     LEFT JOIN companies c ON j.company_id = c.id
+                     LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+                    WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'archived')""",
+                (profile_id,),
+            ).fetchall()
+
+        tp, us, tn, fc = [], [], [], []
+        for r in rows:
+            d = dict(r)
+            status = d["status"]
+            sb = (d.get("scored_by") or "")
+            score = d.get("score")
+            is_tier0_reject = sb.startswith("tier_0") and score is not None and score <= 3
+
+            if status in ("applied", "interviewing", "offer", "rejected", "withdrawn"):
+                if is_tier0_reject:
+                    us.append(d)
+                else:
+                    tp.append(d)
+            else:  # archived
+                if is_tier0_reject:
+                    fc.append(d)
+                else:
+                    tn.append(d)
+
+        assert len(tp) + len(us) + len(tn) + len(fc) == len(rows), \
+            "cohort classification is not exhaustive"
+        return tp, us, tn, fc
+
+    def get_company_sector(self, company_name: str) -> str:
+        """industry_sector for a company by name, defaulting to ``"other"``."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT industry_sector FROM companies WHERE name = ?", (company_name,)
+            ).fetchone()
+        return (row["industry_sector"] or "other") if row else "other"
+
+    def get_calibration_deltas(self) -> dict:
+        """Global over-scored / under-scored jobs for the calibration-deltas section."""
+        with self._conn() as conn:
+            over_rows = conn.execute(
+                """SELECT j.title, j.company, s.score, s.profile_id, t.notes, s.scored_by
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s   ON j.id = s.job_id
+                    WHERE t.status = 'archived' AND s.score >= 8
+                    ORDER BY s.score DESC
+                    LIMIT 15"""
+            ).fetchall()
+
+            under_rows = conn.execute(
+                """SELECT j.title, j.company, s.score, s.profile_id, t.status
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s   ON j.id = s.job_id
+                    WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
+                    ORDER BY s.score ASC"""
+            ).fetchall()
+
+        return {
+            "over_scored": [dict(r) for r in over_rows],
+            "under_scored": [dict(r) for r in under_rows],
+        }
+
+    def get_archived_notes(self) -> list[dict]:
+        """Non-empty archive notes, for the archive-themes word-frequency section."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT notes FROM job_tracking WHERE status = 'archived' AND notes IS NOT NULL AND notes != ''"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_few_shot_anchors(self, profile_id: str) -> dict:
+        """Strong-match (positive) and clear-reject (negative) anchor rows for a profile."""
+        with self._conn() as conn:
+            pos_rows = conn.execute(
+                """SELECT j.title, j.company, COALESCE(c.industry_sector, 'other') AS sector,
+                          COALESCE(j.work_mode, 'unknown') AS work_mode,
+                          COALESCE(c.company_country, 'unknown') AS country,
+                          s.score, s.reason AS score_reason
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+                     LEFT JOIN companies c ON j.company_id = c.id
+                    WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'ready', 'queued')
+                      AND s.score IS NOT NULL
+                    ORDER BY s.score DESC""",
+                (profile_id,),
+            ).fetchall()
+
+            neg_rows = conn.execute(
+                """SELECT j.title, j.company, COALESCE(c.industry_sector, 'other') AS sector,
+                          COALESCE(j.work_mode, 'unknown') AS work_mode,
+                          COALESCE(c.company_country, 'unknown') AS country,
+                          s.score, s.reason AS score_reason, t.notes
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+                     LEFT JOIN companies c ON j.company_id = c.id
+                    WHERE t.status = 'archived'
+                      AND s.score IS NOT NULL
+                    ORDER BY s.score ASC""",
+                (profile_id,),
+            ).fetchall()
+
+        return {
+            "pos": [dict(r) for r in pos_rows],
+            "neg": [dict(r) for r in neg_rows],
+        }
+
+    def get_action_item_candidates(self, profile_id: str) -> dict:
+        """Calibration + denylist/sector/country/source signals for ``generate_action_items``."""
+        with self._conn() as conn:
+            over_rows = conn.execute(
+                """SELECT j.title, j.company, s.score, t.notes, s.profile_id
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s   ON j.id = s.job_id
+                    WHERE t.status = 'archived' AND s.score >= 8
+                      AND s.profile_id = ?
+                      AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
+                    ORDER BY s.score DESC""",
+                (profile_id,),
+            ).fetchall()
+
+            under_rows = conn.execute(
+                """SELECT j.title, j.company, s.score, t.status, s.profile_id
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_scores s   ON j.id = s.job_id
+                    WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
+                      AND s.profile_id = ?
+                    ORDER BY s.score ASC""",
+                (profile_id,),
+            ).fetchall()
+
+            deny_rows = conn.execute(
+                """SELECT j.company, COUNT(*) AS n
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                    WHERE t.status = 'archived'
+                      AND j.company_id IS NOT NULL
+                      AND j.company NOT IN (
+                          SELECT DISTINCT j2.company FROM jobs j2
+                          JOIN job_tracking t2 ON j2.id = t2.job_id
+                          WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
+                      )
+                    GROUP BY j.company
+                    HAVING COUNT(*) >= 3
+                    ORDER BY n DESC"""
+            ).fetchall()
+
+            sector_rows = conn.execute(
+                """SELECT COALESCE(c.industry_sector, 'other') AS sector, COUNT(*) AS n
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     LEFT JOIN companies c ON j.company_id = c.id
+                    WHERE t.status = 'archived'
+                      AND COALESCE(c.industry_sector, 'other') NOT IN (
+                          SELECT DISTINCT COALESCE(c2.industry_sector, 'other')
+                          FROM jobs j2
+                          JOIN job_tracking t2 ON j2.id = t2.job_id
+                          LEFT JOIN companies c2 ON j2.company_id = c2.id
+                          WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
+                      )
+                    GROUP BY 1
+                    HAVING COUNT(*) >= 5
+                    ORDER BY n DESC"""
+            ).fetchall()
+
+            country_rows = conn.execute(
+                """SELECT COALESCE(c.company_country, 'unknown') AS country, COUNT(*) AS n
+                     FROM jobs j
+                     JOIN job_tracking t ON j.id = t.job_id
+                     LEFT JOIN companies c ON j.company_id = c.id
+                    WHERE t.status = 'archived'
+                      AND c.company_country IS NOT NULL
+                      AND c.company_country != 'unknown'
+                      AND c.company_country NOT IN (
+                          SELECT DISTINCT c2.company_country FROM jobs j2
+                          JOIN job_tracking t2 ON j2.id = t2.job_id
+                          LEFT JOIN companies c2 ON j2.company_id = c2.id
+                          WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
+                            AND c2.company_country IS NOT NULL
+                      )
+                    GROUP BY 1
+                    HAVING COUNT(*) >= 3
+                    ORDER BY n DESC"""
+            ).fetchall()
+
+            source_rows = conn.execute(
+                """SELECT j.source, COUNT(*) AS total,
+                          COUNT(CASE WHEN s.score >= 8 THEN 1 END) AS strong
+                     FROM jobs j
+                     LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
+                    WHERE j.source IS NOT NULL AND j.source != ''
+                    GROUP BY j.source
+                    HAVING total >= 5 AND strong = 0
+                    ORDER BY total DESC""",
+                (profile_id,),
+            ).fetchall()
+
+        return {
+            "over_scored": [dict(r) for r in over_rows],
+            "under_scored": [dict(r) for r in under_rows],
+            "denylist": [dict(r) for r in deny_rows],
+            "sectors": [dict(r) for r in sector_rows],
+            "countries": [dict(r) for r in country_rows],
+            "sources": [dict(r) for r in source_rows],
+        }
 
 
 # ---------------------------------------------------------------------------

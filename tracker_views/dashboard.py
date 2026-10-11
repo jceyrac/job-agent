@@ -112,15 +112,13 @@ def render():
 
     # ── Row 2b: DB stats ───────────────────────────────────────────────────
     st.subheader("Database")
-    with db._conn() as conn:
-        total_jobs      = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        total_scored    = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
-        unscored        = total_jobs - conn.execute(
-            "SELECT COUNT(DISTINCT job_id) FROM job_scores").fetchone()[0]
-        total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
-        total_contacts  = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
-        unverified      = conn.execute(
-            "SELECT COUNT(*) FROM contacts WHERE is_unverified = 1").fetchone()[0]
+    stats = db.get_database_stats()
+    total_jobs      = stats["total_jobs"]
+    total_scored    = stats["total_scores"]
+    unscored        = total_jobs - stats["distinct_scored"]
+    total_companies = stats["total_companies"]
+    total_contacts  = stats["total_contacts"]
+    unverified      = stats["unverified_contacts"]
 
     d1, d2, d3, d4 = st.columns(4)
     d1.metric("Jobs", total_jobs, f"{total_scored} scored")

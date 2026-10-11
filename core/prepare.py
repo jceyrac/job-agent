@@ -549,17 +549,9 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
 
 def _auto_pick_profile(db: JobStorage, job_id: str) -> str | None:
     """Pick the profile with the highest score for this job."""
-    with db._conn() as conn:
-        row = conn.execute(
-            """SELECT profile_id FROM job_scores
-               WHERE job_id = ? AND score IS NOT NULL
-               ORDER BY score DESC LIMIT 1""",
-            (job_id,),
-        ).fetchone()
-    if row:
-        pid = row["profile_id"]
-        if pid in ALL_PROFILES:
-            return pid
+    pid = db.get_best_score_profile_id(job_id)
+    if pid and pid in ALL_PROFILES:
+        return pid
     return None
 
 

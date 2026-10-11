@@ -277,11 +277,7 @@ def _render_detail(company_id: int):
         new_notes = st.text_area("Notes", value=current_notes, height=150, key="co_detail_notes")
         if new_notes != current_notes:
             if st.button("Save Notes", key="co_save_notes"):
-                with db._conn() as conn:
-                    conn.execute(
-                        "UPDATE companies SET notes = ? WHERE id = ?",
-                        (new_notes, company_id),
-                    )
+                db.update_company_fields(company_id, {"notes": new_notes})
                 st.cache_data.clear()
                 st.rerun()
 

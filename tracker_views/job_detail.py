@@ -64,11 +64,7 @@ def _event_title(ev: dict, events: list[dict], idx: int) -> str:
 
 
 def _current_status(db, job_id: str) -> str:
-    with db._conn() as conn:
-        row = conn.execute(
-            "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
-        ).fetchone()
-    return row["status"] if row else "new"
+    return db.get_tracking_status(job_id) or "new"
 
 
 def _render_timeline_event(db, job_id: str, ev: dict, events: list[dict], idx: int):
@@ -337,15 +333,7 @@ def _render_detail(job_id: str):
     st.subheader("Contacts from this posting")
     if company_id:
         # Find contacts linked via discovered_on_posting interactions for this job
-        with db._conn() as conn:
-            rows = conn.execute(
-                """SELECT DISTINCT ct.* FROM contacts ct
-                   JOIN interactions i ON i.contact_id = ct.id
-                   WHERE i.job_id = ? AND i.type = 'discovered_on_posting'
-                   ORDER BY ct.last_seen_at DESC""",
-                (job_id,),
-            ).fetchall()
-        contacts = [dict(r) for r in rows]
+        contacts = db.get_contacts_discovered_for_job(job_id)
         if contacts:
             for ct in contacts:
                 st.caption(

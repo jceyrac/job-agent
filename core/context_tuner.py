@@ -38,95 +38,16 @@ def propose_context_update(
     current_context = profile.scoring_context.strip()
 
     # ── 2. Calibration signals ────────────────────────────────────────────
-    with db._conn() as conn:
-        conn.row_factory = None  # plain tuples for this block
+    signals = db.get_calibration_signals(profile_id)
+    over_rows = signals["over_scored"]
+    under_rows = signals["under_scored"]
+    sector_over = signals["top_sectors"]
+    country_over = signals["top_countries"]
 
-        # Over-scored: archived with score >= 8, excluding Tier-0 cleanups
-        over_rows = conn.execute(
-            """SELECT j.title, j.company, s.score, t.notes
-                 FROM jobs j
-                 JOIN job_tracking t ON j.id = t.job_id
-                 JOIN job_scores s   ON j.id = s.job_id
-                WHERE t.status = 'archived' AND s.score >= 8
-                  AND s.profile_id = ?
-                  AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
-                ORDER BY s.score DESC
-                LIMIT 10""",
-            (profile_id,),
-        ).fetchall()
-
-        # Under-scored: applied or rejected with score <= 6
-        under_rows = conn.execute(
-            """SELECT j.title, j.company, s.score, t.status
-                 FROM jobs j
-                 JOIN job_tracking t ON j.id = t.job_id
-                 JOIN job_scores s   ON j.id = s.job_id
-                WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
-                  AND s.profile_id = ?
-                ORDER BY s.score ASC
-                LIMIT 10""",
-            (profile_id,),
-        ).fetchall()
-
-        # Score distribution per bucket for relevant vs true-negative cohorts
-        buckets = [
-            ("9-10", "s.score >= 9"),
-            ("7-8",  "s.score BETWEEN 7 AND 8"),
-            ("5-6",  "s.score BETWEEN 5 AND 6"),
-            ("0-4",  "s.score <= 4"),
-        ]
-        dist_lines: list[str] = []
-        for label, cond in buckets:
-            # relevant = applied + rejected (non-Tier-0)
-            rel = conn.execute(
-                f"""SELECT COUNT(*) FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
-                     JOIN job_scores s ON j.id = s.job_id
-                    WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
-                      AND s.profile_id = ?
-                      AND {cond}
-                      AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)""",
-                (profile_id,),
-            ).fetchone()[0]
-            # true negative = archived (non-Tier-0)
-            tn = conn.execute(
-                f"""SELECT COUNT(*) FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
-                     JOIN job_scores s ON j.id = s.job_id
-                    WHERE t.status = 'archived'
-                      AND s.profile_id = ?
-                      AND {cond}
-                      AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)""",
-                (profile_id,),
-            ).fetchone()[0]
-            dist_lines.append(f"  {label}: {rel} relevant / {tn} true-negative")
-
-        # Top 5 sector patterns from over-scored archived jobs
-        sector_over = conn.execute(
-            """SELECT COALESCE(c.industry_sector, 'other'), COUNT(*) AS n
-                 FROM jobs j
-                 JOIN job_tracking t ON j.id = t.job_id
-                 JOIN job_scores s ON j.id = s.job_id
-                 LEFT JOIN companies c ON j.company_id = c.id
-                WHERE t.status = 'archived' AND s.score >= 8
-                  AND s.profile_id = ?
-                  AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
-                GROUP BY 1 ORDER BY n DESC LIMIT 5""",
-            (profile_id,),
-        ).fetchall()
-
-        # Top 5 country patterns from over-scored archived jobs
-        country_over = conn.execute(
-            """SELECT COALESCE(j.company_country, 'unknown'), COUNT(*) AS n
-                 FROM jobs j
-                 JOIN job_tracking t ON j.id = t.job_id
-                 JOIN job_scores s ON j.id = s.job_id
-                WHERE t.status = 'archived' AND s.score >= 8
-                  AND s.profile_id = ?
-                  AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
-                GROUP BY 1 ORDER BY n DESC LIMIT 5""",
-            (profile_id,),
-        ).fetchall()
+    dist_lines: list[str] = [
+        f"  {label}: {rel} relevant / {tn} true-negative"
+        for label, rel, tn in signals["score_buckets"]
+    ]
 
     # ── 3. Few-shot anchors ────────────────────────────────────────────────
     anchors = export_few_shot_anchors(profile_id)

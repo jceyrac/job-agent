@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import sqlite3
 import sys
 import time
 from datetime import date
@@ -170,16 +169,6 @@ MOCK_JOBS = [
 ]
 
 
-def _delete_scores_for_profile(db_path: str, profile_id: str) -> int:
-    """Delete all existing scores for this profile. Returns count deleted."""
-    conn = sqlite3.connect(db_path)
-    conn.execute("DELETE FROM job_scores WHERE profile_id = ?", (profile_id,))
-    count = conn.execute("SELECT changes()").fetchone()[0]
-    conn.commit()
-    conn.close()
-    return count
-
-
 def _run_mock(profile) -> None:
     """Score test jobs using the real production path: extract → evaluate. No DB writes."""
     from core.models import JobPosting
@@ -311,28 +300,6 @@ def _run_extraction(limit: int | None = None) -> None:
     print(f"\nExtraction complete: {extracted_count} extracted, {error_count} errors")
 
 
-def _get_jobs_to_score(db_path: str, profile_id: str, rescore: bool) -> list[dict]:
-    """Read jobs from DB that need scoring for this profile.
-    Read-only query — writes go through storage.py as usual."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    if rescore:
-        rows = conn.execute("""
-            SELECT j.* FROM jobs j
-            LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-            WHERE s.status IS NULL OR s.status != 'rejected'
-        """, (profile_id,)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT j.* FROM jobs j
-            LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-            WHERE (s.job_id IS NULL OR s.score IS NULL)
-              AND (s.status IS NULL OR s.status != 'rejected')
-        """, (profile_id,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
 
 
 def main():
@@ -401,7 +368,7 @@ def main():
         print(f"  📋 Company denylist (active profile): {len(denylist)} entries")
 
     if args.rescore:
-        deleted = _delete_scores_for_profile(DB_PATH, profile.id)
+        deleted = db.delete_scores_for_profile(profile.id)
         print(f"--rescore: cleared {deleted} existing scores for '{profile.id}'")
 
     total_in_db = db.get_stats(profile.id)["total"]

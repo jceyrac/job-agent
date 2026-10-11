@@ -49,11 +49,7 @@ def add_company_dialog():
             if status != "prospect":
                 db.set_company_status(cid, status, note="Initial status set at creation")
             if notes.strip():
-                with db._conn() as conn:
-                    conn.execute(
-                        "UPDATE companies SET notes = ? WHERE id = ?",
-                        (notes.strip(), cid),
-                    )
+                db.update_company_fields(cid, {"notes": notes.strip()})
             st.success(f"Company '{name.strip()}' added.")
             st.cache_data.clear()
             time.sleep(0.5)
