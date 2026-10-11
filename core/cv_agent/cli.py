@@ -239,7 +239,7 @@ def _run_fresh(args) -> int:
         reference = args.reference
 
     if not llm.is_configured():
-        print("CV_AGENT_RESULT error  LLM not configured (set LLM_API_KEY / DEEPSEEK_API_KEY)",
+        print("CV_AGENT_RESULT error  LLM not configured (set LLM_API_KEY)",
               file=sys.stderr)
         return 3
 

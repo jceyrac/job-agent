@@ -14,9 +14,9 @@ d'intégration au pipeline `job_agent`.
 
 **Le PM freelance ne se scrape pas** : il se capte par **profil + alerte email** sur
 3-4 plateformes curées, dont deux offrent en plus un board navigable. Le seul point
-d'intégration avec le pipeline est **`email-monitor`** : Malt, Free-Work et LeHibou
-envoient tous les missions par email → un seul parseur email les fait entrer dans le
-digest, sans aucun scraper.
+d'intégration avec le pipeline est **l'ingestion email** (futur agent — roadmap
+step 6b) : Malt, Free-Work et LeHibou envoient tous les missions par email → un
+parseur email les fera entrer dans le digest, sans aucun scraper.
 
 ---
 
@@ -44,7 +44,7 @@ qu'on lit.** C'est frustrant pour un pipeline de scraping, mais c'est le marché
 Le plus gros board de missions IT freelance francophone (ex Freelance-Info). Recherche
 libre, candidature directe, **alertes email**. Agrège de nombreux intermédiaires (dont
 LeHibou). Anti-bot fort (403 au scraping nu) → profil + alerte email, ingérable via
-`email-monitor`.
+l'ingestion email (à venir).
 
 **LeHibou** — `lehibou.com`
 900+ grands comptes clients, 140 000 consultants, missions PM/PO navigables,
@@ -96,7 +96,7 @@ Codeur/5euros (micro-missions), Workana/PeoplePerHour.
 Malt / Free-Work / LeHibou   (profil + alertes)
         │  emails de missions
         ▼
-   email-monitor (démon IMAP, déjà en prod)
+   ingestion email (futur agent — roadmap step 6b)
         │  parse → JobPosting
         ▼
    pipeline → scoring → digest
@@ -106,7 +106,7 @@ Malt / Free-Work / LeHibou   (profil + alertes)
 - **Un seul parseur email** bien fait couvre Malt + Free-Work + LeHibou.
 - Action : une fois les premiers emails reçus, relever leur format (expéditeur, sujet,
   structure) pour écrire le parseur. Créer alors une carte « Parser missions freelance
-  dans email-monitor ».
+  dans l'ingestion email ».
 
 ---
 
@@ -116,7 +116,7 @@ Malt / Free-Work / LeHibou   (profil + alertes)
 2. **Free-Work** + **LeHibou** — profil + alerte cette semaine (board navigable + email).
 3. **Une agence CH** (ITech Consult ou Coopers) — inscription pour le marché régie.
 4. *(plus tard)* Comet / A.Team — screening, flux entrant passif.
-5. *(pipeline)* Parseur email-monitor une fois le format des emails de missions connu.
+5. *(pipeline)* Parseur d'ingestion email une fois le format des emails de missions connu.
 
 ---
 

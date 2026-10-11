@@ -3442,8 +3442,7 @@ class JobStorage:
     def find_jobs_by_company(self, company: str) -> list[dict]:
         """Find applied jobs matching company name (case-insensitive, partial match).
 
-        Used by email_monitor.py to look up the job associated with a
-        recruiter email. Only returns jobs with tracking status 'applied'.
+        Only returns jobs with tracking status 'applied'.
         """
         with self._conn() as conn:
             rows = conn.execute(

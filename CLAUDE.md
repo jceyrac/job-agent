@@ -123,7 +123,7 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 - **Preserve existing logic** — when reorganising, move code verbatim; don't rewrite it.
 - Python 3.11: use `X | Y` union types, f-strings, dataclasses with defaults.
 - No type annotations required unless the function is new and complex.
-- DB access always goes through `JobStorage` methods — never raw `sqlite3` outside `core/storage.py`. Existing raw SQL in `tracker_views/` is a known violation, removed in roadmap step 2 — don't add more.
+- DB access always goes through `JobStorage` methods — never raw `sqlite3` outside `core/storage.py`.
 - No file other than `core/llm.py` names an LLM provider. Never put LLM calls or long-running work inside an HTTP request handler (use the `tasks` table + worker, or a streamed session).
 - No user-dependent data on catalogue entities (`jobs`, `companies`); no user-independent logic keyed by profile (Constitution X).
 - Session state keys follow the pattern `jobs_<name>`, `bg_<name>` etc. — don't add generic keys that could collide across pages.
@@ -134,7 +134,7 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 
 - **Dev:** MacBook Pro M5 Pro, Python 3.11 venv at `.venv/`, repo at `/Users/jeanclaudevd/AI-Suite/job_agent/`. All development happens here.
 - **Prod (verva):** HPE ProLiant Ubuntu server, Docker Compose, repo at `/opt/job-agent`. Deploy-only — never develop or write specs there. SSH access is available for live diagnostics.
-- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `agent` (cron scrape+score). `email-monitor` exists in compose but is not in use.
+- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `agent` (cron scrape+score).
 - **Network:** the production tracker is bound to loopback (`127.0.0.1:8501`) in compose and reached only over the tailnet via `tailscale serve` — see `docs/infrastructure.md`.
 - **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod. Live data lives on verva; the local Mac DB is typically empty.
 - **Locations:** `core/paths.py` is the single source of truth for every path (`PROJECT_ROOT`, `DATA_DIR`, `DB_PATH`, `OUTPUT_DIR`, `ENV_PATH`, `data_path()`). Env overrides: `JOB_AGENT_DATA_DIR` (data dir), `JOB_AGENT_OUTPUT_DIR` (outputs dir); `JOB_AGENT_REQUIRE_DB=1` makes `import core.paths` refuse startup (no dir/DB created) if the DB is missing. Rule: locations come from `core/paths.py` only — never derive `data`/`outputs`/`.env` from `__file__` or a CWD-relative `"data/…"` literal; scripts are launched as modules (`-m <module>`, e.g. `python -m core.scrape`), never by `.py` filename.

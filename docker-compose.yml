@@ -29,22 +29,6 @@ services:
     profiles:
       - manual   # triggered by cron, not kept alive
 
-  email-monitor:
-    build: .
-    container_name: job-email-monitor
-    command: python -m core.email_monitor
-    volumes:
-      - job_data:/app/data
-    env_file:
-      - .env
-    environment:
-      - JOB_AGENT_DATA_DIR=/app/data
-      - JOB_AGENT_REQUIRE_DB=1
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # reach Hydroxide on Ubuntu host
-    profiles:
-      - manual
-
 volumes:
   job_data:
     driver: local

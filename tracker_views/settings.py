@@ -18,7 +18,7 @@ SECRET_SECTOR_CODES = list(SECTOR_LABELS.values())
 # ── Env vars the Setup section manages ──────────────────────────────────────
 # (key, label, required)
 _SETUP_ENV_VARS = [
-    ("DEEPSEEK_API_KEY", "DeepSeek API key (LLM extraction + scoring)", True),
+    ("LLM_API_KEY", "LLM API key (LLM extraction + scoring)", True),
 ]
 
 _SETUP_EMAIL_VARS = [

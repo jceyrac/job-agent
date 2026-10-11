@@ -32,9 +32,9 @@ fi
 
 echo "=== Rebuilding images (all services) ==="
 # Build every service by name — not by profile.
-# Profiles (e.g. "manual" on agent/email-monitor) bypass `docker compose build`
+# Profiles (e.g. "manual" on agent) bypass `docker compose build`
 # with no args, so listing names explicitly guarantees nothing is skipped.
-docker compose build tracker agent email-monitor
+docker compose build tracker agent
 
 echo "=== Verifying images are current ==="
 # Check that the agent image was built within the last 5 minutes (this run).

@@ -89,7 +89,7 @@ implementation phase). From spec 032 `quickstart.md` §7:
 - [ ] **SC-005 live** — health check OK; next nightly `full` run success; Reports
   CSV export works; the Preferences page context-suggest action (`preferences.py`)
   opens the DB.
-- [ ] **Prod guard** — `tracker`/`agent`/`email-monitor` start with
+- [ ] **Prod guard** — `tracker`/`agent` start with
   `JOB_AGENT_DATA_DIR=/app/data` + `JOB_AGENT_REQUIRE_DB=1` (compose `environment`),
   and a deliberately empty `JOB_AGENT_DATA_DIR` fails at startup without creating
   any directory or DB.

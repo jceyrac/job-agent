@@ -248,7 +248,6 @@ Return ONLY JSON:
         {"role": "user", "content": prompt},
     ]
 
-    # DeepSeek
     try:
         raw = llm.call(messages, max_tokens=500, sleep_after=0)
         import json as _json

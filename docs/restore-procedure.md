@@ -98,9 +98,9 @@ under an explicit timestamped name next to the backups (never deleted).
 cd /opt/job-agent
 
 # 1. Stop writers: comment the cron line that runs the agent, then confirm
-#    nothing is still running. (email-monitor is not used in normal operation.)
+#    nothing is still running.
 #    In crontab:  # docker compose run --rm agent
-docker ps --format '{{.Names}}' | grep -E '^job-agent$|^job-email-monitor$' && \
+docker ps --format '{{.Names}}' | grep -E '^job-agent$' && \
   echo "WARNING: a writer is still running — stop it first" || true
 
 # 2. Stop the tracker

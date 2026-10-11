@@ -66,7 +66,6 @@ job_agent/
 ├── prepare.py                # Application package prep (cover letter, CV bullets, research)
 ├── job_actions.py             # extract_one / score_one / contact discovery
 ├── notifier.py                 # Email digest + Joplin export
-├── email_monitor.py             # Parses inbound emails for application status (Proton via Hydroxide)
 │
 ├── scrapers/
 │   ├── base.py            # BaseScraper ABC (enable/disable via config, optional targets=)
@@ -160,12 +159,6 @@ In addition to the wide-net board scrapers, you can mark specific companies as
 
 The app runs natively on **Windows, macOS, and Linux** without Docker. All
 dependencies are pure Python or have prebuilt wheels for all three platforms.
-
-> **Windows note**: `email_monitor.py` (inbound email parsing via Hydroxide,
-> the Proton Mail IMAP bridge) is Linux/macOS only and not needed for the
-> core scrape → score → track flow. Everything else — scraping, scoring,
-> the Streamlit tracker, and the pipeline — works without modification on
-> Windows.
 
 Docker is only required if you want to deploy to a server with the
 always-on `tracker` service and cron-triggered `agent` container (see
@@ -283,11 +276,10 @@ streamlit run tracker.py
 
 ## Deployment
 
-`docker-compose.yml` defines two active services and one experimental one:
+`docker-compose.yml` defines two services:
 
 - **`tracker`** — always-on Streamlit UI on port 8501
 - **`agent`** — `python main.py`, triggered by cron (not kept alive)
-- **`email-monitor`** — experimental; parses inbound recruiter emails via a Proton Mail IMAP bridge (Hydroxide) running on the host. Not used in normal operation — requires manual Hydroxide setup and is Linux/macOS only.
 
 ```bash
 docker compose up -d tracker

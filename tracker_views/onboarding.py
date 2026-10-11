@@ -432,25 +432,24 @@ def _render_generate():
     if cv_text:
         st.caption(f"CV: {len(cv_text):,} characters of text extracted")
 
-    # Guard: GROQ_API_KEY must be set — offer inline entry (Settings is
+    # Guard: LLM_API_KEY must be set — offer inline entry (Settings is
     # unreachable during first-run gating, so the user must set it here).
-    if not env_is_set("GROQ_API_KEY"):
+    if not env_is_set("LLM_API_KEY"):
         st.info(
-            "To write your scoring rubric, the app needs a free Groq API key. "
+            "To write your scoring rubric, the app needs an LLM API key. "
             "It's used only on your machine."
         )
         st.markdown(
-            "Create a free account (no credit card) and generate a key at "
-            "[console.groq.com/keys](https://console.groq.com/keys) — it starts "
-            "with `gsk_`."
+            "Set `LLM_API_KEY` in `.env` (see `.env.example` for the provider, "
+            "model, and base URL)."
         )
-        new_key = st.text_input("Groq API key", type="password",
-                                placeholder="gsk_…", label_visibility="collapsed")
+        new_key = st.text_input("LLM API key", type="password",
+                                placeholder="sk-…", label_visibility="collapsed")
         c1, c2 = st.columns([1, 4])
         with c1:
             if st.button("Save key", type="primary"):
                 if new_key.strip():
-                    set_secret("GROQ_API_KEY", new_key)
+                    set_secret("LLM_API_KEY", new_key)
                     st.success("Key saved.")
                     st.rerun()
                 else:

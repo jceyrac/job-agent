@@ -265,7 +265,7 @@ def _call_prepare_model(system: str, user: str,
                         json_mode: bool = True,
                         max_tokens: int = 800) -> tuple[str, str]:
     """
-    Call DeepSeek for preparation tasks.
+    Call the LLM for preparation tasks.
 
     Returns (response_text, model_name).
     """
@@ -276,7 +276,7 @@ def _call_prepare_model(system: str, user: str,
 
     raw = llm.call(messages, json_mode=json_mode, max_tokens=max_tokens, sleep_after=0)
     time.sleep(1)
-    return raw, "deepseek-chat"
+    return raw, llm.MODEL
 
 
 def _safe_json_parse(raw: str, label: str) -> dict | None:
@@ -723,7 +723,7 @@ def _run_ready(limit: int | None = None) -> None:
     print(f"Preparation complete: {prepared} prepared, {errors} errors")
     if models_used:
         print(f"Models used: {dict(models_used)}")
-    print(f"Fallback calls (DeepSeek): {fallback_total}")
+    print(f"Fallback calls (LLM): {fallback_total}")
     print(f"Languages: {dict(languages)}")
 
 

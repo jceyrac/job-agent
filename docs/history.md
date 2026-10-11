@@ -11,3 +11,12 @@ from git history with the command in the last column.
 | `tracker_legacy.py` | Original single-page Streamlit tracker, superseded by `tracker.py` | `ba728df` | `git show ba728df:tracker_legacy.py` |
 | `test_wellfound.py` | Ad-hoc live-scrape test at the root (never collected by pytest) | `8715e10` | `git show 8715e10:test_wellfound.py` |
 | `CONTEXT.md` | Stale project reference doc, superseded by `CLAUDE.md` + constitution + `docs/roadmap-api.md` | `33871df` | `git show 33871df:CONTEXT.md` |
+
+## Removed files (roadmap step 2c, spec 037)
+
+Modules removed on 2026-10-11. Each is still retrievable from git history with the
+command in the last column.
+
+| File | Purpose | Last commit | Retrieve |
+|---|---|---|---|
+| `core/email_monitor.py` | Parsed inbound recruiter emails (Proton via Hydroxide IMAP bridge) and auto-updated `job_tracking` status via the Groq SDK — unused and unimportable (no `groq` dependency); its function returns as an API-based agent (roadmap step 6b) | `ba728df` | `git show ba728df:core/email_monitor.py` |

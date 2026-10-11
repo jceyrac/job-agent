@@ -564,7 +564,7 @@ def _parse_int_or_none(raw) -> int | None:
 
 def score_job(job: dict, scoring_context=None) -> dict | None:
     """
-    Scores a job posting using DeepSeek.
+    Scores a job posting using the LLM.
 
     Args:
         job: dict with keys title, company, location, base_location, description.
@@ -573,7 +573,7 @@ def score_job(job: dict, scoring_context=None) -> dict | None:
 
     Returns a dict with keys: score, reason, summary, work_mode, company_size,
     contract_type, geo_zone, scored_by.
-    Returns None when DeepSeek is not configured or the API key is missing.
+    Returns None when the LLM is not configured or the API key is missing.
     """
     if scoring_context is None:
         scoring_context = ""
@@ -606,8 +606,8 @@ def score_job(job: dict, scoring_context=None) -> dict | None:
         return result
     except Exception as e:
         msg = str(e)
-        if "DEEPSEEK_API_KEY" in msg or "not set" in msg:
-            print(f"  ⚠️  DeepSeek not configured — scoring skipped")
+        if "LLM_API_KEY" in msg or "not set" in msg:
+            print(f"  ⚠️  LLM not configured — scoring skipped")
             return None
         print(f"  ❌  score_job failed for '{job.get('title', '')}': {e}")
         raise
@@ -618,7 +618,7 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
     Profile-independent extraction of structured fields from a job description.
 
     Skips jobs where extracted_at is already set (idempotent).
-    Calls DeepSeek directly. Returns the updated JobPosting, or None on failure.
+    Calls the LLM directly. Returns the updated JobPosting, or None on failure.
     """
     if job.extracted_at is not None:
         return job
@@ -650,14 +650,14 @@ def extract_job_fields(job: JobPosting) -> JobPosting | None:
         model = llm.MODEL
         time.sleep(1)
     except Exception as e:
-        if "DEEPSEEK_API_KEY" in str(e) or "not set" in str(e):
-            print(f"  ⚠️  DeepSeek not configured — extraction skipped for '{job.title}'")
+        if "LLM_API_KEY" in str(e) or "not set" in str(e):
+            print(f"  ⚠️  LLM not configured — extraction skipped for '{job.title}'")
         else:
-            print(f"  ❌  DeepSeek extraction failed for '{job.title}': {e}")
+            print(f"  ❌  LLM extraction failed for '{job.title}': {e}")
         return None
 
     if not raw or not raw.strip():
-        print(f"  ❌  Empty response from DeepSeek for '{job.title}'")
+        print(f"  ❌  Empty response from LLM for '{job.title}'")
         return None
 
     try:
@@ -704,7 +704,7 @@ _EVAL_PASSTHROUGH_KEYS = [
     "country_code",
 ]
 
-# Sources whose contract_type takes authority over Groq inference.
+# Sources whose contract_type takes authority over LLM inference.
 # When a scraper populates contract_type from source data, add its
 # SOURCE_NAME here. See spec 024b, FR-008.
 AUTHORITATIVE_CONTRACT_SOURCES: set[str] = set()
@@ -882,8 +882,8 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
         return _evaluation_result(score, reason, model, job, profile, comp_flag=comp_flag)
     except Exception as e:
         msg = str(e)
-        if "DEEPSEEK_API_KEY" in msg or "not set" in msg:
-            print(f"  ⚠️  DeepSeek not configured — evaluation skipped")
+        if "LLM_API_KEY" in msg or "not set" in msg:
+            print(f"  ⚠️  LLM not configured — evaluation skipped")
             return None
         print(f"  ❌  evaluate_for_profile failed for '{job.title}': {e}")
         raise
@@ -903,7 +903,7 @@ if __name__ == "__main__":
 
     result = score_job(test_job)
     if result is None:
-        print("Scoring failed — DeepSeek not configured")
+        print("Scoring failed — LLM not configured")
     else:
         print(f"Model          : {result['scored_by']}")
         print(f"Score          : {result['score']}/10")
