@@ -1,7 +1,17 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 2.0.0 → 2.0.1
+  Version change: 2.0.1 → 2.0.2
+  Bump rationale: PATCH — suppression des violations connues résolues par
+  l'étape 2 (spec 037) : SQL brut dans tracker_views/ (2a) et mentions
+  résiduelles de Groq hors core/llm.py (2c). Les subprocess lancés par le
+  tracker restent une violation connue (2b). Aucun changement de sens.
+
+  Modified sections:
+    - Known violations at ratification — retrait du SQL brut de
+      tracker_views/ et des mentions de Groq ; subprocess conservés (2b).
+
+  Prior version (2.0.1) :
   Bump rationale: PATCH — déplacement du domaine vers `core/` (spec 034,
   étape 1c) ; réécriture des références de fichiers (Stable core, flux de
   données, DB access, tests, Principes II et VII) de la racine vers `core/`.
@@ -39,11 +49,7 @@
     - job_tracking, status_history, job_applications, interactions,
       contacts sans `user_id` ; `companies.monitored` sur l'entité
       partagée (Principe X) → étape 3.
-    - SQL brut dans tracker_views/ et subprocess lancés par le tracker
-      (Architecture Constraints) → étape 2.
-    - Mentions résiduelles de Groq dans scorer.py,
-      tracker_views/onboarding.py et email_monitor.py (Principe VII)
-      → étape 2.
+    - subprocess lancés par le tracker (Architecture Constraints) → étape 2.
 
   Templates requiring updates:
     - .specify/templates/plan-template.md     ✅ No changes needed
@@ -367,4 +373,4 @@ constitution, la constitution prévaut.
 - Les violations connues listées dans le Sync Impact Report sont tolérées
   jusqu'à l'étape de roadmap qui les résout.
 
-**Version**: 2.0.1 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-09
+**Version**: 2.0.2 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-11
