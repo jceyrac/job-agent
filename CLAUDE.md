@@ -205,6 +205,8 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the roadmap at
-docs/roadmap-api.md (step 3 — séparation des espaces; no dedicated plan yet).
+shell commands, and other important information, read the current plan at
+specs/038-cv-contact-profile-eu-rule/plan.md (deterministic CV contact profile —
+Swiss only for CH-based jobs). The API migration roadmap stays at docs/roadmap-api.md
+(next: step 3 — séparation des espaces).
 <!-- SPECKIT END -->
