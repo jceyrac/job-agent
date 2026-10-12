@@ -199,12 +199,12 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-11)
+## Current focus (as of 2026-10-12)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Next: step 2 (assainissement).
+**API migration roadmap** — `docs/roadmap-api.md`. Next: step 3 (séparation des espaces).
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
-at specs/037-single-db-access-path/plan.md
+shell commands, and other important information, read the roadmap at
+docs/roadmap-api.md (step 3 — séparation des espaces; no dedicated plan yet).
 <!-- SPECKIT END -->

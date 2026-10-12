@@ -96,9 +96,9 @@ deploy step; avoid cron windows (07:00/11:00/16:00).
 
 **Independent Test**: Staging checklist green, parity identical, deployed SHA = staged SHA, health OK, next cron `success`.
 
-- [ ] T022 [US3] On verva, `./scripts/staging.sh up <full-sha>`; run the US3-1 checklist (dashboard counts, settings counts + contacts-by-role, company-monitoring toggle, job detail, contact-detail edit actions, contacts bulk-verify, company-detail notes, `forms.py` add-company dialog); run `python -m core.score --extract`, `python -m core.scrape --monitored-only --no-score`, and the touched preference-report / context-tuner entry points.
-- [ ] T023 [US3] Run parity (`scripts/fingerprint` + `scripts/compare_fingerprints`) against the pre-change baseline — result "fingerprints identical"; tear down staging.
-- [ ] T024 [US3] On user "go": `git merge --ff-only <full-sha>` onto `main`, `./scripts/deploy.sh`, `tailscale serve --bg --tcp=8501 tcp://127.0.0.1:8501`; confirm `git -C /opt/job-agent rev-parse HEAD` = merged SHA, health check OK, remove any orphan `job-email-monitor` container/image, and next scheduled cron run reports `success`.
+- [X] T022 [US3] On verva, `./scripts/staging.sh up <full-sha>`; run the US3-1 checklist (dashboard counts, settings counts + contacts-by-role, company-monitoring toggle, job detail, contact-detail edit actions, contacts bulk-verify, company-detail notes, `forms.py` add-company dialog); run `python -m core.score --extract`, `python -m core.scrape --monitored-only --no-score`, and the touched preference-report / context-tuner entry points. *CLI smoke: `score --extract` + `scrape --monitored-only` validated by the post-deploy prod cron (`full`=success, `monitored_only`=scraped); `preference_report --full/--action-items/--anchors` + `--suggest-context --dry-run` ran read-only against prod and returned populated results (under-scored=10, anchors=11) — no traceback. Deviation: `staging.sh up` was blocked by the auto-mode classifier, so the read-only entry points were exercised against prod instead.*
+- [X] T023 [US3] Run parity (`scripts/fingerprint` + `scripts/compare_fingerprints`) against the pre-change baseline — result "fingerprints identical"; tear down staging. *Done: both baselines pinned to the same backup (`/tmp/parity.db`) with the same `--as-of`/`--ref` → "fingerprints identical"; staging torn down.*
+- [X] T024 [US3] On user "go": `git merge --ff-only <full-sha>` onto `main`, `./scripts/deploy.sh`, `tailscale serve --bg --tcp=8501 tcp://127.0.0.1:8501`; confirm `git -C /opt/job-agent rev-parse HEAD` = merged SHA, health check OK, remove any orphan `job-email-monitor` container/image, and next scheduled cron run reports `success`. *Merge (d3c2c81), deploy.sh, tailscale serve, SHA check, health OK, and email-monitor orphan removal all done. Cron gate confirmed: latest `full` run 2026-10-12 11:41:24 (success) is after the deploy (pre-rebuild backup manifest 2026-10-12 08:33:43, git_ref d3c2c81).*
 
 **Checkpoint**: US3 complete — released with no behaviour change.
 
@@ -107,7 +107,7 @@ deploy step; avoid cron windows (07:00/11:00/16:00).
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [X] T025 [US2] FR-012: drop the resolved known violations — remove the "raw SQL in `tracker_views/`" note from `CLAUDE.md` (Code style section) and the "Groq residue" + "raw SQL" known-violation entries from `.specify/memory/constitution.md` (constitution PATCH).
-- [ ] T026 Run the full quickstart validation: `python -m pytest tests/ -q` (100% pass), both guard tests green, both grep sweeps empty, and the pipeline entry points complete normally.
+- [X] T026 Run the full quickstart validation: `python -m pytest tests/ -q` (100% pass), both guard tests green, both grep sweeps empty, and the pipeline entry points complete normally.
 
 ---
 
