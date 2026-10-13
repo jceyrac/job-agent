@@ -2452,12 +2452,12 @@ def test_lifecycle_migration_backfill_idempotent():
             (job.id, job.title, job.company, cid, job.url, job.source, _now(), _now()),
         )
         conn.execute(
-            "INSERT INTO job_tracking (job_id, status, changed_at) VALUES (?, 'applied', '2026-08-20')",
-            (job.id,),
+            "INSERT INTO job_tracking (user_id, job_id, status, changed_at) VALUES (?, ?, 'applied', '2026-08-20')",
+            (db.user_id, job.id),
         )
         conn.execute(
-            "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, 'applied', '2026-08-20')",
-            (job.id,),
+            "INSERT INTO status_history (user_id, job_id, status, changed_at) VALUES (?, ?, 'applied', '2026-08-20')",
+            (db.user_id, job.id),
         )
         # Drop the guard so the backfill re-runs.
         conn.execute("DELETE FROM migrations WHERE name = 'backfill_lifecycle_events'")
@@ -2939,19 +2939,22 @@ def test_get_watching_companies_by_method_returns_matching():
     assert "impossiblecloud" not in slugs, "lever company should not appear in greenhouse query"
 
 
-def test_get_watching_companies_by_method_excludes_watch_ready():
-    """Companies at watch_ready are NOT returned — only watching."""
+def test_get_watching_companies_by_method_excludes_unmonitored():
+    """Companies not watched by any user (uc.monitored=0) are NOT returned."""
     db = JobStorage(":memory:")
     _setup_test_companies(db)
-    # Move one to watch_ready
+    # Unwatch dfinity
     with db._conn() as conn:
-        conn.execute("UPDATE companies SET monitoring_status='watch_ready' WHERE ats_identifier='dfinity'")
+        conn.execute(
+            "UPDATE user_companies SET monitored=0 WHERE company_id=101 AND user_id=?",
+            (db.user_id,),
+        )
         conn.commit()
 
     rows = db.get_watching_companies_by_method("greenhouse")
     slugs = {r["ats_identifier"] for r in rows}
-    assert "dfinity" not in slugs, "watch_ready should be excluded"
-    assert "iohk-cardano" in slugs, "watching should still be returned"
+    assert "dfinity" not in slugs, "unmonitored company should be excluded"
+    assert "iohk-cardano" in slugs, "monitored company should still be returned"
 
 
 def test_get_watching_companies_by_method_excludes_watch_pending():
@@ -3040,7 +3043,7 @@ def test_scraper_helper_seed_merge_workable():
     # Make Impossible Cloud a workable company (not in seed) so it appears as DB-only
     with db._conn() as conn:
         conn.execute("""UPDATE companies SET scraping_method='workable',
-                        monitoring_status='watching' WHERE ats_identifier='impossiblecloud'""")
+                        monitoring_status='watch_ready' WHERE ats_identifier='impossiblecloud'""")
         conn.commit()
 
     slugs = get_workable_slugs(db)
@@ -3064,30 +3067,42 @@ def test_scraper_helper_graceful_with_none_db():
 
 
 def _setup_test_companies(db: JobStorage) -> None:
-    """Insert test company rows for spec 006-pre tests."""
+    """Insert test company rows for spec 006-pre tests.
+
+    Companies are inserted as watch_ready + user-monitored (the spec-039 shape:
+    the watch request lives on `user_companies.monitored`, the capability on
+    `companies.monitoring_status = 'watch_ready'`).
+    """
     with db._conn() as conn:
-        conn.executescript("""
+        conn.execute("""
             INSERT INTO companies (id, name, name_normalized, ats_identifier, ats_provider,
                                    scraping_method, monitoring_status,
                                    first_seen_at, last_seen_at, created_at)
             VALUES (101, 'Dfinity / ICP', 'dfinity', 'dfinity', 'greenhouse',
-                    'greenhouse', 'watching',
-                    datetime('now'), datetime('now'), datetime('now'));
-
+                    'greenhouse', 'watch_ready',
+                    datetime('now'), datetime('now'), datetime('now'))
+        """)
+        conn.execute("""
             INSERT INTO companies (id, name, name_normalized, ats_identifier, ats_provider,
                                    scraping_method, monitoring_status,
                                    first_seen_at, last_seen_at, created_at)
             VALUES (102, 'IOHK / Cardano', 'iohk', 'iohk-cardano', 'greenhouse',
-                    'greenhouse', 'watching',
-                    datetime('now'), datetime('now'), datetime('now'));
-
+                    'greenhouse', 'watch_ready',
+                    datetime('now'), datetime('now'), datetime('now'))
+        """)
+        conn.execute("""
             INSERT INTO companies (id, name, name_normalized, ats_identifier, ats_provider,
                                    scraping_method, monitoring_status,
                                    first_seen_at, last_seen_at, created_at)
             VALUES (103, 'Impossible Cloud', 'impossiblecloud', 'impossiblecloud', 'lever',
-                    'lever', 'watching',
-                    datetime('now'), datetime('now'), datetime('now'));
+                    'lever', 'watch_ready',
+                    datetime('now'), datetime('now'), datetime('now'))
         """)
+        conn.executemany(
+            "INSERT INTO user_companies (user_id, company_id, status, monitored, created_at) "
+            "VALUES (?, ?, 'prospect', 1, datetime('now'))",
+            [(db.user_id, 101), (db.user_id, 102), (db.user_id, 103)],
+        )
         conn.commit()
 
 

@@ -168,16 +168,18 @@ def test_fingerprint_as_of_pins_dashboard_windows(tmp_path):
     src = tmp_path / "src.db"
     JobStorage(str(src))  # schema
     conn = sqlite3.connect(str(src))
+    uid = conn.execute("SELECT value FROM config WHERE key='default_user_id'").fetchone()[0]
     conn.execute(
         "INSERT INTO companies (name, name_normalized, first_seen_at, last_seen_at, created_at) "
         "VALUES ('Acme', 'acme', '2020-01-01', '2020-01-01', '2020-01-01')"
     )
     conn.execute(
         "INSERT INTO interactions "
-        "(company_id, contact_id, job_id, type, direction, outcome, subject, body_excerpt, "
+        "(user_id, company_id, contact_id, job_id, type, direction, outcome, subject, body_excerpt, "
         " occurred_at, follow_up_due_at, created_at) "
-        "VALUES (1, NULL, NULL, 'email', 'outbound', NULL, NULL, NULL, "
-        " '2020-01-01', '2020-06-15', '2020-01-01')"
+        "VALUES (?, 1, NULL, NULL, 'email', 'outbound', NULL, NULL, NULL, "
+        " '2020-01-01', '2020-06-15', '2020-01-01')",
+        (uid,),
     )
     conn.commit()
     conn.close()
