@@ -37,17 +37,14 @@ Return STRICT JSON:
 {
   "fit_recap": "...",
   "angle": "...",
-  "proposed_profile": "swiss" | "french",
-  "profile_confidence": 0.82,
   "gaps": ["...", "..."]
 }
 - fit_recap: 2–3 sentences summarising why this role fits, referencing the stored score/reason.
 - angle: the single positioning angle to lead the CV with (e.g. "institutional finance + B2B APIs").
-- proposed_profile: "swiss" when the role is in Switzerland / a Swiss employer / CH-viable
-  remote; "french" when it targets France. Default "swiss" when uncertain.
-- profile_confidence: 0.0–1.0.
 - gaps: weaknesses or missing keywords the tailoring should address.
-IMPORTANT: do NOT include a score — the scorer already decided it."""
+IMPORTANT: do NOT include a score — the scorer already decided it.
+IMPORTANT: do NOT propose a contact profile or country — that is decided
+deterministically from the job (spec 038)."""
 
 # ── tailor_cv (FR-008) ─────────────────────────────────────────────────────
 TAILOR_CV_PROMPT = """You re-angle a master CV for a specific job, preserving FACTUAL INTEGRITY:

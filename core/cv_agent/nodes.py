@@ -34,6 +34,7 @@ from core.models import JobPosting, posting_from_dict
 from core.paths import CV_PIPELINE_DIR, DB_PATH
 from core.scorer import extract_job_fields, evaluate_for_profile
 from core.storage import JobStorage
+from core.geo_ch import compute_contact_profile
 
 from core.cv_agent.prompts import (
     ANALYZE_AND_PLAN_PROMPT,
@@ -224,9 +225,13 @@ def _persist_and_populate(job: JobPosting, db, profile_id: str, kind: str) -> di
 def resolve_reference(state: dict) -> dict:
     """Resolve ``reference`` (job_id | url | paste) into a JobPosting-shaped state.
 
-    Reads: ``reference``, ``profile_id``.
+    Reads: ``reference``, ``profile_id``, ``contact_override``, ``country_override``.
     Writes: ``entry_kind``, ``job``, ``job_id``, ``description_text``,
-            ``score``, ``score_reason``.
+            ``score``, ``score_reason``, ``proposed_profile``,
+            ``contact_profile_source``, ``contact_profile_flag``.
+
+    The contact profile is computed **here**, deterministically (Constitution §IV,
+    spec 038) — never by ``analyze_and_plan``/the LLM.
     """
     reference = state["reference"]
     profile_id = state.get("profile_id")
@@ -243,7 +248,7 @@ def resolve_reference(state: dict) -> dict:
             )
         job = posting_from_dict(row)
         score_result = db.get_score_result(job.id, profile_id)
-        return {
+        out = {
             "entry_kind": "id",
             "job": job.to_json(),
             "job_id": job.id,
@@ -251,20 +256,30 @@ def resolve_reference(state: dict) -> dict:
             "score": score_result["score"] if score_result else None,
             "score_reason": score_result["reason"] if score_result else None,
         }
+    elif kind == "url":
+        out = _persist_and_populate(_fetch_url_job(reference), db, profile_id, "url")
+    else:
+        # paste: the reference *is* the posting text (from stdin). Title/company are
+        # seeded by the CLI (--title/--company, or an up-front prompt) because they
+        # drive job_id and the output folder — never LLM-extracted (Constitution §IV).
+        job = JobPosting(
+            source="paste",
+            title=(state.get("job_title") or "").strip(),
+            company=(state.get("job_company") or "").strip(),
+            location="", url="", description=reference[:3000],
+        )
+        out = _persist_and_populate(job, db, profile_id, "paste")
 
-    if kind == "url":
-        return _persist_and_populate(_fetch_url_job(reference), db, profile_id, "url")
-
-    # paste: the reference *is* the posting text (from stdin). Title/company are
-    # seeded by the CLI (--title/--company, or an up-front prompt) because they
-    # drive job_id and the output folder — never LLM-extracted (Constitution §IV).
-    job = JobPosting(
-        source="paste",
-        title=(state.get("job_title") or "").strip(),
-        company=(state.get("job_company") or "").strip(),
-        location="", url="", description=reference[:3000],
+    # Deterministic contact profile (Constitution §IV / spec 038): --contact →
+    # --country → jobs.country_code (id) → location detector → french.
+    profile, source, flag = compute_contact_profile(
+        out["entry_kind"], out["job"],
+        state.get("contact_override"), state.get("country_override"),
     )
-    return _persist_and_populate(job, db, profile_id, "paste")
+    out["proposed_profile"] = profile
+    out["contact_profile_source"] = source
+    out["contact_profile_flag"] = flag
+    return out
 
 
 # ── node 2: refresh_context (optional, deterministic) ──────────────────────
@@ -329,11 +344,13 @@ def extract_requirements(state: dict) -> dict:
 # ── node 4: analyze_and_plan (llm) ─────────────────────────────────────────
 
 def analyze_and_plan(state: dict) -> dict:
-    """Produce the fit recap + angle + contact-profile plan (FR-006).
+    """Produce the fit recap + angle only (FR-006).
 
     Reads the stored ``score`` / ``score_reason`` only — it **never emits a
-    score** (the scorer is the sole fit judge, Constitution §I).
-    Writes: ``fit_analysis``, ``proposed_profile``, ``profile_confidence``.
+    score** (the scorer is the sole fit judge, Constitution §I), and it no
+    longer proposes the contact profile (that is deterministic in
+    ``resolve_reference`` — Constitution §IV, spec 038).
+    Writes: ``fit_analysis``.
     """
     _progress("Analyzing fit & planning the angle…")
     job = state.get("job") or {}
@@ -353,27 +370,12 @@ def analyze_and_plan(state: dict) -> dict:
     )
     data = _parse_json(raw)
 
-    proposed = data.get("proposed_profile", "swiss")
-    if proposed not in ("swiss", "french"):
-        proposed = "swiss"
-    confidence = data.get("profile_confidence", 0.5)
-    try:
-        confidence = float(confidence)
-    except (TypeError, ValueError):
-        confidence = 0.5
-
     fit_analysis = {
         "fit_recap": data.get("fit_recap", ""),
         "angle": data.get("angle", ""),
-        "proposed_profile": proposed,
-        "profile_confidence": confidence,
         "gaps": data.get("gaps", []),
     }
-    return {
-        "fit_analysis": fit_analysis,
-        "proposed_profile": proposed,
-        "profile_confidence": confidence,
-    }
+    return {"fit_analysis": fit_analysis}
 
 
 # ── node 5: analysis_gate (gate) ───────────────────────────────────────────
@@ -395,7 +397,8 @@ def analysis_gate(state: dict) -> dict:
         "score_reason": state.get("score_reason"),
         "fit_analysis": state.get("fit_analysis"),
         "proposed_profile": state.get("proposed_profile"),
-        "profile_confidence": state.get("profile_confidence"),
+        "contact_profile_source": state.get("contact_profile_source"),
+        "contact_profile_flag": state.get("contact_profile_flag"),
         "job_title": job.get("title"),
         "job_company": job.get("company"),
     }
@@ -411,6 +414,8 @@ def analysis_gate(state: dict) -> dict:
     override = decision.get("proposed_profile")
     if override in ("swiss", "french"):
         out["proposed_profile"] = override
+        out["contact_profile_source"] = "explicit"
+        out["contact_profile_flag"] = None
     # Company/Title overrides (closed-board correction): patch the job so the slug,
     # render folder, and the LLM context all see the corrected values downstream.
     patches = {
@@ -581,7 +586,7 @@ def render(state: dict) -> dict:
     return {
         "output_paths": render_documents(
             state.get("cv_content") or {},
-            state.get("proposed_profile", "swiss"),
+            state.get("proposed_profile"),
             state.get("slug") or "job",
             state.get("job") or {},
             output_root,

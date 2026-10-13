@@ -30,6 +30,8 @@ class CVAgentState(TypedDict, total=False):
     thread_id: str          # deterministic checkpoint key (seeded by the CLI; surfaced in review.json)
     job_title: str          # job title (--title); required for --paste --auto — drives job_id + folder
     job_company: str        # company name (--company); required for --paste --auto — drives job_id + folder
+    contact_override: str   # --contact swiss|french (explicit override; wins over everything)
+    country_override: str   # --country <ISO2|name> (explicit country; wins over db/detector)
 
     # ── resolve_reference / refresh_context ────────────────────────────────
     entry_kind: str         # "id" | "url" | "paste" (recorded for audit)
@@ -38,6 +40,9 @@ class CVAgentState(TypedDict, total=False):
     description_text: str   # effective description used downstream
     score: int              # read-only downstream — the scorer is the sole judge
     score_reason: str
+    proposed_profile: str   # "swiss" | "french" — deterministic (never the LLM), spec 038
+    contact_profile_source: str  # explicit | explicit_country | db_country | detected | default
+    contact_profile_flag: str    # mixed_locations | unknown_country | None
 
     # ── extract_requirements ───────────────────────────────────────────────
     requirements: dict      # {critical_requirements, ats_keywords, letter_required, ...}
@@ -45,9 +50,7 @@ class CVAgentState(TypedDict, total=False):
     recruiter_contact: dict  # {name, email, linkedin_url} | None
 
     # ── analyze_and_plan ───────────────────────────────────────────────────
-    fit_analysis: dict      # {fit_recap, angle, proposed_profile, profile_confidence, gaps}
-    proposed_profile: str   # "swiss" | "french" (overridable at analysis_gate)
-    profile_confidence: float  # 0–1
+    fit_analysis: dict      # {fit_recap, angle, gaps} (no profile decision, spec 038)
 
     # ── analysis_gate ──────────────────────────────────────────────────────
     decision: str           # "proceed" | "abort"

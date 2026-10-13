@@ -124,6 +124,45 @@ def test_roles_match_master_fails_on_mismatch(one_page_pdf):
     assert _result(results, "roles_match_master")["status"] == "fail"
 
 
+def _master_with_optional() -> dict:
+    m = _master()
+    m["optional_roles"] = [
+        {"title": "Advisor", "dates": "Jan 2022 – Dec 2023",
+         "sub": "Consulting Co – Zurich", "bullets": ["Advised on APIs."]},
+    ]
+    return m
+
+
+def test_roles_match_master_accepts_optional_role(one_page_pdf):
+    data = _clean_rendered()
+    data["roles"] = [
+        {"title": "Advisor", "dates": "Jan 2022 – Dec 2023",
+         "sub": "Consulting Co – Zurich", "bullets": ["Advised on APIs."]},
+    ]
+    results, _ = run_lint(data, one_page_pdf, _master_with_optional())
+    assert _result(results, "roles_match_master")["status"] == "pass"
+
+
+def test_roles_match_master_fails_altered_optional_dates(one_page_pdf):
+    data = _clean_rendered()
+    data["roles"] = [
+        {"title": "Advisor", "dates": "Feb 2022 – Dec 2023",
+         "sub": "Consulting Co – Zurich", "bullets": ["Advised on APIs."]},
+    ]
+    results, _ = run_lint(data, one_page_pdf, _master_with_optional())
+    assert _result(results, "roles_match_master")["status"] == "fail"
+
+
+def test_roles_match_master_fails_altered_optional_sub(one_page_pdf):
+    data = _clean_rendered()
+    data["roles"] = [
+        {"title": "Advisor", "dates": "Jan 2022 – Dec 2023",
+         "sub": "Consulting Co – Geneva", "bullets": ["Advised on APIs."]},
+    ]
+    results, _ = run_lint(data, one_page_pdf, _master_with_optional())
+    assert _result(results, "roles_match_master")["status"] == "fail"
+
+
 # ── current_role_first ──────────────────────────────────────────────────────
 
 def test_current_role_first_fails_when_present_not_first(one_page_pdf):
@@ -146,6 +185,36 @@ def test_contact_consistency_fails_ch_base_with_fr_contact(one_page_pdf):
     data["profile"] = "Based in Lausanne, fintech PM."
     results, _ = run_lint(data, one_page_pdf, _master())
     assert _result(results, "contact_consistency")["status"] == "fail"
+
+
+def test_contact_consistency_passes_bare_country_token(one_page_pdf):
+    # "France's market-leading bank" describes a past product, not a base (US2-1).
+    data = _clean_rendered()
+    data["contact"] = "CH"
+    data["profile"] = "Owned France's market-leading bank-data aggregation API."
+    results, _ = run_lint(data, one_page_pdf, _master())
+    assert _result(results, "contact_consistency")["status"] == "pass"
+
+
+def test_contact_consistency_passes_relocation_intent(one_page_pdf):
+    # "open to relocating to Lausanne" is future intent, not a base (US2-3).
+    data = _clean_rendered()
+    data["contact"] = "FR"
+    data["profile"] = "Open to relocating to Lausanne."
+    results, _ = run_lint(data, one_page_pdf, _master())
+    assert _result(results, "contact_consistency")["status"] == "pass"
+
+
+def test_contact_consistency_passes_role_subline(one_page_pdf):
+    # A past-employer sub-line ("Paris, France") is outside the checked blob (US2-4).
+    data = _clean_rendered()
+    data["contact"] = "CH"
+    data["roles"] = [
+        {"title": "Product Manager", "dates": "Apr 2024 – Jun 2026",
+         "sub": "Acme – Paris, France", "bullets": ["Owned roadmap."]},
+    ]
+    results, _ = run_lint(data, one_page_pdf, _master())
+    assert _result(results, "contact_consistency")["status"] == "pass"
 
 
 # ── in_progress_courses ─────────────────────────────────────────────────────

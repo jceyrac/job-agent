@@ -30,6 +30,7 @@ ALLOWED_CORE_MODULES = {
     "core.profiles",  # ALL_PROFILES, SearchProfile, load_active_profile
     "core.scorer",    # extract_job_fields, evaluate_for_profile (sole fit judge)
     "core.storage",   # JobStorage
+    "core.geo_ch",    # deterministic contact-profile classifier (spec 038)
 }
 
 # (C) Empty: no domain module may import the agent (launch is ``-m core.cv_agent.cli``).

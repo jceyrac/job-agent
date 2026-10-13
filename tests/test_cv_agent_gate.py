@@ -25,7 +25,8 @@ def _state(**overrides):
         "score_reason": "good fit",
         "fit_analysis": {"fit_recap": "ok", "angle": "payments", "gaps": []},
         "proposed_profile": "swiss",
-        "profile_confidence": 0.8,
+        "contact_profile_source": "detected",
+        "contact_profile_flag": None,
         "job": {"title": "", "company": "", "url": "https://example.com/job"},
     }
     state.update(overrides)
@@ -144,9 +145,10 @@ def _review_state(tmp_path) -> dict:
         "entry_kind": "id",
         "requirements": {"critical_requirements": ["payments"], "ats_keywords": ["PSD2"],
                          "letter_required": True, "recruiter_contact": None},
-        "fit_analysis": {"fit_recap": "ok", "angle": "payments", "gaps": [],
-                         "proposed_profile": "swiss", "profile_confidence": 0.8},
+        "fit_analysis": {"fit_recap": "ok", "angle": "payments", "gaps": []},
         "proposed_profile": "swiss",
+        "contact_profile_source": "detected",
+        "contact_profile_flag": None,
         "critique": {"needs_revision": False, "notes": []},
         "lint": [{"id": "pages", "status": "pass", "detail": ""}],
         "lint_ok": True,
@@ -176,14 +178,15 @@ def test_approval_gate_writes_review_json(tmp_path):
     assert set(bundle) == {
         "job", "requirements", "fit_analysis", "cv", "critique", "lint", "lint_ok",
         "revision_count", "refine_notes", "output_paths", "thread_id",
+        "contact_profile", "contact_profile_source", "contact_profile_flag",
     }
     assert "photo" not in bundle["cv"]
     assert "interests" not in bundle["cv"]
     assert bundle["thread_id"] == "b" * 20
     # Narrowed fields: requirements drops letter_required/recruiter_contact;
-    # fit_analysis drops profile_confidence.
+    # fit_analysis no longer carries the profile decision (spec 038).
     assert set(bundle["requirements"]) == {"critical_requirements", "ats_keywords"}
-    assert set(bundle["fit_analysis"]) == {"fit_recap", "angle", "gaps", "proposed_profile"}
+    assert set(bundle["fit_analysis"]) == {"fit_recap", "angle", "gaps"}
     assert os.path.getsize(path) <= 20 * 1024
 
 
@@ -266,8 +269,9 @@ def test_auto_passes_overrides_to_analysis_resume():
     # CV header override.
     assert app.invokes[0]["job_title"] == "Product Lead"
     assert app.invokes[0]["job_company"] == "Acme"
+    # --contact now seeds contact_override (spec 038), not the gate decision.
+    assert app.invokes[0]["contact_override"] == "french"
     resume = app.invokes[1].resume
-    assert resume["proposed_profile"] == "french"
     assert resume["user_directives"] == "emphasise payments"
     assert resume["title_override"] == ""
 

@@ -134,10 +134,15 @@ def render_documents(cv_content: dict, proposed_profile: str, slug: str, job: di
     ``cv_content.title``, else the master's standard title — so the subtitle can
     be re-angled to the job's domain while a human override always wins.
     """
+    if proposed_profile not in ("swiss", "french"):
+        raise ValueError(
+            f"contact profile must be 'swiss' or 'french', got {proposed_profile!r} "
+            "(deterministic profile not computed — check resolve_reference)"
+        )
     master = load_master()
 
     # Derived, deterministic fields — never LLM-controlled.
-    contact = "CH" if proposed_profile != "french" else "FR"
+    contact = "CH" if proposed_profile == "swiss" else "FR"
     filename = _filename_from_slug(slug)
 
     data: dict = {k: master.get(k, "") for k in _FIXED_FIELDS}

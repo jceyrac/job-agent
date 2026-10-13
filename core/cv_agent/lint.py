@@ -29,6 +29,16 @@ EM_DASH = "—"  # U+2014 — banned in checked fields (en-dash – is allowed)
 # A digit run with optional thousands/decimal separators ("30", "1,000", "3.5").
 _NUM_RE = re.compile(r"\d[\d,.]*")
 
+# A residence/base claim ("based in X", "located in X", "currently in X", …) —
+# the only context in which a location token contradicts the contact profile
+# (spec 038, US2). Future intent ("relocating to X") and bare country tokens
+# ("France's market-leading bank") are deliberately NOT matched.
+_BASE_CLAIM_RE = re.compile(
+    r"\b(?:based|residing|resident|located|living|currently|situated|positioned)"
+    r"\s+(?:in|at|of)\s+([^,.;|\n]+)",
+    re.IGNORECASE,
+)
+
 
 def _result(check_id: str, ok: bool, detail: str = "") -> dict:
     return {"id": check_id, "status": "pass" if ok else "fail", "detail": detail or ""}
@@ -145,14 +155,19 @@ def _check_current_role_first(data: dict) -> dict:
 
 
 def _check_contact_consistency(data: dict) -> dict:
-    """Profile/relocation must not claim a base contradicting the contact
-    profile (e.g. 'Based in Lausanne' with contact 'FR')."""
+    """Profile/relocation must not *claim a base* contradicting the contact
+    profile (e.g. 'Based in Lausanne' with contact 'FR'). A bare country token
+    describing a past product/employer ("France's market-leading bank") is not a
+    residence claim and must not fire (spec 038, US2)."""
     contact = (data.get("contact") or "CH").upper()
     blob = " ".join(
         filter(None, [data.get("profile") or "", data.get("relocation") or ""])
     ).lower()
-    bad = (CH_LOCATIONS if contact == "FR" else FR_LOCATIONS) if contact in ("CH", "FR") else []
-    offenders = [loc for loc in bad if loc in blob]
+    if contact not in ("CH", "FR"):
+        return _result("contact_consistency", True)
+    bad = CH_LOCATIONS if contact == "FR" else FR_LOCATIONS
+    claims = [m.group(1).strip() for m in _BASE_CLAIM_RE.finditer(blob)]
+    offenders = [loc for loc in bad if any(loc in claim for claim in claims)]
     return _result("contact_consistency", not offenders, ", ".join(offenders))
 
 
@@ -196,7 +211,7 @@ def run_lint(rendered_data: dict, pdf_path: str, master: dict, allowlist: dict |
     """
     allowlist = allowlist or {}
     master_text = json.dumps(master, ensure_ascii=False)
-    master_roles = master.get("roles") or []
+    master_roles = (master.get("roles") or []) + (master.get("optional_roles") or [])
     results = [
         _check_pages(pdf_path),
         _check_em_dash(rendered_data),

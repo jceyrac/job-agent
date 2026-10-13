@@ -43,7 +43,10 @@ def parse_args(argv):
     p.add_argument("--auto", action="store_true",
                    help="run non-interactively to the approval gate (never auto-approves)")
     p.add_argument("--contact", choices=("swiss", "french"),
-                   help="contact profile override (only meaningful with --auto)")
+                   help="contact profile override (wins over everything)")
+    p.add_argument("--country",
+                   help="ISO-2 country code or name; profile = swiss iff Switzerland "
+                        "(--contact still overrides it)")
     p.add_argument("--directives", help="free-text user directives (only with --auto)")
     p.add_argument("--title", help="job title (required with --paste --auto; drives job_id + output folder)")
     p.add_argument("--company", help="company name (required with --paste --auto; drives job_id + output folder)")
@@ -127,8 +130,13 @@ def prompt_analysis_gate(payload) -> dict:
     fa = payload.get("fit_analysis") or {}
     print(f"Fit:    {fa.get('fit_recap')}")
     print(f"Angle:  {fa.get('angle')}")
-    print(f"Profile: {payload.get('proposed_profile')} "
-          f"(confidence {payload.get('profile_confidence')})")
+    profile = payload.get("proposed_profile")
+    source = payload.get("contact_profile_source")
+    flag = payload.get("contact_profile_flag")
+    line = f"Profile: {profile} (source: {source})"
+    if flag:
+        line += f" [flag: {flag}]"
+    print(line)
     if fa.get("gaps"):
         print("Gaps:   " + "; ".join(fa["gaps"]))
     print(f"Title:   {job_title or '(missing)'}")
@@ -258,6 +266,8 @@ def _run_fresh(args) -> int:
         "thread_id": thread_id,
         "job_title": title,
         "job_company": company,
+        "contact_override": args.contact,
+        "country_override": args.country,
         "revision_count": 0,
         "refine_notes": [],
     }
@@ -285,8 +295,6 @@ def _run_fresh(args) -> int:
                             "user_directives": args.directives or "",
                             "title_override": "",
                         }
-                        if args.contact:
-                            decision["proposed_profile"] = args.contact
                         app.invoke(Command(resume=decision), config)
                     else:
                         app.invoke(Command(resume=prompt_analysis_gate(payload)), config)
