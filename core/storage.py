@@ -1562,9 +1562,9 @@ class JobStorage:
             else:
                 conn.execute(
                     """INSERT INTO companies
-                       (name, name_normalized, website, careers_url, status,
+                       (name, name_normalized, website, careers_url,
                         first_seen_at, last_seen_at, created_at)
-                       VALUES (?, ?, ?, ?, 'prospect', ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (name, name_norm, website, careers_url, now, now, now))
                 return conn.execute(
                     "SELECT id FROM companies WHERE name_normalized = ?",
@@ -2958,9 +2958,8 @@ class JobStorage:
                     """INSERT INTO companies
                        (name, name_normalized, website, careers_url,
                         ats_provider, ats_identifier,
-                        status, monitored,
                         first_seen_at, last_seen_at, created_at, detected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 'prospect', FALSE, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (name, name_norm, None, careers_url,
                      ats_provider, ats_identifier,
                      now, now, now, now),
@@ -2974,7 +2973,7 @@ class JobStorage:
         """Return the monitored company info for a job, if any."""
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT c.id, c.name, c.monitored
+                """SELECT c.id, c.name
                    FROM jobs j
                    JOIN companies c ON j.monitored_company_id = c.id
                    WHERE j.id = ?""",
@@ -3152,9 +3151,9 @@ class JobStorage:
                        (name, name_normalized, website, careers_url,
                         ats_provider, x_handle,
                         industry_sector, monitoring_status,
-                        status, first_seen_at, last_seen_at, created_at)
+                        first_seen_at, last_seen_at, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, 'watch_pending',
-                               'prospect', ?, ?, ?)""",
+                               ?, ?, ?)""",
                     (name, name_norm, website, careers_url,
                      ats_provider, x_handle, sector,
                      now, now, now),
@@ -3223,9 +3222,17 @@ class JobStorage:
                     if col in ("name", "name_normalized"):
                         continue  # keys — never update
                     if col == "monitoring_status":
-                        # Only skip if DB already has 'watching' (user-activated in Live UI).
-                        # Other statuses (watch_ready, watch_unsuitable) flow from dev research.
-                        if existing["monitoring_status"] == "watching":
+                        # Don't clobber the capability of a company any user is
+                        # actively watching (user_companies.monitored=1) — the
+                        # legacy 'watching' sentinel no longer exists post-split,
+                        # and monitoring is the union of users' watch requests
+                        # (Constitution VIII).
+                        watched = conn.execute(
+                            "SELECT 1 FROM user_companies "
+                            "WHERE company_id = ? AND monitored = 1",
+                            (existing["id"],),
+                        ).fetchone()
+                        if watched:
                             continue
                     existing_val = existing[col] if col in existing.keys() else None
                     if val != existing_val:
@@ -3251,8 +3258,8 @@ class JobStorage:
                          ats_provider, ats_identifier, scraping_method,
                          monitoring_status, research_notes, research_confidence,
                          x_handle, industry_sector, company_country,
-                         status, first_seen_at, last_seen_at, created_at)
-                        VALUES ({placeholders}, 'prospect', ?, ?, ?)""",
+                         first_seen_at, last_seen_at, created_at)
+                        VALUES ({placeholders}, ?, ?, ?)""",
                     vals + [now, now, now],
                 )
                 return True
