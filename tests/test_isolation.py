@@ -60,6 +60,9 @@ CROSS_USER_METHODS = (
     "purge_stale_jobs", "count_purgeable_jobs", "get_engaged_job_keys",
     "get_monitored_companies", "get_watching_companies_by_method",
     "get_watch_pending_companies", "get_companies_by_ats_provider",
+    # Catalogue seed writer that reads user_companies for the union watch guard
+    # (Constitution VIII) — cross-user by design.
+    "upsert_company_from_seed",
 )
 
 # Tokens that must never appear in an unclassified (catalogue) method's source.
@@ -287,6 +290,41 @@ def test_company_monitored_isolated(two_users):
     # per-user relationship column must not leak into B's company view.
     assert b.get_company_by_id(1)["monitored"] in (0, False, None)
     assert a.get_company_by_id(1)["monitored"] == 1
+
+
+def test_monitoring_targets_follow_user_companies_not_ghost_column(tmp_path):
+    """Scrape target selection reads user_companies.monitored, not the legacy
+    companies.monitored ghost: watching/unwatching moves a company in/out of the
+    set even when the ghost column is stuck at 1."""
+    path = str(tmp_path / "monitor.db")
+    JobStorage(path)  # run the one-shot migration
+
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO users (id, display_name, created_at) VALUES ('user-a', 'A', '2026-01-01')"
+    )
+    # watch_ready capability, but the legacy companies.monitored ghost is 1 while
+    # NO user has requested a watch yet.
+    conn.execute(
+        "INSERT INTO companies (name, name_normalized, monitoring_status, monitored, "
+        "first_seen_at, last_seen_at, created_at) "
+        "VALUES ('WatchCo', 'watchco', 'watch_ready', 1, "
+        "'2026-01-01', '2026-01-01', '2026-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    a = JobStorage(path, user_id="user-a")
+
+    # Ghost column is 1, but no user_companies request → not in the scrape set.
+    assert a.get_monitored_companies() == []
+
+    a.set_company_monitored(1, True)
+    assert [c["id"] for c in a.get_monitored_companies()] == [1]
+
+    a.set_company_monitored(1, False)
+    # Ghost column is still 1 — the set must be empty (reads user_companies).
+    assert a.get_monitored_companies() == []
 
 
 # ── Isolation: aggregate views ────────────────────────────────────────────────
