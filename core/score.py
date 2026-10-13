@@ -320,7 +320,7 @@ def main():
 
     if not args.extract and not args.profile:
         from core.profiles import DEFAULT_PROFILE_ID
-        args.profile = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+        args.profile = db.get_active_profile_id() or DEFAULT_PROFILE_ID
 
     if args.extract and args.profile:
         print("--extract and --profile are mutually exclusive. Run them separately.")

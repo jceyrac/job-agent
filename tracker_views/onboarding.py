@@ -593,7 +593,7 @@ def _render_save():
     db = get_db()
     from core.profiles import SearchProfile, DEFAULT_PROFILE_ID
 
-    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     # Use the name from the existing profile or default
     existing = db.get_profile(active_id)
     name = (existing.get("name") if existing else None) or "My Profile"
@@ -603,8 +603,8 @@ def _render_save():
     if st.button("💾 Save & finish", use_container_width=True, type="primary"):
         profile = SearchProfile.from_criteria(active_id, new_name, criteria)
         db.upsert_profile(profile)
-        db.set_config("active_profile_id", profile.id)
-        db.set_config("onboarding_complete", "true")
+        db.set_active_profile_id(profile.id)
+        db.set_onboarding_completed(True)
         # Persist scraping mode choices to config
         scraping_mode = st.session_state.get("scraping_mode", {"boards": True, "monitoring": False})
         db.set_config("scrape.enabled_in_pipeline", "true" if scraping_mode.get("boards", True) else "false")

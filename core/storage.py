@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -154,9 +155,10 @@ CREATE TABLE IF NOT EXISTS companies (
 CREATE INDEX IF NOT EXISTS idx_companies_status ON companies (status);
 CREATE INDEX IF NOT EXISTS idx_companies_name_norm ON companies (name_normalized);
 
--- Company status change history — append-only
+-- Company status change history — append-only (user-space: one user's relationship)
 CREATE TABLE IF NOT EXISTS company_status_history (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
     company_id  INTEGER NOT NULL,
     status      TEXT NOT NULL,
     note        TEXT,
@@ -164,6 +166,31 @@ CREATE TABLE IF NOT EXISTS company_status_history (
     FOREIGN KEY (company_id) REFERENCES companies(id)
 );
 CREATE INDEX IF NOT EXISTS idx_company_status_history ON company_status_history (company_id, changed_at DESC);
+-- idx_company_status_history_user (user_id) is created in _rebuild_per_user_indexes
+-- after the user_id column exists (legacy DBs add it during migration).
+
+-- Users — the owners of every user-space row (one row today; the API seam)
+CREATE TABLE IF NOT EXISTS users (
+    id                      TEXT PRIMARY KEY,
+    display_name            TEXT,
+    active_profile_id       TEXT,
+    onboarding_completed_at TEXT,
+    created_at              TEXT NOT NULL
+);
+
+-- User–company relationship — status/notes/watch decision for one user + company
+CREATE TABLE IF NOT EXISTS user_companies (
+    user_id            TEXT NOT NULL,
+    company_id         INTEGER NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'prospect',
+    notes              TEXT,
+    monitored          INTEGER NOT NULL DEFAULT 0,
+    watch_requested_at TEXT,
+    created_at         TEXT NOT NULL,
+    PRIMARY KEY (user_id, company_id),
+    FOREIGN KEY (company_id) REFERENCES companies(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
 
 -- Données brutes des offres — une ligne par job, partagée entre profils
 CREATE TABLE IF NOT EXISTS jobs (
@@ -188,6 +215,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 -- Profils de recherche
 CREATE TABLE IF NOT EXISTS search_profiles (
     id       TEXT PRIMARY KEY,
+    user_id  TEXT NOT NULL,
     name     TEXT,
     criteria TEXT   -- JSON sérialisé (geo_zones, work_modes, etc.)
 );
@@ -210,27 +238,33 @@ CREATE TABLE IF NOT EXISTS job_scores (
     FOREIGN KEY (profile_id) REFERENCES search_profiles(id)
 );
 
--- Pipeline status — one row per job, profile-independent
+-- Pipeline status — one row per (user, job), user-space
 CREATE TABLE IF NOT EXISTS job_tracking (
-    job_id     TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    job_id     TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'new',
     notes      TEXT,
-    changed_at TEXT
+    changed_at TEXT,
+    PRIMARY KEY (user_id, job_id)
 );
 
--- Status change history — one row per transition, append-only
+-- Status change history — one row per transition, append-only (user-space)
 CREATE TABLE IF NOT EXISTS status_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
     job_id     TEXT NOT NULL,
     status     TEXT NOT NULL,
     changed_at TEXT NOT NULL,
     FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_status_history_job ON status_history (job_id, changed_at DESC);
+-- idx_status_history_user (user_id) is created in _rebuild_per_user_indexes after
+-- the user_id column exists (legacy DBs add it during migration).
 
--- Application content — one row per job
+-- Application content — one row per (user, job), user-space
 CREATE TABLE IF NOT EXISTS job_applications (
-    job_id              TEXT PRIMARY KEY,
+    user_id             TEXT NOT NULL,
+    job_id              TEXT NOT NULL,
     profile_id          TEXT,
     analysis            TEXT,
     cover_letter        TEXT,
@@ -240,7 +274,8 @@ CREATE TABLE IF NOT EXISTS job_applications (
     language             TEXT,
     prepared_by          TEXT,
     prepared_at          TEXT,
-    created_at           TEXT
+    created_at           TEXT,
+    PRIMARY KEY (user_id, job_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen  ON jobs (last_seen DESC);
@@ -259,6 +294,7 @@ CREATE TABLE IF NOT EXISTS config (
 -- Contacts — people discovered at companies (recruiters, hiring managers, etc.)
 CREATE TABLE IF NOT EXISTS contacts (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           TEXT NOT NULL,
     company_id        INTEGER NOT NULL,
     first_name        TEXT,
     last_name         TEXT,
@@ -283,15 +319,17 @@ CREATE TABLE IF NOT EXISTS contacts (
     created_at        TEXT NOT NULL,
     FOREIGN KEY (company_id) REFERENCES companies(id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_linkedin
-    ON contacts (linkedin_url) WHERE linkedin_url IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_contacts_company    ON contacts (company_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_email      ON contacts (email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_contacts_unverified ON contacts (is_unverified) WHERE is_unverified = 1;
+-- idx_contacts_linkedin and idx_contacts_user (user_id) are created in
+-- _rebuild_per_user_indexes after the user_id column exists (legacy DBs add it
+-- during migration).
 
--- Interactions — timeline of touchpoints with companies/contacts/jobs
+-- Interactions — timeline of touchpoints with companies/contacts/jobs (user-space)
 CREATE TABLE IF NOT EXISTS interactions (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           TEXT NOT NULL,
     company_id        INTEGER NOT NULL,
     contact_id        INTEGER,
     job_id            TEXT,
@@ -315,6 +353,8 @@ CREATE INDEX IF NOT EXISTS idx_interactions_contact  ON interactions (contact_id
 CREATE INDEX IF NOT EXISTS idx_interactions_job      ON interactions (job_id);
 CREATE INDEX IF NOT EXISTS idx_interactions_followup ON interactions (follow_up_due_at)
     WHERE follow_up_due_at IS NOT NULL;
+-- idx_interactions_user (user_id) is created in _rebuild_per_user_indexes after
+-- the user_id column exists (legacy DBs add it during migration).
 -- idx_interactions_source_ref is created in _migrate_application_lifecycle after
 -- the source_ref column exists (the SCHEMA must not reference it: on an existing
 -- DB the column is added by migration, after executescript has already run).
@@ -360,7 +400,7 @@ def _set_config(conn, key: str, value: str) -> None:
 
 class JobStorage:
 
-    def __init__(self, db_path: str = DB_PATH):
+    def __init__(self, db_path: str = DB_PATH, user_id: str | None = None):
         self.db_path = db_path
         # For :memory: databases each new connection is a separate empty DB,
         # so we keep a single persistent connection for the lifetime of this object.
@@ -371,6 +411,16 @@ class JobStorage:
             self._memory_conn.execute("PRAGMA journal_mode=WAL")
             self._memory_conn.execute("PRAGMA foreign_keys=ON")
         self._init_db()
+        # Bind to a user after init — the migration/fresh init guarantees
+        # `config.default_user_id` exists by now.
+        self.user_id: str = user_id if user_id is not None else self._resolve_default_user_id()
+
+    def _resolve_default_user_id(self) -> str:
+        uid = self.get_config("default_user_id")
+        if uid:
+            return uid
+        with self._conn() as conn:
+            return self._ensure_default_user(conn)
 
     # ------------------------------------------------------------------
     # Init
@@ -636,6 +686,10 @@ class JobStorage:
             company_count = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
             if company_count > 0:
                 from core.profiles import ALL_PROFILES
+                hist_cols = {r[1] for r in conn.execute(
+                    "PRAGMA table_info(company_status_history)").fetchall()}
+                has_user_id = "user_id" in hist_cols
+                uid = self._ensure_default_user(conn) if has_user_id else None
                 bl_created = 0
                 for profile in ALL_PROFILES.values():
                     denylist = getattr(profile, "denylisted_companies", []) or []
@@ -657,21 +711,35 @@ class JobStorage:
                             cid = conn.execute(
                                 "SELECT id FROM companies WHERE name_normalized = ?",
                                 (name_norm,)).fetchone()["id"]
-                            conn.execute(
-                                """INSERT INTO company_status_history
-                                   (company_id, status, note, changed_at)
-                                   VALUES (?, 'blacklisted', ?, ?)""",
-                                (cid, "migrated from profiles.py denylist", now))
+                            if has_user_id:
+                                conn.execute(
+                                    """INSERT INTO company_status_history
+                                       (user_id, company_id, status, note, changed_at)
+                                       VALUES (?, ?, 'blacklisted', ?, ?)""",
+                                    (uid, cid, "migrated from profiles.py denylist", now))
+                            else:
+                                conn.execute(
+                                    """INSERT INTO company_status_history
+                                       (company_id, status, note, changed_at)
+                                       VALUES (?, 'blacklisted', ?, ?)""",
+                                    (cid, "migrated from profiles.py denylist", now))
                             bl_created += 1
                         elif existing["status"] != "blacklisted":
                             conn.execute(
                                 "UPDATE companies SET status = 'blacklisted' WHERE id = ?",
                                 (existing["id"],))
-                            conn.execute(
-                                """INSERT INTO company_status_history
-                                   (company_id, status, note, changed_at)
-                                   VALUES (?, 'blacklisted', ?, ?)""",
-                                (existing["id"], "migrated from profiles.py denylist", now))
+                            if has_user_id:
+                                conn.execute(
+                                    """INSERT INTO company_status_history
+                                       (user_id, company_id, status, note, changed_at)
+                                       VALUES (?, ?, 'blacklisted', ?, ?)""",
+                                    (uid, existing["id"], "migrated from profiles.py denylist", now))
+                            else:
+                                conn.execute(
+                                    """INSERT INTO company_status_history
+                                       (company_id, status, note, changed_at)
+                                       VALUES (?, 'blacklisted', ?, ?)""",
+                                    (existing["id"], "migrated from profiles.py denylist", now))
                             bl_created += 1
                 if bl_created:
                     logger.info(
@@ -878,6 +946,9 @@ class JobStorage:
             # ── Application Lifecycle — columns + event backfill (spec 030) ──
             self._migrate_application_lifecycle(conn)
 
+            # ── User-space separation — user_id seam + companies split (spec 039) ──
+            self._migrate_user_space_separation(conn)
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     def _migration_applied(self, conn, name: str) -> bool:
@@ -918,6 +989,9 @@ class JobStorage:
         if self._migration_applied(conn, "backfill_lifecycle_events"):
             return
 
+        has_user_id = "user_id" in cols
+        uid = self._ensure_default_user(conn) if has_user_id else None
+
         # Application events: earliest `applied` history row for applied/rejected
         # jobs without an existing application_submitted interaction.
         rows = conn.execute("""
@@ -938,12 +1012,20 @@ class JobStorage:
             if not r["applied_at"]:
                 undatable.append((r["job_id"], r["company"], r["title"], r["status"]))
                 continue
-            conn.execute(
-                """INSERT INTO interactions
-                   (company_id, job_id, type, direction, occurred_at, created_at, source)
-                   VALUES (?, ?, 'application_submitted', 'outbound', ?, ?, 'migration')""",
-                (r["company_id"], r["job_id"], r["applied_at"], _now()),
-            )
+            if has_user_id:
+                conn.execute(
+                    """INSERT INTO interactions
+                       (user_id, company_id, job_id, type, direction, occurred_at, created_at, source)
+                       VALUES (?, ?, ?, 'application_submitted', 'outbound', ?, ?, 'migration')""",
+                    (uid, r["company_id"], r["job_id"], r["applied_at"], _now()),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO interactions
+                       (company_id, job_id, type, direction, occurred_at, created_at, source)
+                       VALUES (?, ?, 'application_submitted', 'outbound', ?, ?, 'migration')""",
+                    (r["company_id"], r["job_id"], r["applied_at"], _now()),
+                )
             backfilled_app += 1
 
         # Decision events: negative decision for rejected jobs with a prior applied row.
@@ -965,12 +1047,20 @@ class JobStorage:
         for r in dec_rows:
             if not r["rejected_at"]:
                 continue
-            conn.execute(
-                """INSERT INTO interactions
-                   (company_id, job_id, type, direction, outcome, occurred_at, created_at, source)
-                   VALUES (?, ?, 'decision_received', 'inbound', 'negative', ?, ?, 'migration')""",
-                (r["company_id"], r["job_id"], r["rejected_at"], _now()),
-            )
+            if has_user_id:
+                conn.execute(
+                    """INSERT INTO interactions
+                       (user_id, company_id, job_id, type, direction, outcome, occurred_at, created_at, source)
+                       VALUES (?, ?, ?, 'decision_received', 'inbound', 'negative', ?, ?, 'migration')""",
+                    (uid, r["company_id"], r["job_id"], r["rejected_at"], _now()),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO interactions
+                       (company_id, job_id, type, direction, outcome, occurred_at, created_at, source)
+                       VALUES (?, ?, 'decision_received', 'inbound', 'negative', ?, ?, 'migration')""",
+                    (r["company_id"], r["job_id"], r["rejected_at"], _now()),
+                )
             backfilled_dec += 1
 
         if undatable:
@@ -985,6 +1075,204 @@ class JobStorage:
             )
 
         self._record_migration(conn, "backfill_lifecycle_events")
+
+    # ------------------------------------------------------------------
+    # Spec 039 — shared catalogue vs user space (roadmap step 3)
+    # ------------------------------------------------------------------
+
+    def _migrate_user_space_separation(self, conn) -> None:
+        """Add the `user_id` seam and split `companies` into facts (catalogue)
+        vs user relationship (`user_companies`).
+
+        Runs inside the `_init_db` transaction (a failure rolls back the whole
+        open). Recorded as `user_space_separation`, so it runs exactly once.
+        The `users`/`user_companies` tables themselves come from SCHEMA; this
+        migration creates the default user and rekeys/backfills existing data.
+        """
+        if self._migration_applied(conn, "user_space_separation"):
+            return
+
+        uid = self._ensure_default_user(conn)
+        self._rekey_job_tracking(conn, uid)
+        self._rekey_job_applications(conn, uid)
+        for table in ("search_profiles", "status_history", "contacts",
+                      "interactions", "company_status_history"):
+            self._add_user_id_column(conn, table, uid)
+        self._backfill_user_companies(conn, uid)
+        self._revalue_monitoring_status(conn)
+        self._rebuild_per_user_indexes(conn)
+
+        self._record_migration(conn, "user_space_separation")
+        logger.info("[Storage] user_space_separation: default user %s bound", uid)
+
+    def _ensure_default_user(self, conn) -> str:
+        """Create the single default user if absent; return its id.
+
+        Idempotent: if `config.default_user_id` is set, return it. The
+        per-user settings are copied out of `config` (their final home is the
+        `users` row; the old keys are left dead, cleaned at step 10).
+        """
+        row = conn.execute(
+            "SELECT value FROM config WHERE key = 'default_user_id'"
+        ).fetchone()
+        if row and row["value"]:
+            return row["value"]
+
+        from core.profiles import DEFAULT_PROFILE_ID
+
+        uid = uuid.uuid4().hex
+        active = conn.execute(
+            "SELECT value FROM config WHERE key = 'active_profile_id'"
+        ).fetchone()
+        onboarded = conn.execute(
+            "SELECT value FROM config WHERE key = 'onboarding_complete'"
+        ).fetchone()
+        now = _now()
+        conn.execute(
+            """INSERT INTO users
+               (id, display_name, active_profile_id, onboarding_completed_at, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (uid, "Jean Claude",
+             active["value"] if active and active["value"] else DEFAULT_PROFILE_ID,
+             now if onboarded and onboarded["value"] == "true" else None,
+             now),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES ('default_user_id', ?)",
+            (uid,),
+        )
+        return uid
+
+    def _rekey_job_tracking(self, conn, uid: str) -> None:
+        """Rebuild job_tracking with PRIMARY KEY (user_id, job_id)."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(job_tracking)")}
+        if "user_id" in cols:
+            return
+        conn.execute("""
+            CREATE TABLE job_tracking_new (
+                user_id    TEXT NOT NULL,
+                job_id     TEXT NOT NULL,
+                status     TEXT NOT NULL DEFAULT 'new',
+                notes      TEXT,
+                changed_at TEXT,
+                PRIMARY KEY (user_id, job_id)
+            )
+        """)
+        conn.execute(
+            """INSERT INTO job_tracking_new (user_id, job_id, status, notes, changed_at)
+               SELECT ?, job_id, status, notes, changed_at FROM job_tracking""",
+            (uid,),
+        )
+        conn.execute("DROP TABLE job_tracking")
+        conn.execute("ALTER TABLE job_tracking_new RENAME TO job_tracking")
+        conn.execute("CREATE INDEX idx_tracking_status ON job_tracking (status)")
+        logger.info("[Storage] user_space_separation: rekeyed job_tracking")
+
+    def _rekey_job_applications(self, conn, uid: str) -> None:
+        """Rebuild job_applications with PRIMARY KEY (user_id, job_id)."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(job_applications)")}
+        if "user_id" in cols:
+            return
+        conn.execute("""
+            CREATE TABLE job_applications_new (
+                user_id             TEXT NOT NULL,
+                job_id              TEXT NOT NULL,
+                profile_id          TEXT,
+                analysis            TEXT,
+                cover_letter        TEXT,
+                cv_bullets_selected  TEXT,
+                company_research     TEXT,
+                screening_answers    TEXT,
+                language             TEXT,
+                prepared_by          TEXT,
+                prepared_at          TEXT,
+                created_at           TEXT,
+                PRIMARY KEY (user_id, job_id)
+            )
+        """)
+        conn.execute(
+            """INSERT INTO job_applications_new
+               (user_id, job_id, profile_id, analysis, cover_letter,
+                cv_bullets_selected, company_research, screening_answers,
+                language, prepared_by, prepared_at, created_at)
+               SELECT ?, job_id, profile_id, analysis, cover_letter,
+                      cv_bullets_selected, company_research, screening_answers,
+                      language, prepared_by, prepared_at, created_at
+               FROM job_applications""",
+            (uid,),
+        )
+        conn.execute("DROP TABLE job_applications")
+        conn.execute("ALTER TABLE job_applications_new RENAME TO job_applications")
+        logger.info("[Storage] user_space_separation: rekeyed job_applications")
+
+    def _add_user_id_column(self, conn, table: str, uid: str) -> None:
+        """Add + backfill `user_id` on a simple user-space table (nullable on
+        migrated DBs; NOT NULL on fresh installs via SCHEMA)."""
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if "user_id" in cols:
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT")
+        conn.execute(f"UPDATE {table} SET user_id = ?", (uid,))
+        logger.info("[Storage] user_space_separation: added user_id to %s", table)
+
+    def _backfill_user_companies(self, conn, uid: str) -> None:
+        """Copy non-default company relationships into `user_companies`.
+
+        A row is created only when the user has a decision beyond the default
+        (status != 'prospect', non-empty notes, or watched). "No row" remains
+        the default relationship on every read.
+        """
+        now = _now()
+        conn.execute(
+            """INSERT INTO user_companies
+               (user_id, company_id, status, notes, monitored, watch_requested_at, created_at)
+               SELECT ?, id, status, notes,
+                      CASE WHEN (monitored IS NOT NULL AND monitored)
+                                 OR monitoring_status = 'watching' THEN 1 ELSE 0 END,
+                      CASE WHEN (monitored IS NOT NULL AND monitored)
+                                 OR monitoring_status = 'watching' THEN ? ELSE NULL END,
+                      ?
+               FROM companies
+               WHERE status != 'prospect'
+                  OR (notes IS NOT NULL AND trim(notes) != '')
+                  OR (monitored IS NOT NULL AND monitored)
+                  OR monitoring_status = 'watching'""",
+            (uid, now, now),
+        )
+        logger.info("[Storage] user_space_separation: backfilled user_companies")
+
+    def _revalue_monitoring_status(self, conn) -> None:
+        """Drop the mixed `watching` value: it conflated the user's request with
+        the platform's capability. Every `watching` row was capable, so it
+        becomes `watch_ready`; the request lives on user_companies.monitored."""
+        updated = conn.execute(
+            "UPDATE companies SET monitoring_status = 'watch_ready' "
+            "WHERE monitoring_status = 'watching'"
+        ).rowcount
+        if updated:
+            logger.info(
+                f"[Storage] user_space_separation: {updated} companies "
+                f"monitoring_status 'watching' -> 'watch_ready'"
+            )
+
+    def _rebuild_per_user_indexes(self, conn) -> None:
+        """Widen the two unique indexes to per-user scope and ensure user_id
+        lookups are indexed."""
+        conn.execute("DROP INDEX IF EXISTS idx_contacts_linkedin")
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_contacts_linkedin "
+            "ON contacts (user_id, linkedin_url) WHERE linkedin_url IS NOT NULL"
+        )
+        conn.execute("DROP INDEX IF EXISTS idx_interactions_source_ref")
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_interactions_source_ref "
+            "ON interactions (user_id, job_id, type, source_ref) "
+            "WHERE source_ref IS NOT NULL"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts (user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions (user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_status_history_user ON status_history (user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_company_status_history_user ON company_status_history (user_id)")
 
     def _migrate_monitored_companies(self, conn) -> None:
         """Phase A: extend companies, jobs, runs for monitored companies feature."""
@@ -1156,17 +1444,17 @@ class JobStorage:
         criteria = json.dumps(profile.to_criteria_dict())
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO search_profiles (id, name, criteria) VALUES (?, ?, ?)
+                """INSERT INTO search_profiles (id, user_id, name, criteria) VALUES (?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET name = excluded.name, criteria = excluded.criteria""",
-                (profile.id, profile.name, criteria),
+                (profile.id, self.user_id, profile.name, criteria),
             )
 
     def get_profile(self, profile_id: str) -> dict | None:
         """Return a single profile row with parsed criteria, or None."""
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT id, name, criteria FROM search_profiles WHERE id = ?",
-                (profile_id,),
+                "SELECT id, name, criteria FROM search_profiles WHERE id = ? AND user_id = ?",
+                (profile_id, self.user_id),
             ).fetchone()
         if not row:
             return None
@@ -1314,19 +1602,23 @@ class JobStorage:
 
     def set_company_status(self, company_id: int, status: str,
                            note: str | None = None) -> None:
-        """Update a company's status and record the transition."""
+        """Update the bound user's relationship status with a company and record it."""
         if status not in COMPANY_STATUSES:
             raise ValueError(f"Invalid company status: {status!r}. Valid: {COMPANY_STATUSES}")
         now = _now()
         with self._conn() as conn:
             conn.execute(
-                "UPDATE companies SET status = ? WHERE id = ?",
-                (status, company_id))
+                """INSERT INTO user_companies (user_id, company_id, status, created_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id, company_id) DO UPDATE SET status = excluded.status""",
+                (self.user_id, company_id, status, now),
+            )
             conn.execute(
                 """INSERT INTO company_status_history
-                   (company_id, status, note, changed_at)
-                   VALUES (?, ?, ?, ?)""",
-                (company_id, status, note, now))
+                   (user_id, company_id, status, note, changed_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (self.user_id, company_id, status, note, now),
+            )
 
     def _upsert_job_raw(self, job, conn, now: str, company_id: int | None = None,
                          monitored_company_id: int | None = None) -> str:
@@ -1415,7 +1707,7 @@ class JobStorage:
         Company-level fields joined from companies table (Phase 4).
         """
         clauses = []
-        params: list = [profile_id]
+        params: list = [self.user_id, profile_id, self.user_id]  # uc + profile_id + job_tracking
 
         _job_columns = (
             "j.id, j.title, j.company, j.company_id, j.url, j.source,"
@@ -1433,17 +1725,19 @@ class JobStorage:
         if rescore:
             base = (f"SELECT {_job_columns}, {_company_fields} FROM jobs j"
                     " LEFT JOIN companies c ON j.company_id = c.id"
+                    " LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
-                    " LEFT JOIN job_tracking t ON j.id = t.job_id")
+                    " LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?")
             clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired', 'interviewing', 'offer', 'withdrawn'))")
         else:
             base = (f"SELECT {_job_columns}, {_company_fields} FROM jobs j"
                     " LEFT JOIN companies c ON j.company_id = c.id"
+                    " LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?"
                     " LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?"
-                    " LEFT JOIN job_tracking t ON j.id = t.job_id")
+                    " LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?")
             clauses.append("(s.job_id IS NULL OR s.score IS NULL)")
             clauses.append("(t.status IS NULL OR t.status NOT IN ('rejected', 'archived', 'expired', 'interviewing', 'offer', 'withdrawn'))")
-        clauses.append("(c.id IS NULL OR c.status != 'blacklisted')")
+        clauses.append("(c.id IS NULL OR COALESCE(uc.status, 'prospect') != 'blacklisted')")
 
         if pre_filter:
             title_kws = pre_filter.get("title_contains", [])
@@ -1697,34 +1991,35 @@ class JobStorage:
         with self._conn() as conn:
             # Read current status to avoid no-op history entries
             old = conn.execute(
-                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+                "SELECT status FROM job_tracking WHERE job_id = ? AND user_id = ?",
+                (job_id, self.user_id),
             ).fetchone()
             old_status = old["status"] if old else None
 
             if notes is not None:
                 conn.execute(
-                    """INSERT INTO job_tracking (job_id, status, notes, changed_at)
-                       VALUES (?, ?, ?, ?)
-                       ON CONFLICT(job_id) DO UPDATE SET
+                    """INSERT INTO job_tracking (user_id, job_id, status, notes, changed_at)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(user_id, job_id) DO UPDATE SET
                            status = excluded.status,
                            notes = excluded.notes,
                            changed_at = excluded.changed_at""",
-                    (job_id, status, notes, now),
+                    (self.user_id, job_id, status, notes, now),
                 )
             else:
                 conn.execute(
-                    """INSERT INTO job_tracking (job_id, status, changed_at)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(job_id) DO UPDATE SET
+                    """INSERT INTO job_tracking (user_id, job_id, status, changed_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(user_id, job_id) DO UPDATE SET
                            status = excluded.status,
                            changed_at = excluded.changed_at""",
-                    (job_id, status, now),
+                    (self.user_id, job_id, status, now),
                 )
             # Only log to history if status actually changed (prevents runaway duplicates)
             if old_status != status:
                 conn.execute(
-                    "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
-                    (job_id, status, now),
+                    "INSERT INTO status_history (user_id, job_id, status, changed_at) VALUES (?, ?, ?, ?)",
+                    (self.user_id, job_id, status, now),
                 )
                 self._auto_log_status_interaction(job_id, status, _conn=conn)
 
@@ -1803,13 +2098,13 @@ class JobStorage:
             raise ValueError(f"{event} date {d} is in the future (today {today})")
 
         excl = " AND id != ?" if exclude_id is not None else ""
-        params: list = [job_id]
+        params: list = [job_id, self.user_id]
         if exclude_id is not None:
             params.append(exclude_id)
 
         app_row = conn.execute(
             f"SELECT MIN(occurred_at) AS d FROM interactions "
-            f"WHERE job_id = ? AND type = 'application_submitted'{excl}",
+            f"WHERE job_id = ? AND user_id = ? AND type = 'application_submitted'{excl}",
             params,
         ).fetchone()
         app_date = _date_prefix(app_row["d"]) if app_row and app_row["d"] else ""
@@ -1819,7 +2114,7 @@ class JobStorage:
         if event == "interview":
             term_row = conn.execute(
                 f"SELECT MIN(occurred_at) AS d FROM interactions "
-                f"WHERE job_id = ? AND type IN ('decision_received', 'withdrawn'){excl}",
+                f"WHERE job_id = ? AND user_id = ? AND type IN ('decision_received', 'withdrawn'){excl}",
                 params,
             ).fetchone()
             term_date = _date_prefix(term_row["d"]) if term_row and term_row["d"] else ""
@@ -1877,8 +2172,8 @@ class JobStorage:
         if source != "manual" and source_ref is not None:
             with self._conn() as conn:
                 dup = conn.execute(
-                    "SELECT id FROM interactions WHERE job_id = ? AND type = ? AND source_ref = ?",
-                    (job_id, event, source_ref),
+                    "SELECT id FROM interactions WHERE user_id = ? AND job_id = ? AND type = ? AND source_ref = ?",
+                    (self.user_id, job_id, event, source_ref),
                 ).fetchone()
             if dup:
                 return
@@ -1888,7 +2183,8 @@ class JobStorage:
 
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+                "SELECT status FROM job_tracking WHERE job_id = ? AND user_id = ?",
+                (job_id, self.user_id),
             ).fetchone()
             current_status = row["status"] if row else None
 
@@ -1908,24 +2204,24 @@ class JobStorage:
 
             conn.execute(
                 """INSERT INTO interactions
-                   (company_id, job_id, type, direction, outcome,
+                   (user_id, company_id, job_id, type, direction, outcome,
                     occurred_at, created_at, notes, source, source_ref)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (company_id, job_id, event, direction, outcome,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (self.user_id, company_id, job_id, event, direction, outcome,
                  occurred_at, now, notes, source, source_ref),
             )
 
             if current_status != new_status:
                 conn.execute(
-                    "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
-                    (job_id, new_status, now),
+                    "INSERT INTO status_history (user_id, job_id, status, changed_at) VALUES (?, ?, ?, ?)",
+                    (self.user_id, job_id, new_status, now),
                 )
             conn.execute(
-                """INSERT INTO job_tracking (job_id, status, changed_at)
-                   VALUES (?, ?, ?)
-                   ON CONFLICT(job_id) DO UPDATE SET
+                """INSERT INTO job_tracking (user_id, job_id, status, changed_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id, job_id) DO UPDATE SET
                        status = excluded.status, changed_at = excluded.changed_at""",
-                (job_id, new_status, now),
+                (self.user_id, job_id, new_status, now),
             )
 
     def get_lifecycle_events(self, job_id: str) -> list[dict]:
@@ -1935,10 +2231,11 @@ class JobStorage:
                 """SELECT id, type, direction, outcome, occurred_at, created_at,
                           notes, source, source_ref
                    FROM interactions
-                   WHERE job_id = ? AND type IN ('application_submitted','interview_invited',
-                                                 'interview','decision_received','withdrawn')
+                   WHERE job_id = ? AND user_id = ?
+                     AND type IN ('application_submitted','interview_invited',
+                                  'interview','decision_received','withdrawn')
                    ORDER BY occurred_at ASC, id ASC""",
-                (job_id,),
+                (job_id, self.user_id),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -2049,7 +2346,8 @@ class JobStorage:
         """
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT job_id, type, source FROM interactions WHERE id = ?", (event_id,)
+                "SELECT job_id, type, source FROM interactions WHERE id = ? AND user_id = ?",
+                (event_id, self.user_id),
             ).fetchone()
             if row is None:
                 raise ValueError(f"Unknown interaction id: {event_id}")
@@ -2075,14 +2373,16 @@ class JobStorage:
                 params.append(notes)
             params.append(event_id)
             conn.execute(
-                f"UPDATE interactions SET {', '.join(sets)} WHERE id = ?", params
+                f"UPDATE interactions SET {', '.join(sets)} WHERE id = ? AND user_id = ?",
+                params + [self.user_id],
             )
 
     def delete_lifecycle_event(self, event_id, *, source="manual") -> None:
         """Delete a lifecycle event from the timeline (FR-015). FR-031 applies."""
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT source FROM interactions WHERE id = ?", (event_id,)
+                "SELECT source FROM interactions WHERE id = ? AND user_id = ?",
+                (event_id, self.user_id),
             ).fetchone()
             if row is None:
                 raise ValueError(f"Unknown interaction id: {event_id}")
@@ -2091,7 +2391,10 @@ class JobStorage:
                     f"[Storage] Refused non-manual delete of manual interaction {event_id}"
                 )
                 raise ValueError(f"Cannot delete manual event {event_id} from source {source!r}")
-            conn.execute("DELETE FROM interactions WHERE id = ?", (event_id,))
+            conn.execute(
+                "DELETE FROM interactions WHERE id = ? AND user_id = ?",
+                (event_id, self.user_id),
+            )
 
     def reconcile_lifecycle_status(self, job_id: str) -> str | None:
         """Reconcile ``job_tracking.status`` with the derived stage after an edit/delete.
@@ -2112,19 +2415,20 @@ class JobStorage:
         now = _now()
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+                "SELECT status FROM job_tracking WHERE job_id = ? AND user_id = ?",
+                (job_id, self.user_id),
             ).fetchone()
             if row is None:
                 return None
             if row["status"] == new_status:
                 return new_status
             conn.execute(
-                "INSERT INTO status_history (job_id, status, changed_at) VALUES (?, ?, ?)",
-                (job_id, new_status, now),
+                "INSERT INTO status_history (user_id, job_id, status, changed_at) VALUES (?, ?, ?, ?)",
+                (self.user_id, job_id, new_status, now),
             )
             conn.execute(
-                "UPDATE job_tracking SET status = ?, changed_at = ? WHERE job_id = ?",
-                (new_status, now, job_id),
+                "UPDATE job_tracking SET status = ?, changed_at = ? WHERE job_id = ? AND user_id = ?",
+                (new_status, now, job_id, self.user_id),
             )
         return new_status
 
@@ -2167,11 +2471,12 @@ class JobStorage:
             rows = conn.execute(
                 """SELECT i.job_id, MIN(i.occurred_at) AS app_date
                    FROM interactions i
-                   WHERE i.type = 'application_submitted'
+                   WHERE i.user_id = ?
+                     AND i.type = 'application_submitted'
                      AND date(i.occurred_at) BETWEEN ? AND ?
                    GROUP BY i.job_id
                    ORDER BY app_date ASC""",
-                (date_from, date_to),
+                (self.user_id, date_from, date_to),
             ).fetchall()
 
         out = []
@@ -2194,11 +2499,12 @@ class JobStorage:
                           j.company, j.title, j.url
                    FROM interactions i
                    JOIN jobs j ON i.job_id = j.id
-                   WHERE i.type IN ('application_submitted','interview_invited',
+                   WHERE i.user_id = ?
+                     AND i.type IN ('application_submitted','interview_invited',
                                     'interview','decision_received','withdrawn')
                      AND date(i.occurred_at) BETWEEN ? AND ?
                    ORDER BY i.occurred_at ASC, i.id ASC""",
-                (date_from, date_to),
+                (self.user_id, date_from, date_to),
             ).fetchall()
 
         # Precompute per-event labels (round + as-of decision/withdrawal labels).
@@ -2235,12 +2541,14 @@ class JobStorage:
             rows = conn.execute(
                 """SELECT j.id, j.company, j.title, t.status
                    FROM jobs j
-                   JOIN job_tracking t ON j.id = t.job_id
+                   JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                    WHERE t.status IN ('applied','interviewing','offer','rejected','withdrawn')
                      AND NOT EXISTS (
                          SELECT 1 FROM interactions i
-                         WHERE i.job_id = j.id AND i.type = 'application_submitted')
+                         WHERE i.job_id = j.id AND i.user_id = t.user_id
+                           AND i.type = 'application_submitted')
                    ORDER BY t.status, j.company""",
+                (self.user_id,),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -2270,10 +2578,10 @@ class JobStorage:
                 FROM jobs j
                 JOIN job_scores s ON j.id = s.job_id
                 LEFT JOIN companies c ON j.company_id = c.id
-                LEFT JOIN job_tracking t ON j.id = t.job_id
+                LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                 WHERE s.profile_id = ? AND s.score >= ?
             """
-            params: list = [profile_id, min_score]
+            params: list = [self.user_id, profile_id, min_score]
             if status:
                 query += " AND COALESCE(t.status, 'new') = ?"
                 params.append(status)
@@ -2299,8 +2607,9 @@ class JobStorage:
                     conn.execute(
                         """SELECT COALESCE(t.status, 'new'), COUNT(*)
                            FROM jobs j
-                           LEFT JOIN job_tracking t ON j.id = t.job_id
-                           GROUP BY COALESCE(t.status, 'new')"""
+                           LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
+                           GROUP BY COALESCE(t.status, 'new')""",
+                        (self.user_id,),
                     ).fetchall()
                 )
             else:
@@ -2319,9 +2628,9 @@ class JobStorage:
                     conn.execute(
                         """SELECT COALESCE(t.status, 'new'), COUNT(*)
                            FROM job_scores s
-                           LEFT JOIN job_tracking t ON s.job_id = t.job_id
+                           LEFT JOIN job_tracking t ON s.job_id = t.job_id AND t.user_id = ?
                            WHERE s.profile_id = ? GROUP BY COALESCE(t.status, 'new')""",
-                        (profile_id,),
+                        (self.user_id, profile_id),
                     ).fetchall()
                 )
         return {
@@ -2338,7 +2647,9 @@ class JobStorage:
             row = conn.execute(
                 """SELECT COUNT(*) FROM jobs j
                    JOIN companies c ON j.company_id = c.id
-                   WHERE c.status = 'blacklisted'"""
+                   LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?
+                   WHERE COALESCE(uc.status, 'prospect') = 'blacklisted'""",
+                (self.user_id,),
             ).fetchone()
             return row[0] if row else 0
 
@@ -2349,15 +2660,16 @@ class JobStorage:
     def get_application(self, job_id: str) -> Optional[dict]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM job_applications WHERE job_id = ?",
-                (job_id,),
+                "SELECT * FROM job_applications WHERE job_id = ? AND user_id = ?",
+                (job_id, self.user_id),
             ).fetchone()
             return dict(row) if row else None
 
     def get_all_applications(self) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM job_applications"
+                "SELECT * FROM job_applications WHERE user_id = ?",
+                (self.user_id,),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -2365,17 +2677,17 @@ class JobStorage:
         now = _now()
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO job_applications (job_id, analysis, cover_letter, created_at)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(job_id) DO UPDATE SET
+                """INSERT INTO job_applications (user_id, job_id, analysis, cover_letter, created_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, job_id) DO UPDATE SET
                        analysis = excluded.analysis,
                        cover_letter = excluded.cover_letter""",
-                (job_id, analysis, cover_letter, now),
+                (self.user_id, job_id, analysis, cover_letter, now),
             )
             conn.execute(
-                """INSERT INTO job_tracking (job_id, status) VALUES (?, 'ready')
-                   ON CONFLICT(job_id) DO UPDATE SET status = 'ready'""",
-                (job_id,),
+                """INSERT INTO job_tracking (user_id, job_id, status) VALUES (?, ?, 'ready')
+                   ON CONFLICT(user_id, job_id) DO UPDATE SET status = 'ready'""",
+                (self.user_id, job_id),
             )
 
     def save_prepared_application(self, job_id: str, profile_id: str,
@@ -2390,11 +2702,11 @@ class JobStorage:
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO job_applications (
-                       job_id, profile_id, cover_letter,
+                       user_id, job_id, profile_id, cover_letter,
                        cv_bullets_selected, company_research, screening_answers,
                        language, prepared_by, prepared_at, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(job_id) DO UPDATE SET
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, job_id) DO UPDATE SET
                        profile_id         = excluded.profile_id,
                        cover_letter        = excluded.cover_letter,
                        cv_bullets_selected  = excluded.cv_bullets_selected,
@@ -2403,16 +2715,16 @@ class JobStorage:
                        language             = excluded.language,
                        prepared_by          = excluded.prepared_by,
                        prepared_at          = excluded.prepared_at""",
-                (job_id, profile_id, cover_letter,
+                (self.user_id, job_id, profile_id, cover_letter,
                  json.dumps(cv_bullets_selected, ensure_ascii=False) if cv_bullets_selected else None,
                  json.dumps(company_research, ensure_ascii=False) if company_research else None,
                  json.dumps(screening_answers, ensure_ascii=False) if screening_answers else None,
                  language, prepared_by, now, now),
             )
             conn.execute(
-                """INSERT INTO job_tracking (job_id, status) VALUES (?, 'ready')
-                   ON CONFLICT(job_id) DO UPDATE SET status = 'ready'""",
-                (job_id,),
+                """INSERT INTO job_tracking (user_id, job_id, status) VALUES (?, ?, 'ready')
+                   ON CONFLICT(user_id, job_id) DO UPDATE SET status = 'ready'""",
+                (self.user_id, job_id),
             )
 
     def get_job_for_prepare(self, job_id: str) -> dict | None:
@@ -2436,9 +2748,9 @@ class JobStorage:
                           COALESCE(t.status, 'new') AS status
                    FROM jobs j
                    LEFT JOIN companies c ON j.company_id = c.id
-                   LEFT JOIN job_tracking t ON j.id = t.job_id
+                   LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                    WHERE j.id = ?""",
-                (job_id,),
+                (self.user_id, job_id),
             ).fetchone()
             return dict(row) if row else None
 
@@ -2459,11 +2771,12 @@ class JobStorage:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT j.* FROM jobs j
-                   JOIN job_tracking t ON j.id = t.job_id
-                   LEFT JOIN job_applications a ON j.id = a.job_id
+                   JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
+                   LEFT JOIN job_applications a ON j.id = a.job_id AND a.user_id = t.user_id
                    WHERE t.status = 'queued'
                      AND (a.job_id IS NULL OR a.prepared_at IS NULL)
-                   ORDER BY j.last_seen DESC"""
+                   ORDER BY j.last_seen DESC""",
+                (self.user_id,),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -2472,9 +2785,10 @@ class JobStorage:
             rows = conn.execute(
                 """SELECT j.id, j.title, j.company, j.url, j.description
                    FROM jobs j
-                   JOIN job_tracking t ON j.id = t.job_id
+                   JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                    WHERE t.status = 'queued'
                    ORDER BY j.last_seen DESC""",
+                (self.user_id,),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -2483,22 +2797,42 @@ class JobStorage:
     # ------------------------------------------------------------------
 
     def set_company_monitored(self, company_id: int, monitored: bool) -> None:
-        """Toggle the monitored flag on a company. Does NOT touch scraping config."""
+        """Toggle the bound user's watch request on a company (user_companies).
+
+        The platform capability lives on ``companies.monitoring_status`` and is
+        untouched here (FR-005)."""
+        now = _now()
         with self._conn() as conn:
-            conn.execute(
-                "UPDATE companies SET monitored = ? WHERE id = ?",
-                (int(monitored), company_id),
-            )
+            if monitored:
+                conn.execute(
+                    """INSERT INTO user_companies
+                       (user_id, company_id, status, monitored, watch_requested_at, created_at)
+                       VALUES (?, ?, 'prospect', 1, ?, ?)
+                       ON CONFLICT(user_id, company_id) DO UPDATE SET
+                           monitored = 1,
+                           watch_requested_at = COALESCE(user_companies.watch_requested_at, excluded.watch_requested_at)""",
+                    (self.user_id, company_id, now, now),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO user_companies
+                       (user_id, company_id, status, monitored, created_at)
+                       VALUES (?, ?, 'prospect', 0, ?)
+                       ON CONFLICT(user_id, company_id) DO UPDATE SET monitored = 0""",
+                    (self.user_id, company_id, now),
+                )
 
     def get_monitored_companies(self) -> list[dict]:
-        """Return all companies where monitored=true (active, not paused)."""
+        """Return companies watched by any user and ready to scrape (union, FR-010)."""
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT id, name, ats_provider, ats_identifier, scraper_id,
-                          careers_url, detected_at, monitoring_status
-                   FROM companies
-                   WHERE monitoring_status = 'watching'
-                   ORDER BY name"""
+                """SELECT c.id, c.name, c.ats_provider, c.ats_identifier, c.scraper_id,
+                          c.careers_url, c.detected_at, c.monitoring_status
+                   FROM companies c
+                   JOIN user_companies uc ON uc.company_id = c.id
+                   WHERE uc.monitored = 1
+                     AND c.monitoring_status = 'watch_ready'
+                   ORDER BY c.name"""
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -2528,42 +2862,47 @@ class JobStorage:
         return bool(row["ats_provider"] or row["scraper_id"])
 
     def get_companies_by_ats_provider(self, provider: str) -> list[dict]:
-        """Return monitored companies for a specific ATS provider."""
+        """Return watched companies for a specific ATS provider (union, FR-010)."""
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT id, name, ats_identifier, scraper_id
-                   FROM companies
-                   WHERE monitored = TRUE AND ats_provider = ?
-                   ORDER BY name""",
+                """SELECT c.id, c.name, c.ats_identifier, c.scraper_id
+                   FROM companies c
+                   JOIN user_companies uc ON uc.company_id = c.id
+                   WHERE uc.monitored = 1 AND c.ats_provider = ?
+                   ORDER BY c.name""",
                 (provider,),
             ).fetchall()
         return [dict(r) for r in rows]
 
     def get_watching_companies_by_method(self, scraping_method: str) -> list[dict]:
-        """Return companies with monitoring_status='watching' and given scraping_method.
+        """Return watched, ready companies with the given scraping_method (union, FR-010).
         Does NOT return legacy companies with scraping_method=NULL.
-        Logs a warning for watching companies that have a NULL ats_identifier.
+        Logs a warning for watched companies that have a NULL ats_identifier.
         """
         with self._conn() as conn:
-            # Warn about watching companies with NULL ats_identifier
+            # Warn about watched companies with NULL ats_identifier
             null_ids = conn.execute(
-                """SELECT name FROM companies
-                   WHERE monitoring_status = 'watching'
-                     AND scraping_method = ?
-                     AND ats_identifier IS NULL""",
+                """SELECT c.name FROM companies c
+                   JOIN user_companies uc ON uc.company_id = c.id
+                   WHERE uc.monitored = 1
+                     AND c.monitoring_status = 'watch_ready'
+                     AND c.scraping_method = ?
+                     AND c.ats_identifier IS NULL""",
                 (scraping_method,),
             ).fetchall()
             for row in null_ids:
                 logger.warning(
-                    "[%s] watching company '%s' has NULL ats_identifier — skipped",
+                    "[%s] watched company '%s' has NULL ats_identifier — skipped",
                     scraping_method, row["name"])
 
             rows = conn.execute(
-                """SELECT id, name, ats_identifier, ats_provider, careers_url
-                   FROM companies
-                   WHERE monitoring_status = 'watching'
-                     AND scraping_method = ?
-                     AND ats_identifier IS NOT NULL""",
+                """SELECT c.id, c.name, c.ats_identifier, c.ats_provider, c.careers_url
+                   FROM companies c
+                   JOIN user_companies uc ON uc.company_id = c.id
+                   WHERE uc.monitored = 1
+                     AND c.monitoring_status = 'watch_ready'
+                     AND c.scraping_method = ?
+                     AND c.ats_identifier IS NOT NULL""",
                 (scraping_method,),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -2658,16 +2997,29 @@ class JobStorage:
 
         Only columns present in `fields` are updated — others untouched.
         Raises ValueError if an unknown column name is passed.
+        ``notes`` is user-space (user_companies) — the rest are company facts.
         """
         invalid = set(fields) - self._ALLOWED_COMPANY_FIELDS
         if invalid:
             raise ValueError(f"Unknown company fields: {invalid}")
         if not fields:
             return
-        cols = ", ".join(f"{k} = ?" for k in fields)
-        vals = list(fields.values()) + [company_id]
-        with self._conn() as conn:
-            conn.execute(f"UPDATE companies SET {cols} WHERE id = ?", vals)
+        notes = fields.get("notes")
+        fact_fields = {k: v for k, v in fields.items() if k != "notes"}
+        if fact_fields:
+            cols = ", ".join(f"{k} = ?" for k in fact_fields)
+            vals = list(fact_fields.values()) + [company_id]
+            with self._conn() as conn:
+                conn.execute(f"UPDATE companies SET {cols} WHERE id = ?", vals)
+        if notes is not None:
+            now = _now()
+            with self._conn() as conn:
+                conn.execute(
+                    """INSERT INTO user_companies (user_id, company_id, status, notes, created_at)
+                       VALUES (?, ?, 'prospect', ?, ?)
+                       ON CONFLICT(user_id, company_id) DO UPDATE SET notes = excluded.notes""",
+                    (self.user_id, company_id, notes, now),
+                )
 
     def set_monitoring_status(self, company_id: int, status: str) -> None:
         if status not in self.VALID_MONITORING_STATUSES:
@@ -2675,22 +3027,39 @@ class JobStorage:
                 f"Invalid monitoring status: {status!r}. "
                 f"Valid: {self.VALID_MONITORING_STATUSES}"
             )
+        # `watching` is the legacy mixed value (request + capability). After the
+        # split the request lives on user_companies and the capability is
+        # `watch_ready`; map it so the legacy call keeps working (FR-005).
+        capability = "watch_ready" if status == "watching" else status
+        now = _now()
         with self._conn() as conn:
             conn.execute(
                 "UPDATE companies SET monitoring_status = ? WHERE id = ?",
-                (status, company_id),
+                (capability, company_id),
             )
+            if status == "watching":
+                conn.execute(
+                    """INSERT INTO user_companies
+                       (user_id, company_id, status, monitored, watch_requested_at, created_at)
+                       VALUES (?, ?, 'prospect', 1, ?, ?)
+                       ON CONFLICT(user_id, company_id) DO UPDATE SET
+                           monitored = 1,
+                           watch_requested_at = COALESCE(user_companies.watch_requested_at, excluded.watch_requested_at)""",
+                    (self.user_id, company_id, now, now),
+                )
 
     def get_watch_pending_companies(self) -> list[dict]:
-        """Return companies with monitoring_status = 'watch_pending'."""
+        """Return companies watched by any user but awaiting research (union, FR-010)."""
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT id, name, website, careers_url, ats_provider,
-                          ats_identifier, monitoring_status, scraping_method,
-                          research_notes, research_confidence, researched_at
-                   FROM companies
-                   WHERE monitoring_status = 'watch_pending'
-                   ORDER BY name"""
+                """SELECT c.id, c.name, c.website, c.careers_url, c.ats_provider,
+                          c.ats_identifier, c.monitoring_status, c.scraping_method,
+                          c.research_notes, c.research_confidence, c.researched_at
+                   FROM companies c
+                   JOIN user_companies uc ON uc.company_id = c.id
+                   WHERE uc.monitored = 1
+                     AND c.monitoring_status = 'watch_pending'
+                   ORDER BY c.name"""
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -2776,15 +3145,27 @@ class JobStorage:
                 conn.execute(
                     """INSERT INTO companies
                        (name, name_normalized, website, careers_url,
-                        ats_provider, x_handle, notes,
+                        ats_provider, x_handle,
                         industry_sector, monitoring_status,
                         status, first_seen_at, last_seen_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watch_pending',
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'watch_pending',
                                'prospect', ?, ?, ?)""",
                     (name, name_norm, website, careers_url,
-                     ats_provider, x_handle, notes, sector,
+                     ats_provider, x_handle, sector,
                      now, now, now),
                 )
+                # `notes` (the CSV "Comment") is a user decision → user_companies.
+                if notes:
+                    cid = conn.execute(
+                        "SELECT id FROM companies WHERE name_normalized = ?",
+                        (name_norm,),
+                    ).fetchone()["id"]
+                    conn.execute(
+                        """INSERT INTO user_companies (user_id, company_id, status, notes, created_at)
+                           VALUES (?, ?, 'prospect', ?, ?)
+                           ON CONFLICT(user_id, company_id) DO UPDATE SET notes = excluded.notes""",
+                        (self.user_id, cid, notes, now),
+                    )
                 imported += 1
 
         logger.info(
@@ -2827,7 +3208,6 @@ class JobStorage:
                 "x_handle": row.get("x_handle"),
                 "industry_sector": row.get("industry_sector"),
                 "company_country": row.get("company_country"),
-                "notes": row.get("notes"),
             }
 
             if existing:
@@ -2865,7 +3245,7 @@ class JobStorage:
                         (name, name_normalized, website, careers_url,
                          ats_provider, ats_identifier, scraping_method,
                          monitoring_status, research_notes, research_confidence,
-                         x_handle, industry_sector, company_country, notes,
+                         x_handle, industry_sector, company_country,
                          status, first_seen_at, last_seen_at, created_at)
                         VALUES ({placeholders}, 'prospect', ?, ?, ?)""",
                     vals + [now, now, now],
@@ -2944,16 +3324,62 @@ class JobStorage:
     # ------------------------------------------------------------------
 
     def get_config(self, key: str, default=None) -> str | None:
+        # Per-user settings live on the `users` row (spec 039); keep their
+        # `config` keys as a transparent alias so existing call sites are
+        # unchanged (the old keys are dead, cleaned at step 10).
+        if key == "active_profile_id":
+            val = self.get_active_profile_id()
+            return val if val else default
+        if key == "onboarding_complete":
+            return "true" if self.get_onboarding_completed() else default
         with self._conn() as conn:
             row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
             return row["value"] if row else default
 
     def set_config(self, key: str, value: str) -> None:
+        if key == "active_profile_id":
+            self.set_active_profile_id(value)
+            return
+        if key == "onboarding_complete":
+            self.set_onboarding_completed(value == "true")
+            return
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO config (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
+            )
+
+    # ------------------------------------------------------------------
+    # Per-user settings (spec 039 — moved out of `config` into `users`)
+    # ------------------------------------------------------------------
+
+    def get_active_profile_id(self) -> str | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT active_profile_id FROM users WHERE id = ?", (self.user_id,)
+            ).fetchone()
+            return row["active_profile_id"] if row else None
+
+    def set_active_profile_id(self, value: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE users SET active_profile_id = ? WHERE id = ?",
+                (value, self.user_id),
+            )
+
+    def get_onboarding_completed(self) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT onboarding_completed_at FROM users WHERE id = ?", (self.user_id,)
+            ).fetchone()
+            return bool(row and row["onboarding_completed_at"])
+
+    def set_onboarding_completed(self, value: bool) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE users SET onboarding_completed_at = ? WHERE id = ?",
+                (_now() if value else None, self.user_id),
             )
 
     def get_freshness_days(self) -> int:
@@ -2998,14 +3424,15 @@ class JobStorage:
         """Resolution lookup: linkedin_url > email > (company_id, normalized_name)."""
         if linkedin_url:
             row = conn.execute(
-                "SELECT * FROM contacts WHERE linkedin_url = ?", (linkedin_url,)
+                "SELECT * FROM contacts WHERE linkedin_url = ? AND user_id = ?",
+                (linkedin_url, self.user_id),
             ).fetchone()
             if row:
                 return dict(row)
         if email:
             row = conn.execute(
-                "SELECT * FROM contacts WHERE email = ? AND company_id = ?",
-                (email.lower(), company_id),
+                "SELECT * FROM contacts WHERE email = ? AND company_id = ? AND user_id = ?",
+                (email.lower(), company_id, self.user_id),
             ).fetchone()
             if row:
                 return dict(row)
@@ -3014,7 +3441,8 @@ class JobStorage:
             # We load all contacts for the company and compare client-side
             # since the normalized name is not stored denormalized.
             rows = conn.execute(
-                "SELECT * FROM contacts WHERE company_id = ?", (company_id,)
+                "SELECT * FROM contacts WHERE company_id = ? AND user_id = ?",
+                (company_id, self.user_id),
             ).fetchall()
             for row in rows:
                 existing_norm = self._normalize_contact_name(
@@ -3117,8 +3545,9 @@ class JobStorage:
                 params.append(now)
                 updates.append("is_current = 1")
                 params.append(cid)
+                params.append(self.user_id)
                 conn.execute(
-                    f"UPDATE contacts SET {', '.join(updates)} WHERE id = ?",
+                    f"UPDATE contacts SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
                     params,
                 )
                 return cid
@@ -3126,14 +3555,15 @@ class JobStorage:
             # Insert
             conn.execute(
                 """INSERT INTO contacts (
-                       company_id, first_name, last_name, full_name,
+                       user_id, company_id, first_name, last_name, full_name,
                        role_title, role_family, seniority,
                        email, email_status, email_confidence,
                        linkedin_url, x_handle, telegram_handle, github_handle,
                        phone, is_unverified, notes,
                        is_current, first_seen_at, last_seen_at, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
                 (
+                    self.user_id,
                     company_id, first_name, last_name, full_name,
                     role_title, role_family, seniority,
                     email.lower() if email else None, email_status, email_confidence,
@@ -3178,12 +3608,12 @@ class JobStorage:
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO interactions (
-                       company_id, contact_id, job_id,
+                       user_id, company_id, contact_id, job_id,
                        type, direction, outcome,
                        subject, body_excerpt,
                        occurred_at, follow_up_due_at, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (company_id, contact_id, job_id,
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (self.user_id, company_id, contact_id, job_id,
                  type, direction, outcome,
                  subject, body_excerpt,
                  ts, follow_up_due_at, now),
@@ -3195,9 +3625,9 @@ class JobStorage:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT type, outcome FROM interactions
-                   WHERE contact_id = ?
+                   WHERE contact_id = ? AND user_id = ?
                    ORDER BY occurred_at DESC""",
-                (contact_id,),
+                (contact_id, self.user_id),
             ).fetchall()
 
         if not rows:
@@ -3231,7 +3661,8 @@ class JobStorage:
         """Aggregate: total contacts, count by relationship status, last interaction."""
         with self._conn() as conn:
             contact_rows = conn.execute(
-                "SELECT id FROM contacts WHERE company_id = ?", (company_id,)
+                "SELECT id FROM contacts WHERE company_id = ? AND user_id = ?",
+                (company_id, self.user_id),
             ).fetchall()
             total_contacts = len(contact_rows)
             by_status: dict[str, int] = {}
@@ -3241,9 +3672,9 @@ class JobStorage:
 
             last_int = conn.execute(
                 """SELECT occurred_at FROM interactions
-                   WHERE company_id = ?
+                   WHERE company_id = ? AND user_id = ?
                    ORDER BY occurred_at DESC LIMIT 1""",
-                (company_id,),
+                (company_id, self.user_id),
             ).fetchone()
 
         return {
@@ -3259,14 +3690,14 @@ class JobStorage:
         with self._conn() as conn:
             if include_unverified:
                 rows = conn.execute(
-                    "SELECT * FROM contacts WHERE company_id = ? ORDER BY last_seen_at DESC",
-                    (company_id,),
+                    "SELECT * FROM contacts WHERE company_id = ? AND user_id = ? ORDER BY last_seen_at DESC",
+                    (company_id, self.user_id),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM contacts WHERE company_id = ? AND is_unverified = 0 "
+                    "SELECT * FROM contacts WHERE company_id = ? AND user_id = ? AND is_unverified = 0 "
                     "ORDER BY last_seen_at DESC",
-                    (company_id,),
+                    (company_id, self.user_id),
                 ).fetchall()
         return [dict(r) for r in rows]
 
@@ -3275,9 +3706,9 @@ class JobStorage:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT * FROM interactions
-                   WHERE company_id = ?
+                   WHERE company_id = ? AND user_id = ?
                    ORDER BY occurred_at DESC LIMIT ?""",
-                (company_id, limit),
+                (company_id, self.user_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -3286,9 +3717,9 @@ class JobStorage:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT * FROM interactions
-                   WHERE contact_id = ?
+                   WHERE contact_id = ? AND user_id = ?
                    ORDER BY occurred_at DESC LIMIT ?""",
-                (contact_id, limit),
+                (contact_id, self.user_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -3296,7 +3727,8 @@ class JobStorage:
         """Fetch a single contact by id."""
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM contacts WHERE id = ?", (contact_id,)
+                "SELECT * FROM contacts WHERE id = ? AND user_id = ?",
+                (contact_id, self.user_id),
             ).fetchone()
             return dict(row) if row else None
 
@@ -3314,14 +3746,17 @@ class JobStorage:
         monitored: bool | None = None,
         monitorable: bool | None = None,
     ) -> list[dict]:
-        """List companies with job/contact/interaction counts and last interaction date."""
+        """List companies with job/contact/interaction counts and last interaction date.
+
+        Relationship columns (status/notes/monitored) come from the bound user's
+        `user_companies` row, defaulting when absent (Constitution X)."""
         clauses = []
-        params: list = []
+        params: list = [self.user_id] * 4  # uc JOIN + contacts + interactions + last_ix
         if exclude_blacklisted:
-            clauses.append("(c.status IS NULL OR c.status != 'blacklisted')")
+            clauses.append("COALESCE(uc.status, 'prospect') != 'blacklisted'")
         if status:
             placeholders = ", ".join("?" for _ in status)
-            clauses.append(f"c.status IN ({placeholders})")
+            clauses.append(f"COALESCE(uc.status, 'prospect') IN ({placeholders})")
             params.extend(status)
         if search:
             clauses.append("(LOWER(c.name) LIKE ? OR LOWER(c.name_normalized) LIKE ?)")
@@ -3346,9 +3781,9 @@ class JobStorage:
             params.append(f"-{last_interaction_within_days}")
         if monitored is not None:
             if monitored:
-                clauses.append("c.monitored = 1")
+                clauses.append("COALESCE(uc.monitored, 0) = 1")
             else:
-                clauses.append("(c.monitored IS NULL OR c.monitored = 0)")
+                clauses.append("COALESCE(uc.monitored, 0) = 0")
         if monitorable is not None:
             if monitorable:
                 clauses.append("(c.ats_provider IS NOT NULL OR c.scraper_id IS NOT NULL)")
@@ -3364,10 +3799,13 @@ class JobStorage:
         query = f"""
             SELECT * FROM (
             SELECT
-                c.id, c.name, c.website, c.status,
+                c.id, c.name, c.website,
+                COALESCE(uc.status, 'prospect') AS status,
+                uc.notes                              AS notes,
                 c.company_country, c.industry_sector, c.company_size,
                 c.first_seen_at, c.last_seen_at, c.summary,
-                c.ats_provider, c.ats_identifier, c.scraper_id, c.monitored,
+                c.ats_provider, c.ats_identifier, c.scraper_id,
+                COALESCE(uc.monitored, 0)            AS monitored,
                 c.monitoring_status, c.scraping_method, c.research_notes,
                 c.research_confidence, c.researched_at,
                 COALESCE(jcnt.cnt, 0)    AS job_count,
@@ -3375,21 +3813,22 @@ class JobStorage:
                 COALESCE(ixcnt.cnt, 0)   AS interaction_count,
                 last_ix.occurred_at      AS last_interaction_at
             FROM companies c
+            LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?
             LEFT JOIN (
                 SELECT company_id, COUNT(*) AS cnt
                 FROM jobs GROUP BY company_id
             ) jcnt ON jcnt.company_id = c.id
             LEFT JOIN (
                 SELECT company_id, COUNT(*) AS cnt
-                FROM contacts GROUP BY company_id
+                FROM contacts WHERE user_id = ? GROUP BY company_id
             ) ctcnt ON ctcnt.company_id = c.id
             LEFT JOIN (
                 SELECT company_id, COUNT(*) AS cnt
-                FROM interactions GROUP BY company_id
+                FROM interactions WHERE user_id = ? GROUP BY company_id
             ) ixcnt ON ixcnt.company_id = c.id
             LEFT JOIN (
                 SELECT company_id, MAX(occurred_at) AS occurred_at
-                FROM interactions GROUP BY company_id
+                FROM interactions WHERE user_id = ? GROUP BY company_id
             ) last_ix ON last_ix.company_id = c.id
             {where}
             ) sub
@@ -3403,13 +3842,20 @@ class JobStorage:
         return [dict(r) for r in rows]
 
     def get_company_by_id(self, company_id: int) -> dict | None:
-        """Fetch a single company by PK, with counts and last interaction."""
+        """Fetch a single company by PK, with counts and last interaction.
+
+        Relationship columns (status/notes/monitored) come from the bound user's
+        `user_companies` row, defaulting when absent (Constitution X)."""
         query = """
             SELECT
-                c.id, c.name, c.website, c.status, c.notes,
+                c.id, c.name, c.website,
+                COALESCE(uc.status, 'prospect') AS status,
+                uc.notes                              AS notes,
                 c.company_country, c.industry_sector, c.company_size,
                 c.careers_url, c.ats_provider, c.ats_identifier,
-                c.scraper_id, c.monitored, c.first_seen_at, c.last_seen_at, c.summary,
+                c.scraper_id,
+                COALESCE(uc.monitored, 0)             AS monitored,
+                c.first_seen_at, c.last_seen_at, c.summary,
                 c.monitoring_status, c.scraping_method, c.research_notes,
                 c.research_confidence, c.researched_at, c.x_handle,
                 COALESCE(jcnt.cnt, 0)    AS job_count,
@@ -3417,26 +3863,30 @@ class JobStorage:
                 COALESCE(ixcnt.cnt, 0)   AS interaction_count,
                 last_ix.occurred_at      AS last_interaction_at
             FROM companies c
+            LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?
             LEFT JOIN (
                 SELECT company_id, COUNT(*) AS cnt
                 FROM jobs GROUP BY company_id
             ) jcnt ON jcnt.company_id = c.id
             LEFT JOIN (
                 SELECT company_id, COUNT(*) AS cnt
-                FROM contacts GROUP BY company_id
+                FROM contacts WHERE user_id = ? GROUP BY company_id
             ) ctcnt ON ctcnt.company_id = c.id
             LEFT JOIN (
                 SELECT company_id, COUNT(*) AS cnt
-                FROM interactions GROUP BY company_id
+                FROM interactions WHERE user_id = ? GROUP BY company_id
             ) ixcnt ON ixcnt.company_id = c.id
             LEFT JOIN (
                 SELECT company_id, MAX(occurred_at) AS occurred_at
-                FROM interactions GROUP BY company_id
+                FROM interactions WHERE user_id = ? GROUP BY company_id
             ) last_ix ON last_ix.company_id = c.id
             WHERE c.id = ?
         """
         with self._conn() as conn:
-            row = conn.execute(query, (company_id,)).fetchone()
+            row = conn.execute(
+                query,
+                (self.user_id, self.user_id, self.user_id, self.user_id, company_id),
+            ).fetchone()
         return dict(row) if row else None
 
     def find_jobs_by_company(self, company: str) -> list[dict]:
@@ -3449,11 +3899,11 @@ class JobStorage:
                 """
                 SELECT j.id, j.title, j.company, t.status
                 FROM jobs j
-                LEFT JOIN job_tracking t ON j.id = t.job_id
+                LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                 WHERE lower(j.company) LIKE lower(?)
                   AND t.status = 'applied'
                 """,
-                (f"%{company}%",),
+                (self.user_id, f"%{company}%"),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -3488,12 +3938,12 @@ class JobStorage:
                 ORDER BY s2.score DESC, s2.profile_id ASC
                 LIMIT 1
               )
-            LEFT JOIN job_tracking t ON j.id = t.job_id
+            LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
             WHERE j.company_id = ?
             ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC
         """
         with self._conn() as conn:
-            rows = conn.execute(query, (company_id,)).fetchall()
+            rows = conn.execute(query, (self.user_id, company_id)).fetchall()
             result = []
             for row in rows:
                 d = dict(row)
@@ -3513,9 +3963,11 @@ class JobStorage:
     ) -> list[dict]:
         """List all contacts across companies with optional filters."""
         clauses = []
-        params: list = []
+        # uc JOIN + last_ix subquery + the ct.user_id filter (first WHERE clause)
+        params: list = [self.user_id, self.user_id, self.user_id]
+        clauses.append("ct.user_id = ?")
         if exclude_blacklisted_companies:
-            clauses.append("(c.status IS NULL OR c.status != 'blacklisted')")
+            clauses.append("COALESCE(uc.status, 'prospect') != 'blacklisted'")
         if company_id is not None:
             clauses.append("ct.company_id = ?")
             params.append(company_id)
@@ -3545,13 +3997,14 @@ class JobStorage:
                 ct.is_current, ct.is_unverified, ct.notes,
                 ct.first_seen_at, ct.last_seen_at, ct.created_at,
                 c.id AS company_id, c.name AS company_name,
-                c.status AS company_status,
+                COALESCE(uc.status, 'prospect') AS company_status,
                 last_ix.occurred_at AS last_interaction_at
             FROM contacts ct
             JOIN companies c ON ct.company_id = c.id
+            LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?
             LEFT JOIN (
                 SELECT contact_id, MAX(occurred_at) AS occurred_at
-                FROM interactions GROUP BY contact_id
+                FROM interactions WHERE user_id = ? GROUP BY contact_id
             ) last_ix ON last_ix.contact_id = ct.id
             {where}
             ORDER BY ct.last_seen_at DESC
@@ -3589,11 +4042,11 @@ class JobStorage:
                 return
             conn.execute(
                 """INSERT INTO interactions (
-                       company_id, job_id,
+                       user_id, company_id, job_id,
                        type, direction, outcome,
                        occurred_at, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (company_id, job_id, int_type, direction, outcome, now, now),
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (self.user_id, company_id, job_id, int_type, direction, outcome, now, now),
             )
 
         if _conn is not None:
@@ -3609,7 +4062,8 @@ class JobStorage:
     def get_all_profiles(self) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, name, criteria FROM search_profiles"
+                "SELECT id, name, criteria FROM search_profiles WHERE user_id = ?",
+                (self.user_id,),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -3618,7 +4072,10 @@ class JobStorage:
         with self._conn() as conn:
             conn.execute("DELETE FROM job_scores WHERE profile_id = ?", (profile_id,))
             scores = conn.execute("SELECT changes()").fetchone()[0]
-            conn.execute("DELETE FROM search_profiles WHERE id = ?", (profile_id,))
+            conn.execute(
+                "DELETE FROM search_profiles WHERE id = ? AND user_id = ?",
+                (profile_id, self.user_id),
+            )
             profile = conn.execute("SELECT changes()").fetchone()[0]
             conn.commit()
         return scores, profile
@@ -3659,9 +4116,9 @@ class JobStorage:
                 ORDER BY s2.score DESC, s2.profile_id ASC
                 LIMIT 1
               )
-            LEFT JOIN job_tracking t ON j.id = t.job_id
+            LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
         """
-        params: list = []
+        params: list = [self.user_id]
         if exclude_archived:
             query += " WHERE t.status IS NULL OR t.status != 'archived'"
         query += " ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC"
@@ -3705,9 +4162,9 @@ class JobStorage:
                    FROM jobs j
                    LEFT JOIN companies c ON j.company_id = c.id
                    LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
-                   LEFT JOIN job_tracking t ON j.id = t.job_id
+                   LEFT JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                 """
-        params: list = [profile_id]
+        params: list = [profile_id, self.user_id]
         if exclude_archived:
             query += " WHERE t.status IS NULL OR t.status != 'archived'"
         query += " ORDER BY COALESCE(s.score, -1) DESC, j.last_seen DESC"
@@ -3746,10 +4203,11 @@ class JobStorage:
                        FROM interactions i
                        JOIN companies c ON i.company_id = c.id
                        LEFT JOIN contacts ct ON i.contact_id = ct.id
-                       WHERE i.follow_up_due_at <= ?
+                       WHERE i.user_id = ?
+                         AND i.follow_up_due_at <= ?
                        ORDER BY i.follow_up_due_at ASC
                        LIMIT 20""",
-                    (today,),
+                    (self.user_id, today),
                 ).fetchall()
             ]
 
@@ -3761,34 +4219,41 @@ class JobStorage:
                        FROM interactions i
                        JOIN companies c ON i.company_id = c.id
                        LEFT JOIN contacts ct ON i.contact_id = ct.id
-                       WHERE i.direction = 'inbound'
+                       WHERE i.user_id = ?
+                         AND i.direction = 'inbound'
                          AND i.occurred_at >= ?
                        ORDER BY i.occurred_at DESC
                        LIMIT 20""",
-                    (seven_days_ago,),
+                    (self.user_id, seven_days_ago),
                 ).fetchall()
             ]
 
             # Unverified contacts count
             unverified_count = conn.execute(
-                "SELECT COUNT(*) FROM contacts WHERE is_unverified = 1"
+                "SELECT COUNT(*) FROM contacts WHERE is_unverified = 1 AND user_id = ?",
+                (self.user_id,),
             ).fetchone()[0]
 
             # Stale active outreach (no interaction in 14 days)
             stale_outreach = [
                 dict(r) for r in conn.execute(
-                    """SELECT c.*, last_ix.last_at AS last_interaction_at
+                    """SELECT c.*,
+                              COALESCE(uc.status, 'prospect')  AS status,
+                              uc.notes                           AS notes,
+                              COALESCE(uc.monitored, 0)          AS monitored,
+                              last_ix.last_at AS last_interaction_at
                        FROM companies c
+                       LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?
                        LEFT JOIN (
                            SELECT company_id, MAX(occurred_at) AS last_at
-                           FROM interactions GROUP BY company_id
+                           FROM interactions WHERE user_id = ? GROUP BY company_id
                        ) last_ix ON last_ix.company_id = c.id
-                       WHERE c.status = 'active_outreach'
+                       WHERE COALESCE(uc.status, 'prospect') = 'active_outreach'
                          AND (last_ix.last_at IS NULL
                               OR last_ix.last_at < ?)
                        ORDER BY COALESCE(last_ix.last_at, c.last_seen_at) ASC
                        LIMIT 20""",
-                    (fourteen_days_ago,),
+                    (self.user_id, self.user_id, fourteen_days_ago),
                 ).fetchall()
             ]
 
@@ -3888,12 +4353,15 @@ class JobStorage:
                 "SELECT COUNT(DISTINCT job_id) FROM job_scores"
             ).fetchone()[0]
             total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
-            total_contacts = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+            total_contacts = conn.execute(
+                "SELECT COUNT(*) FROM contacts WHERE user_id = ?", (self.user_id,)
+            ).fetchone()[0]
             unverified_contacts = conn.execute(
-                "SELECT COUNT(*) FROM contacts WHERE is_unverified = 1"
+                "SELECT COUNT(*) FROM contacts WHERE is_unverified = 1 AND user_id = ?",
+                (self.user_id,),
             ).fetchone()[0]
             total_interactions = conn.execute(
-                "SELECT COUNT(*) FROM interactions"
+                "SELECT COUNT(*) FROM interactions WHERE user_id = ?", (self.user_id,)
             ).fetchone()[0]
         return {
             "total_jobs": total_jobs,
@@ -3909,7 +4377,8 @@ class JobStorage:
         """Contacts grouped by role_family, most common first."""
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT role_family, COUNT(*) FROM contacts GROUP BY role_family ORDER BY COUNT(*) DESC"
+                "SELECT role_family, COUNT(*) FROM contacts WHERE user_id = ? GROUP BY role_family ORDER BY COUNT(*) DESC",
+                (self.user_id,),
             ).fetchall()
         return [(r[0], r[1]) for r in rows]
 
@@ -3925,9 +4394,9 @@ class JobStorage:
         if not fields:
             return
         cols = ", ".join(f"{k} = ?" for k in fields)
-        vals = list(fields.values()) + [contact_id]
+        vals = list(fields.values()) + [contact_id, self.user_id]
         with self._conn() as conn:
-            conn.execute(f"UPDATE contacts SET {cols} WHERE id = ?", vals)
+            conn.execute(f"UPDATE contacts SET {cols} WHERE id = ? AND user_id = ?", vals)
 
     def bulk_mark_contacts_verified(self, contact_ids: list[int], last_verified_at: str) -> None:
         """Mark many contacts verified in a single transaction."""
@@ -3936,15 +4405,16 @@ class JobStorage:
         with self._conn() as conn:
             for cid in contact_ids:
                 conn.execute(
-                    "UPDATE contacts SET is_unverified = 0, last_verified_at = ? WHERE id = ?",
-                    (last_verified_at, cid),
+                    "UPDATE contacts SET is_unverified = 0, last_verified_at = ? WHERE id = ? AND user_id = ?",
+                    (last_verified_at, cid, self.user_id),
                 )
 
     def get_tracking_status(self, job_id: str) -> str | None:
         """Current tracking status for a job, or ``None`` when untracked."""
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT status FROM job_tracking WHERE job_id = ?", (job_id,)
+                "SELECT status FROM job_tracking WHERE job_id = ? AND user_id = ?",
+                (job_id, self.user_id),
             ).fetchone()
         return row["status"] if row else None
 
@@ -3954,9 +4424,10 @@ class JobStorage:
             rows = conn.execute(
                 """SELECT DISTINCT ct.* FROM contacts ct
                    JOIN interactions i ON i.contact_id = ct.id
-                   WHERE i.job_id = ? AND i.type = 'discovered_on_posting'
+                   WHERE i.job_id = ? AND i.user_id = ? AND ct.user_id = ?
+                     AND i.type = 'discovered_on_posting'
                    ORDER BY ct.last_seen_at DESC""",
-                (job_id,),
+                (job_id, self.user_id, self.user_id),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -3973,26 +4444,26 @@ class JobStorage:
             over_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, t.notes
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s   ON j.id = s.job_id
                     WHERE t.status = 'archived' AND s.score >= 8
                       AND s.profile_id = ?
                       AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
                     ORDER BY s.score DESC
                     LIMIT 10""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
             under_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, t.status
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s   ON j.id = s.job_id
                     WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
                       AND s.profile_id = ?
                     ORDER BY s.score ASC
                     LIMIT 10""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
             buckets = [
@@ -4005,50 +4476,50 @@ class JobStorage:
             for label, cond in buckets:
                 rel = conn.execute(
                     f"""SELECT COUNT(*) FROM jobs j
-                         JOIN job_tracking t ON j.id = t.job_id
+                         JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                          JOIN job_scores s ON j.id = s.job_id
                         WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
                           AND s.profile_id = ?
                           AND {cond}
                           AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)""",
-                    (profile_id,),
+                    (self.user_id, profile_id),
                 ).fetchone()[0]
                 tn = conn.execute(
                     f"""SELECT COUNT(*) FROM jobs j
-                         JOIN job_tracking t ON j.id = t.job_id
+                         JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                          JOIN job_scores s ON j.id = s.job_id
                         WHERE t.status = 'archived'
                           AND s.profile_id = ?
                           AND {cond}
                           AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)""",
-                    (profile_id,),
+                    (self.user_id, profile_id),
                 ).fetchone()[0]
                 score_buckets.append((label, rel, tn))
 
             sector_over = conn.execute(
                 """SELECT COALESCE(c.industry_sector, 'other'), COUNT(*) AS n
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s ON j.id = s.job_id
                      LEFT JOIN companies c ON j.company_id = c.id
                     WHERE t.status = 'archived' AND s.score >= 8
                       AND s.profile_id = ?
                       AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
                     GROUP BY 1 ORDER BY n DESC LIMIT 5""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
             country_over = conn.execute(
                 """SELECT COALESCE(c.company_country, 'unknown'), COUNT(*) AS n
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s ON j.id = s.job_id
                      LEFT JOIN companies c ON j.company_id = c.id
                     WHERE t.status = 'archived' AND s.score >= 8
                       AND s.profile_id = ?
                       AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
                     GROUP BY 1 ORDER BY n DESC LIMIT 5""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
         return {
@@ -4086,7 +4557,7 @@ class JobStorage:
                 """SELECT name, website, careers_url, ats_provider, ats_identifier,
                           scraping_method, monitoring_status,
                           research_notes, research_confidence, x_handle,
-                          industry_sector, company_country, notes
+                          industry_sector, company_country
                    FROM companies
                    WHERE monitoring_status != 'unmonitored'
                       OR ats_provider IS NOT NULL
@@ -4129,17 +4600,19 @@ class JobStorage:
                            COALESCE(j.language_required, 'unknown') AS language_required,
                            COALESCE(c.company_size, 'unknown')  AS company_size
                       FROM jobs j
-                      JOIN job_tracking t ON j.id = t.job_id
+                      JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                       LEFT JOIN companies c ON j.company_id = c.id
                      WHERE t.status IN ({placeholders})""",
-                statuses,
+                [self.user_id, *statuses],
             ).fetchall()
         return [dict(r) for r in rows]
 
     def get_applications_count(self) -> int:
         """Number of prepared applications (rows in ``job_applications``)."""
         with self._conn() as conn:
-            return conn.execute("SELECT COUNT(*) FROM job_applications").fetchone()[0]
+            return conn.execute(
+                "SELECT COUNT(*) FROM job_applications WHERE user_id = ?", (self.user_id,)
+            ).fetchone()[0]
 
     def get_classified_jobs(self, profile_id: str) -> tuple:
         """Per-profile cohort classification for the preference report.
@@ -4158,11 +4631,11 @@ class JobStorage:
                           COALESCE(c.company_size, 'unknown')  AS company_size,
                           s.score, s.reason AS score_reason, s.scored_by
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      LEFT JOIN companies c ON j.company_id = c.id
                      LEFT JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
                     WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'archived')""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
         tp, us, tn, fc = [], [], [], []
@@ -4202,20 +4675,22 @@ class JobStorage:
             over_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, s.profile_id, t.notes, s.scored_by
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s   ON j.id = s.job_id
                     WHERE t.status = 'archived' AND s.score >= 8
                     ORDER BY s.score DESC
-                    LIMIT 15"""
+                    LIMIT 15""",
+                (self.user_id,),
             ).fetchall()
 
             under_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, s.profile_id, t.status
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s   ON j.id = s.job_id
                     WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
-                    ORDER BY s.score ASC"""
+                    ORDER BY s.score ASC""",
+                (self.user_id,),
             ).fetchall()
 
         return {
@@ -4227,7 +4702,8 @@ class JobStorage:
         """Non-empty archive notes, for the archive-themes word-frequency section."""
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT notes FROM job_tracking WHERE status = 'archived' AND notes IS NOT NULL AND notes != ''"
+                "SELECT notes FROM job_tracking WHERE status = 'archived' AND notes IS NOT NULL AND notes != '' AND user_id = ?",
+                (self.user_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -4240,13 +4716,13 @@ class JobStorage:
                           COALESCE(c.company_country, 'unknown') AS country,
                           s.score, s.reason AS score_reason
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
                      LEFT JOIN companies c ON j.company_id = c.id
                     WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn', 'ready', 'queued')
                       AND s.score IS NOT NULL
                     ORDER BY s.score DESC""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
             neg_rows = conn.execute(
@@ -4255,13 +4731,13 @@ class JobStorage:
                           COALESCE(c.company_country, 'unknown') AS country,
                           s.score, s.reason AS score_reason, t.notes
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s ON j.id = s.job_id AND s.profile_id = ?
                      LEFT JOIN companies c ON j.company_id = c.id
                     WHERE t.status = 'archived'
                       AND s.score IS NOT NULL
                     ORDER BY s.score ASC""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
         return {
@@ -4275,78 +4751,81 @@ class JobStorage:
             over_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, t.notes, s.profile_id
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s   ON j.id = s.job_id
                     WHERE t.status = 'archived' AND s.score >= 8
                       AND s.profile_id = ?
                       AND NOT (s.scored_by LIKE 'tier_0%%' AND s.score <= 3)
                     ORDER BY s.score DESC""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
             under_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, t.status, s.profile_id
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      JOIN job_scores s   ON j.id = s.job_id
                     WHERE t.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn') AND s.score <= 6
                       AND s.profile_id = ?
                     ORDER BY s.score ASC""",
-                (profile_id,),
+                (self.user_id, profile_id),
             ).fetchall()
 
             deny_rows = conn.execute(
                 """SELECT j.company, COUNT(*) AS n
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                     WHERE t.status = 'archived'
                       AND j.company_id IS NOT NULL
                       AND j.company NOT IN (
                           SELECT DISTINCT j2.company FROM jobs j2
-                          JOIN job_tracking t2 ON j2.id = t2.job_id
+                          JOIN job_tracking t2 ON j2.id = t2.job_id AND t2.user_id = ?
                           WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
                       )
                     GROUP BY j.company
                     HAVING COUNT(*) >= 3
-                    ORDER BY n DESC"""
+                    ORDER BY n DESC""",
+                (self.user_id, self.user_id),
             ).fetchall()
 
             sector_rows = conn.execute(
                 """SELECT COALESCE(c.industry_sector, 'other') AS sector, COUNT(*) AS n
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      LEFT JOIN companies c ON j.company_id = c.id
                     WHERE t.status = 'archived'
                       AND COALESCE(c.industry_sector, 'other') NOT IN (
                           SELECT DISTINCT COALESCE(c2.industry_sector, 'other')
                           FROM jobs j2
-                          JOIN job_tracking t2 ON j2.id = t2.job_id
+                          JOIN job_tracking t2 ON j2.id = t2.job_id AND t2.user_id = ?
                           LEFT JOIN companies c2 ON j2.company_id = c2.id
                           WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
                       )
                     GROUP BY 1
                     HAVING COUNT(*) >= 5
-                    ORDER BY n DESC"""
+                    ORDER BY n DESC""",
+                (self.user_id, self.user_id),
             ).fetchall()
 
             country_rows = conn.execute(
                 """SELECT COALESCE(c.company_country, 'unknown') AS country, COUNT(*) AS n
                      FROM jobs j
-                     JOIN job_tracking t ON j.id = t.job_id
+                     JOIN job_tracking t ON j.id = t.job_id AND t.user_id = ?
                      LEFT JOIN companies c ON j.company_id = c.id
                     WHERE t.status = 'archived'
                       AND c.company_country IS NOT NULL
                       AND c.company_country != 'unknown'
                       AND c.company_country NOT IN (
                           SELECT DISTINCT c2.company_country FROM jobs j2
-                          JOIN job_tracking t2 ON j2.id = t2.job_id
+                          JOIN job_tracking t2 ON j2.id = t2.job_id AND t2.user_id = ?
                           LEFT JOIN companies c2 ON j2.company_id = c2.id
                           WHERE t2.status IN ('applied', 'interviewing', 'offer', 'rejected', 'withdrawn')
                             AND c2.company_country IS NOT NULL
                       )
                     GROUP BY 1
                     HAVING COUNT(*) >= 3
-                    ORDER BY n DESC"""
+                    ORDER BY n DESC""",
+                (self.user_id, self.user_id),
             ).fetchall()
 
             source_rows = conn.execute(

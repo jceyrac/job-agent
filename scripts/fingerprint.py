@@ -176,7 +176,7 @@ def build_fingerprint(db_path: str, as_of: str, profile_id: str | None,
         copy_path = os.path.join(tmp, "jobs.db")
         _copy_db(db_path, copy_path)
         db = JobStorage(copy_path)
-        profile = profile_id or db.get_config("active_profile_id") or "unified_jc"
+        profile = profile_id or db.get_active_profile_id() or "unified_jc"
         feed = db.get_all_for_tracker(profile)
         counts = _table_counts(copy_path)
         dashboard = _dashboard_at(db, as_of)

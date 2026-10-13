@@ -116,7 +116,7 @@ def _render_run_controls(db):
             st.cache_data.clear()
 
     # ── Live metric (always fresh — recomputed on every render) ──────────
-    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     unscored = len(db.get_jobs_for_scoring(active_id))
     st.metric("Unscored jobs", unscored)
 
@@ -225,7 +225,7 @@ def _render_run_controls(db):
     with c3:
         if st.button("🎯 Run scoring", use_container_width=True,
                      help="Score all unscored jobs for the active profile. Can be stopped."):
-            active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+            active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
             proc = subprocess.Popen(
                 [sys.executable, "-u", "-m", "core.score", "--profile", active_id],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -525,7 +525,7 @@ def _render_reonboard(db):
         )
         confirm = st.checkbox("Yes, I want to re-run the onboarding wizard.")
         if confirm and st.button("Re-run onboarding", use_container_width=True):
-            db.set_config("onboarding_complete", "false")
+            db.set_onboarding_completed(False)
             st.session_state.pop("onboarding_step", None)
             st.session_state.pop("q", None)
             st.session_state.pop("cv_text", None)

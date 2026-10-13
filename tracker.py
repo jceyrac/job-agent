@@ -52,7 +52,7 @@ def _is_onboarded() -> bool:
 
     # If the explicit onboarding flag is set, the user completed the wizard.
     # Use load_active_profile for backfill safety (pre-v3 scoring_context).
-    if db.get_config("onboarding_complete") == "true":
+    if db.get_onboarding_completed():
         profile = load_active_profile(db)
         return bool(profile and profile.scoring_context.strip())
 
@@ -62,13 +62,13 @@ def _is_onboarded() -> bool:
     # first-time onboarding session (the CV step creates the DB file, and
     # the next rerun would find the seeded profile and redirect to the
     # dashboard before the user reaches Generate/Review/Save).
-    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     row = db.get_profile(active_id)
     if row:
         criteria = row.get("criteria", {})
         if isinstance(criteria, dict) and criteria.get("scoring_context", "").strip():
             # Pre-Phase-2 user: has a real saved profile but no flag — auto-set
-            db.set_config("onboarding_complete", "true")
+            db.set_onboarding_completed(True)
             return True
 
     return False

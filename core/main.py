@@ -42,7 +42,7 @@ def main():
     else:
         print(f"[purge] No stale jobs to remove")
 
-    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     t0 = time.monotonic()
 
     # ── Decision logic ──────────────────────────────────────────────────────

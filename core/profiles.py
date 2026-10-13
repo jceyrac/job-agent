@@ -163,12 +163,12 @@ class SearchProfile:
 def load_active_profile(db) -> "SearchProfile":
     """Resolve the active profile from the DB, seeding from code on first run.
     DB is the source of truth; ACTIVE_PROFILE (UNIFIED_JC) is the seed."""
-    pid = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    pid = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     row = db.get_profile(pid)
     if not row:
         seed = ALL_PROFILES.get(pid, ACTIVE_PROFILE)
         db.upsert_profile(seed)
-        db.set_config("active_profile_id", seed.id)
+        db.set_active_profile_id(seed.id)
         return seed
     profile = SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
     return profile

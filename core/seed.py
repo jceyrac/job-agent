@@ -51,7 +51,6 @@ def main():
             "x_handle": c.get("x_handle"),
             "industry_sector": c.get("sector") or c.get("industry_sector"),
             "company_country": c.get("hq_location") or c.get("company_country"),
-            "notes": c.get("notes"),
         }
         changed = db.upsert_company_from_seed(row)
         if changed:

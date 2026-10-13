@@ -47,7 +47,7 @@ def _render_controls_bar(db):
     if "bg_start" not in st.session_state:
         st.session_state.bg_start = 0.0
 
-    active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+    active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     unscored = len(db.get_jobs_for_scoring(active_id))
 
     # ── Pending result from a completed run (display once, then clear) ──
@@ -119,7 +119,7 @@ def _render_controls_bar(db):
                 _launch_bg("scrape", [sys.executable, "-u", "-m", "core.scrape"])
         with c2:
             if st.button("🎯 Run scoring", use_container_width=True):
-                active_id = db.get_config("active_profile_id", DEFAULT_PROFILE_ID)
+                active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
                 _launch_bg("score", [sys.executable, "-u", "-m", "core.score", "--profile", active_id])
         with c3:
             if st.button("🔄 Clear Cache", use_container_width=True):
