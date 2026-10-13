@@ -69,8 +69,8 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 
 | # | Étape | Contenu | Jours |
 |---|-------|---------|-------|
-| 3 | Séparation des espaces | Table `users` (1 ligne), `user_id` sur tracking/history/applications/interactions/contacts, `user_companies`, backfill ; anciennes colonnes conservées | 3–5 |
-| 4 | Périmètre d'ingestion plateforme | Gate titre → Tier 0 scoring ; config plateforme ; surveiller volume d'extraction LLM dans `runs` | 2–3 |
+| 3 | Séparation des espaces ✅ (fait 2026-10-13) | Table `users` (1 ligne), `user_id` sur tracking/history/applications/interactions/contacts, `user_companies`, backfill ; anciennes colonnes conservées — **spec 039** | 3–5 |
+| 4 | Périmètre d'ingestion plateforme ← prochaine | Gate titre → Tier 0 scoring ; config plateforme ; surveiller volume d'extraction LLM dans `runs` | 2–3 |
 
 ### Phase C — API en parallèle (additive)
 
@@ -89,7 +89,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | 9 | Chat CV agent | Nœud d'édition ciblée dans le graphe, sessions `cv-sessions` streamées (SSE), page de session dans `web/` (aperçu cliquable + chat + révisions). Dès l'étape 6 + une fiche job dans `web/` ; en parallèle de l'étape 8 | 6–10 |
 | 10 | Contraction | Suppression des anciennes colonnes ; **retrait complet de Streamlit** (`tracker.py`, `tracker_views/`, dépendance `streamlit`, service `tracker` du compose) une fois toutes les pages migrées | 2–3 |
 
-**Total : ~50–79 jours de travail**, chat CV et passage des agents par l'API inclus (réestimé le 2026-10-09 ; l'ancien total de 42–65 n'incluait ni l'étape 9 ni l'étape 6b). Mesure à date : étapes 0 à 1c faites en ~6 jours de calendrier, conforme aux estimations. Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
+**Total : ~50–79 jours de travail**, chat CV et passage des agents par l'API inclus (réestimé le 2026-10-09 ; l'ancien total de 42–65 n'incluait ni l'étape 9 ni l'étape 6b). Mesure à date : étapes 0 à 3 faites (0–1c en ~6 jours de calendrier, conforme aux estimations ; 3 — séparation des espaces — clos le 2026-10-13). Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
 
 ## Points ouverts
 

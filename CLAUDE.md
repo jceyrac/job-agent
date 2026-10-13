@@ -156,21 +156,26 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 ## DB schema (key tables)
 
 ```
-jobs                — one row per unique job + extracted fields (summary, work_mode, geo_zone, company_size, contract_type, …)
-job_scores          — one row per (job_id, profile_id) — score, reason, country_code, comp_flag, scored_at
-job_tracking        — one row per job_id — status, notes, changed_at
-status_history      — status changes per job (lifecycle dates)
-job_applications    — analysis, cover letter, CV bullets per job_id
-companies           — company records (facts + monitoring/ATS fields)
-company_status_history
-contacts            — CRM contact records
-interactions        — outreach log
-search_profiles     — serialised SearchProfile JSON (id, name, criteria)
-config              — key/value store (active_profile_id, onboarding_complete, cv.master_path, …)
+jobs                — one row per unique job + extracted fields (summary, work_mode, geo_zone, company_size, contract_type, …) — SHARED catalogue
+job_scores          — one row per (job_id, profile_id) — score, reason, country_code, comp_flag, scored_at — shared catalogue
+users               — one row per user (id, display_name, active_profile_id, onboarding_completed_at)
+user_companies      — one row per (user_id, company_id) — status, notes, monitored, watch_requested_at
+job_tracking        — one row per (user_id, job_id) — status, notes, changed_at
+status_history      — status changes per (user_id, job) (lifecycle dates)
+job_applications    — analysis, cover letter, CV bullets per (user_id, job_id)
+companies           — company records (facts + monitoring/ATS fields) — SHARED catalogue
+company_status_history — company status changes (keyed by user_id)
+contacts            — CRM contact records (keyed by user_id; UNIQUE (user_id, linkedin_url))
+interactions        — outreach log (keyed by user_id)
+search_profiles     — serialised SearchProfile JSON (id, user_id, name, criteria)
+config              — key/value store (platform config; active_profile_id/onboarding_complete moved to `users`)
 runs                — run history (ran_at, status, jobs_scraped, jobs_scored, duration_seconds, run_type)
 ```
 
-Roadmap step 3 adds `users`, `user_id` on tracking/history/applications/contacts/interactions, and `user_companies` (expand/contract — old columns kept until step 10).
+Step 3 (séparation des espaces) is done (2026-10-13): `users` + `user_companies` + `user_id`
+on tracking/history/applications/contacts/interactions/company_status_history/search_profiles.
+`companies.status`/`notes`/`monitored` are kept but unused (expand/contract — removed at step 10).
+`JobStorage(db_path, user_id=…)` binds the user seam; `user_id=None` → `config.default_user_id`.
 
 **Job statuses:** `new`, `queued`, `ready`, `applied`, `interviewing`, `offer`, `rejected`, `withdrawn`, `archived`, `expired`
 - `expired` = offer no longer live (external decision)
@@ -199,14 +204,7 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-12)
+## Current focus (as of 2026-10-13)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Next: step 3 (séparation des espaces).
-
-<!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan at
-specs/038-cv-contact-profile-eu-rule/plan.md (deterministic CV contact profile —
-Swiss only for CH-based jobs). The API migration roadmap stays at docs/roadmap-api.md
-(next: step 3 — séparation des espaces).
-<!-- SPECKIT END -->
+**API migration roadmap** — `docs/roadmap-api.md`. Step 3 (séparation des espaces) done;
+next: step 4 (périmètre d'ingestion plateforme — gate titre → Tier 0 scoring).

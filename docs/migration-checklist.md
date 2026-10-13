@@ -74,6 +74,39 @@ Before `deploy.sh`, validate the candidate commit on the staging tracker (`:8502
 
 ---
 
+## Spec 039 — User-space separation (step-3 release + rollback)
+
+Step 3 ships through the standard flow above, plus these step-specific items.
+
+### Step-specific validation
+
+- [ ] `scripts/migration_report.py --db <staging-backup-copy>` **before** staging — the
+  user-space tables show `without_user_id = n/a (column absent — pre-migration)`.
+- [ ] `scripts/staging.sh up <exact-sha>` → the one-shot migration runs on the staging
+  copy; `migration_report.py` **after** shows every user-space table with
+  `without_user_id = 0`, `users = 1`, and `user_companies > 0` (one row per non-default
+  company relationship).
+- [ ] Parity fingerprint identical (`scripts/fingerprint` + `compare_fingerprints`) to the
+  pre-change baseline.
+
+### Rollback
+
+`job_tracking` and `job_applications` are **rebuilt** by the migration (their primary
+key is rekeyed from `(job_id)` to `(user_id, job_id)`), so the **previous image cannot
+run on a migrated DB** — redeploying the old SHA alone is not a rollback. To roll back:
+
+1. **Stop** the `tracker` and `agent` services (no further writes).
+2. **Restore the pre-rebuild backup** (`docs/restore-procedure.md`, spec 031) — this
+   returns the DB to the pre-migration shape.
+3. **Redeploy the previous SHA** (the pre-039 commit) — it reads the old shape.
+
+Any write made after the deploy (status changes, applications, interactions) is **lost**:
+the restore discards everything since the backup. Rehearsed once on staging before the
+prod deploy; record the measured duration here (FR-015 / SC-004): **___ min**
+(stop + restore + redeploy + verify).
+
+---
+
 ## Spec 032 — Location Independence (deploy-time validations, queued)
 
 Queued for the verva deploy (a separate, user-confirmed step — **not** run in the
