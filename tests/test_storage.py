@@ -3339,6 +3339,30 @@ def test_set_company_monitored_toggles():
     assert db.get_company_by_id(cid)["monitored"] == 0
 
 
+def test_get_all_monitorable_companies_reads_user_companies_monitored():
+    """Settings page shows the bound user's watch flag, not the legacy `companies.monitored` ghost."""
+    db = JobStorage(":memory:")
+    _setup_test_companies(db)
+
+    # After the migration the legacy `companies.monitored` column is a ghost:
+    # set it to 1 while the user's watch flag is 0, to prove the reader ignores it.
+    with db._conn() as conn:
+        conn.execute("UPDATE companies SET monitored=1 WHERE id=101")
+        conn.execute(
+            "UPDATE user_companies SET monitored=0 WHERE company_id=101 AND user_id=?",
+            (db.user_id,),
+        )
+        conn.commit()
+
+    rows = {r["id"]: r for r in db.get_all_monitorable_companies()}
+    assert rows[101]["monitored"] == 0, "must read user_companies, not companies.monitored"
+
+    # Toggling through the storage method flips what the Settings page shows.
+    db.set_company_monitored(101, True)
+    rows = {r["id"]: r for r in db.get_all_monitorable_companies()}
+    assert rows[101]["monitored"] == 1
+
+
 def test_get_calibration_signals():
     db = JobStorage(":memory:")
     db.upsert_profile(_FakeProfile())

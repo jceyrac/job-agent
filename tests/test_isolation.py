@@ -43,6 +43,7 @@ USER_SPACE_METHODS = (
     # company relationship (user_companies)
     "set_company_status", "set_company_monitored", "set_monitoring_status",
     "update_company_fields", "get_companies", "get_company_by_id",
+    "get_all_monitorable_companies",
     "count_blacklisted_jobs", "get_company_relationship_summary",
     "application_date_missing",
     # aggregate

@@ -2839,14 +2839,19 @@ class JobStorage:
     def get_all_monitorable_companies(self) -> list[dict]:
         """Return all companies that have a scraping source (ATS or dedicated scraper),
         regardless of monitored state.  Used by Settings UI so paused companies
-        remain visible — fixes the pause/resume disappearing-row bug."""
+        remain visible — fixes the pause/resume disappearing-row bug.
+
+        ``monitored`` comes from the bound user's ``user_companies`` row
+        (Constitution X), not the legacy ``companies.monitored`` column."""
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT id, name, ats_provider, ats_identifier, scraper_id,
-                          careers_url, monitored, detected_at
-                   FROM companies
-                   WHERE ats_provider IS NOT NULL OR scraper_id IS NOT NULL
-                   ORDER BY name"""
+                """SELECT c.id, c.name, c.ats_provider, c.ats_identifier, c.scraper_id,
+                          c.careers_url, COALESCE(uc.monitored, 0) AS monitored, c.detected_at
+                   FROM companies c
+                   LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = ?
+                   WHERE c.ats_provider IS NOT NULL OR c.scraper_id IS NOT NULL
+                   ORDER BY c.name""",
+                (self.user_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 
