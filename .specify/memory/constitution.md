@@ -1,15 +1,22 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 2.0.1 → 2.0.2
+  Version change: 2.0.2 → 2.0.3
+  Bump rationale: PATCH — suppression de la violation connue résolue par
+  l'étape 4 (spec 040) : `scrape.py` n'applique plus `title_matches_profile`
+  avant sauvegarde. Le jugement de titre devient une règle Tier 0 du scoring
+  (job_scores) et l'ingestion lit `config.ingestion_scope` (paramètre
+  plateforme). Aucun changement de sens.
+
+  Modified sections:
+    - Known violations at ratification — retrait de la violation
+      « scrape.py applique title_matches_profile avant sauvegarde (I) ».
+
+  Prior version (2.0.2) :
   Bump rationale: PATCH — suppression des violations connues résolues par
   l'étape 2 (spec 037) : SQL brut dans tracker_views/ (2a) et mentions
   résiduelles de Groq hors core/llm.py (2c). Les subprocess lancés par le
   tracker restent une violation connue (2b). Aucun changement de sens.
-
-  Modified sections:
-    - Known violations at ratification — retrait du SQL brut de
-      tracker_views/ et des mentions de Groq ; subprocess conservés (2b).
 
   Prior version (2.0.1) :
   Bump rationale: PATCH — déplacement du domaine vers `core/` (spec 034,
@@ -44,8 +51,6 @@
       migration, deploy via scripts/deploy.sh.
 
   Known violations at ratification (résolues par la roadmap) :
-    - scrape.py applique `title_matches_profile` avant sauvegarde
-      (Principe I) → étape 4.
     - job_tracking, status_history, job_applications, interactions,
       contacts sans `user_id` ; `companies.monitored` sur l'entité
       partagée (Principe X) → étape 3.
@@ -373,4 +378,4 @@ constitution, la constitution prévaut.
 - Les violations connues listées dans le Sync Impact Report sont tolérées
   jusqu'à l'étape de roadmap qui les résout.
 
-**Version**: 2.0.2 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-11
+**Version**: 2.0.3 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-14
