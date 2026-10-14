@@ -13,7 +13,6 @@ from core.filters import JobFilterEngine
 from core.models import JobFilter, JobPosting
 from core.paths import DB_PATH
 from core.storage import JobStorage
-from core.title_gate import title_matches_profile
 
 from core import scrapers
 import core.scrapers.ats
@@ -328,10 +327,11 @@ def _run_monitored_only(db: JobStorage, profile, *, run_scoring: bool = True) ->
 def _run_broad_scrape(db: JobStorage, profile) -> None:
     """Broad scrape: all enabled scrapers (boards + discovery), no monitoring filter."""
     t_start = time.monotonic()
+    scope = db.get_ingestion_scope()
     job_filter = JobFilter(
-        titles=profile.job_titles,
-        exclude=profile.title_exclude,
-        remote_or_hybrid=profile.scrape_remote_or_hybrid,
+        titles=scope["title_families"],
+        exclude=scope["exclude"],
+        remote_or_hybrid=scope["remote_or_hybrid"],
         date_from=date.today() - timedelta(days=db.get_freshness_days()),
     )
 
@@ -342,7 +342,6 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     total_fetched = 0
     total_new = 0
     total_excluded_date = 0
-    total_excluded_title = 0
 
     for ScraperClass in scraper_classes:
         if (getattr(ScraperClass, "ACQUISITION_MODEL", "board") == "company_keyed"
@@ -376,10 +375,6 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
 
         before_count = db.get_stats(profile.id)["total"]
         for job in unique_batch:
-            if not title_matches_profile(job.title, profile.job_titles):
-                total_excluded_title += 1
-                print(f"  → skipped (title not in profile list): {job.title[:60]}")
-                continue
             company_id = None
             if job.company and job.company.strip():
                 try:
@@ -397,8 +392,6 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > {db.get_freshness_days()} days ago)")
-    if total_excluded_title:
-        print(f"🔤 {total_excluded_title} jobs excluded (title not in profile list)")
 
     db.log_run(
         profile_id=profile.id,

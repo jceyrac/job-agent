@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from core import llm
 from core.models import JobPosting
+from core.title_gate import title_excluded, title_matches_profile
 
 load_dotenv()
 
@@ -759,12 +760,13 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
     Tiered evaluation: deterministic filters first, then small-model LLM.
 
     Tier 0 (first match wins):
-      0. company in profile.denylisted_companies        → score=1 (no-op when empty)
-      1. language_required known + not in languages_spoken → score=1
-      2. industry_sector in profile.excluded_sectors    → score=1
-      3. contract_type not in allowed_contract_types    → score=1 (no-op when empty)
-      4. work_mode not in profile.allowed_work_modes    → score=1
-      5. per-mode geography (work_mode_geography)       → score=2
+      0. title not in profile.job_titles / has an exclude word → score=1 (spec 040)
+      1. company in profile.denylisted_companies        → score=1 (no-op when empty)
+      2. language_required known + not in languages_spoken → score=1
+      3. industry_sector in profile.excluded_sectors    → score=1
+      4. contract_type not in allowed_contract_types    → score=1 (no-op when empty)
+      5. work_mode not in profile.allowed_work_modes    → score=1
+      6. per-mode geography (work_mode_geography)       → score=2
 
     Tier 1: small-model LLM (llama-3.1-8b-instant → llama-4-scout).
 
@@ -784,38 +786,51 @@ def evaluate_for_profile(job: JobPosting, profile) -> dict | None:
             comp_flag = 1
 
     # ── Tier 0: deterministic filters —─────────────────────────────────────
-    # 0. Company denylist (no-op when profile.denylisted_companies is empty)
+    # 0. Title judgement (spec 040): title not in the profile's job_titles, or
+    #    containing an excluded word, is filtered here — no LLM call. Moved out
+    #    of ingestion so the verdict lives in user space (job_scores), not on
+    #    the shared catalogue row.
+    job_titles = getattr(profile, "job_titles", None) or []
+    if not title_matches_profile(job.title, job_titles):
+        return _evaluation_result(1, "filtered: title not in profile",
+                                  "tier_0", job, profile, comp_flag=comp_flag)
+    excluded_word = title_excluded(job.title, getattr(profile, "title_exclude", None) or [])
+    if excluded_word:
+        return _evaluation_result(1, f"filtered: excluded title word ({excluded_word})",
+                                  "tier_0", job, profile, comp_flag=comp_flag)
+
+    # 1. Company denylist (no-op when profile.denylisted_companies is empty)
     denylist = getattr(profile, "denylisted_companies", []) or []
     if denylist and job.company and job.company.strip() in denylist:
         return _evaluation_result(1,
             f"filtered: denylisted company ({job.company})",
             "tier_0", job, profile)
 
-    # 1. Language (positive): reject when required language is known and not spoken
+    # 2. Language (positive): reject when required language is known and not spoken
     spoken = profile.languages_spoken or []
     if spoken and language_required not in ("unknown", "multiple") and language_required not in spoken:
         return _evaluation_result(1, f"filtered: language ({language_required}) not spoken",
                                   "tier_0", job, profile)
 
-    # 2. Sector exclusion
+    # 3. Sector exclusion
     if industry_sector in (profile.excluded_sectors or []):
         return _evaluation_result(1, f"filtered: sector ({industry_sector})",
                                   "tier_0", job, profile)
 
-    # 3. Contract type
+    # 4. Contract type
     allowed_ct = profile.allowed_contract_types or []
     ct = (job.contract_type or "unknown").strip().lower()
     if allowed_ct and ct not in allowed_ct:
         return _evaluation_result(1, f"filtered: contract_type ({ct})",
                                   "tier_0", job, profile, comp_flag=comp_flag)
 
-    # 4. Work mode filter
+    # 5. Work mode filter
     allowed_modes = profile.allowed_work_modes or []
     if allowed_modes and work_mode not in allowed_modes:
         return _evaluation_result(1, f"filtered: work_mode ({work_mode})",
                                   "tier_0", job, profile)
 
-    # 5. Per-mode geography (replaces old allowed_countries + hybrid_ok_countries)
+    # 6. Per-mode geography (replaces old allowed_countries + hybrid_ok_countries)
     allowed_geo, geo_zones = _geography_for_mode(profile, work_mode)
     if allowed_geo:
         if company_country != "unknown":

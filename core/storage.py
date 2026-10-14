@@ -949,6 +949,9 @@ class JobStorage:
             # ── User-space separation — user_id seam + companies split (spec 039) ──
             self._migrate_user_space_separation(conn)
 
+            # ── Platform ingestion scope — title judgement moves to scoring (spec 040) ──
+            self._migrate_ingestion_scope(conn)
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     def _migration_applied(self, conn, name: str) -> bool:
@@ -1104,6 +1107,55 @@ class JobStorage:
 
         self._record_migration(conn, "user_space_separation")
         logger.info("[Storage] user_space_separation: default user %s bound", uid)
+
+    def _migrate_ingestion_scope(self, conn) -> None:
+        """Seed `config.ingestion_scope` from the active profile (spec 040).
+
+        Runs once (recorded as `ingestion_scope`). Ingestion is a platform
+        parameter (Constitution I): the scope is copied from the profile's
+        title fields exactly once; afterwards it is edited only via
+        `scripts/ingestion_scope.py`. Writes **no** `job_scores` rows — the
+        currently-flagged jobs converge on the next scoring run (FR-007).
+        """
+        if self._migration_applied(conn, "ingestion_scope"):
+            return
+
+        from core.profiles import ACTIVE_PROFILE, SearchProfile
+
+        uid = self._ensure_default_user(conn)
+        row = conn.execute(
+            "SELECT active_profile_id FROM users WHERE id = ?", (uid,)
+        ).fetchone()
+        profile_id = row["active_profile_id"] if row and row["active_profile_id"] else None
+
+        profile = None
+        if profile_id:
+            prof = conn.execute(
+                "SELECT name, criteria FROM search_profiles WHERE id = ? AND user_id = ?",
+                (profile_id, uid),
+            ).fetchone()
+            if prof:
+                try:
+                    criteria = json.loads(prof["criteria"]) if prof["criteria"] else {}
+                except (TypeError, ValueError):
+                    criteria = {}
+                profile = SearchProfile.from_criteria(profile_id, prof["name"], criteria)
+
+        if profile is None:
+            profile = ACTIVE_PROFILE
+
+        scope = {
+            "title_families": list(profile.job_titles or []),
+            "exclude": list(profile.title_exclude or []),
+            "remote_or_hybrid": bool(profile.scrape_remote_or_hybrid),
+        }
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES ('ingestion_scope', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(scope),),
+        )
+        self._record_migration(conn, "ingestion_scope")
+        logger.info("[Storage] ingestion_scope: seeded from profile %s", profile_id)
 
     def _ensure_default_user(self, conn) -> str:
         """Create the single default user if absent; return its id.
@@ -1714,7 +1766,7 @@ class JobStorage:
             "j.location, j.base_location, j.posted_date, j.description,"
             "j.first_seen, j.last_seen, j.summary, j.work_mode, j.geo_zone,"
             "j.contract_type, j.language_required, j.extracted_at, j.extracted_by,"
-            "j.country_code, j.monitored_company_id, j.filtered_non_product,"
+            "j.country_code, j.monitored_company_id,"
             "j.canonical_url, j.norm_title, j.norm_company"
         )
         _company_fields = (
@@ -2734,7 +2786,7 @@ class JobStorage:
                 """SELECT j.id, j.title, j.company, j.company_id, j.url, j.source,
                           j.location, j.base_location, j.posted_date, j.description,
                           j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
-                          j.monitored_company_id, j.filtered_non_product,
+                          j.monitored_company_id,
                           j.canonical_url, j.norm_title, j.norm_company,
                           COALESCE(j.summary, '') AS summary,
                           COALESCE(j.work_mode, 'unknown') AS work_mode,
@@ -2918,14 +2970,6 @@ class JobStorage:
             conn.execute(
                 "UPDATE jobs SET monitored_company_id = ? WHERE id = ?",
                 (company_id, job_id),
-            )
-
-    def set_job_filtered_non_product(self, job_id: str) -> None:
-        """Mark a job as filtered by the PM title gate."""
-        with self._conn() as conn:
-            conn.execute(
-                "UPDATE jobs SET filtered_non_product = TRUE WHERE id = ?",
-                (job_id,),
             )
 
     def upsert_company_from_detection(self, name: str, careers_url: str,
@@ -3361,6 +3405,54 @@ class JobStorage:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+
+    # ------------------------------------------------------------------
+    # Platform ingestion scope (spec 040 — config.ingestion_scope)
+    # ------------------------------------------------------------------
+
+    def get_ingestion_scope(self) -> dict:
+        """Return the platform ingestion scope as a typed dict.
+
+        Absent, malformed, or wrongly-typed config coerces to the safe default
+        (open net, Constitution IX), following the `get_freshness_days` template.
+        """
+        raw = self.get_config("ingestion_scope")
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict):
+                titles = parsed.get("title_families")
+                exclude = parsed.get("exclude")
+                remote = parsed.get("remote_or_hybrid")
+                if (isinstance(titles, list) and all(isinstance(x, str) for x in titles)
+                        and isinstance(exclude, list)
+                        and all(isinstance(x, str) for x in exclude)
+                        and isinstance(remote, bool)):
+                    return {
+                        "title_families": titles,
+                        "exclude": exclude,
+                        "remote_or_hybrid": remote,
+                    }
+        return {"title_families": [], "exclude": [], "remote_or_hybrid": False}
+
+    def set_ingestion_scope(self, title_families: list[str],
+                            exclude: list[str],
+                            remote_or_hybrid: bool) -> None:
+        """Persist the platform ingestion scope after validating types."""
+        if not isinstance(title_families, list) or not all(isinstance(x, str) for x in title_families):
+            raise ValueError("title_families must be a list[str]")
+        if not isinstance(exclude, list) or not all(isinstance(x, str) for x in exclude):
+            raise ValueError("exclude must be a list[str]")
+        if not isinstance(remote_or_hybrid, bool):
+            raise ValueError("remote_or_hybrid must be a bool")
+        scope = {
+            "title_families": title_families,
+            "exclude": exclude,
+            "remote_or_hybrid": remote_or_hybrid,
+        }
+        self.set_config("ingestion_scope", json.dumps(scope))
 
     # ------------------------------------------------------------------
     # Per-user settings (spec 039 — moved out of `config` into `users`)

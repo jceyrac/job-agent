@@ -498,6 +498,60 @@ def test_eval_tier0_denylist_noop_on_empty():
     assert r["score"] == 5
 
 
+class _EvalProfileTitles:
+    job_titles             = ["product manager", "product owner"]
+    title_exclude          = ["junior", "intern"]
+    excluded_languages     = []
+    excluded_sectors       = []
+    allowed_work_modes     = ["remote", "hybrid", "unknown", "on-site"]
+    allowed_contract_types = []
+    languages_spoken       = ["english"]
+    scoring_context        = ""
+
+
+def test_eval_tier0_title_not_in_profile_skips_llm():
+    """A title outside the profile's job_titles is filtered with no LLM call."""
+    job = _eval_job(title="Warehouse Forklift Operator")
+    with patch("core.llm.call") as mock:
+        r = evaluate_for_profile(job, _EvalProfileTitles())
+    assert r["score"] == 1
+    assert r["scored_by"] == "tier_0"
+    assert r["reason"] == "filtered: title not in profile"
+    mock.assert_not_called()
+
+
+def test_eval_tier0_title_exclude_word_skips_llm():
+    """A title containing an excluded word is filtered with no LLM call."""
+    job = _eval_job(title="Product Manager Intern")
+    with patch("core.llm.call") as mock:
+        r = evaluate_for_profile(job, _EvalProfileTitles())
+    assert r["score"] == 1
+    assert r["scored_by"] == "tier_0"
+    assert r["reason"] == "filtered: excluded title word (intern)"
+    mock.assert_not_called()
+
+
+def test_eval_tier0_title_matches_proceeds_to_llm():
+    """A matching title (no exclude word) passes through to Tier 1."""
+    job = _eval_job(title="Senior Product Manager")
+    with patch("core.llm.call") as mock:
+        mock.return_value = '{"score": 8, "reason": "Strong PM match"}'
+        r = evaluate_for_profile(job, _EvalProfileTitles())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 8
+    mock.assert_called_once()
+
+
+def test_eval_tier0_title_empty_job_titles_open():
+    """Empty job_titles means open ingestion — every non-empty title passes."""
+    job = _eval_job(title="Anything At All")
+    with patch("core.llm.call") as mock:
+        mock.return_value = '{"score": 5, "reason": "ok"}'
+        r = evaluate_for_profile(job, _EvalProfileNoRestrictions())
+    assert r["scored_by"] != "tier_0"
+    assert r["score"] == 5
+
+
 EVALUATION_TESTS = [
     test_eval_tier0_language_exclusion,
     test_eval_tier0_sector_exclusion,
@@ -517,6 +571,10 @@ EVALUATION_TESTS = [
     test_eval_tier0_denylist_company_blocked,
     test_eval_tier0_denylist_stripe_passes,
     test_eval_tier0_denylist_noop_on_empty,
+    test_eval_tier0_title_not_in_profile_skips_llm,
+    test_eval_tier0_title_exclude_word_skips_llm,
+    test_eval_tier0_title_matches_proceeds_to_llm,
+    test_eval_tier0_title_empty_job_titles_open,
 ]
 
 

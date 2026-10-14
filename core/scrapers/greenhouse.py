@@ -135,16 +135,16 @@ class GreenhouseScraper(BaseScraper):
             print(f"[{self.SOURCE_NAME}] ⚠️ beautifulsoup4 not installed")
             return []
 
-        # Load active profile once for job_titles (used by both paths)
-        from core.profiles import load_active_profile
-        active_profile = load_active_profile(self._storage)
-        profile_titles = active_profile.job_titles
+        # Title family filter comes from the platform ingestion scope (spec 040).
+        profile_titles = self._storage.get_ingestion_scope()["title_families"]
 
         # Use DB-driven targets when provided (monitoring path),
         # otherwise fall back to profile boards / DB+seed list (broad scrape)
         if self._targets is not None:
             board_tokens = [t["ats_identifier"] for t in self._targets]
         else:
+            from core.profiles import load_active_profile
+            active_profile = load_active_profile(self._storage)
             boards = active_profile.greenhouse_boards
             if boards:
                 board_tokens = boards

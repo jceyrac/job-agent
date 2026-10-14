@@ -552,6 +552,7 @@ def _render_profile_editor(db):
             height=120,
             help="Single source of truth for all title matching. Drives LinkedIn/Indeed queries, Greenhouse filtering, scrape net, and SQL pre-filter.",
         )
+        st.caption("Ingestion uses the platform scope — edit with `python -m scripts.ingestion_scope`")
 
         c1, c2 = st.columns(2)
         with c1:

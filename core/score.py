@@ -13,7 +13,6 @@ from core.paths import DB_PATH, OUTPUT_DIR
 from core.profiles import SearchProfile
 from core.job_actions import extract_one, score_one, _discover_contacts
 from core.scorer import extract_job_fields, evaluate_for_profile
-from core.title_gate import title_matches_profile
 from core.storage import JobStorage
 
 MOCK_JOBS = [
@@ -372,12 +371,10 @@ def main():
         print(f"--rescore: cleared {deleted} existing scores for '{profile.id}'")
 
     total_in_db = db.get_stats(profile.id)["total"]
-    # Build effective pre-filter from canonical fields (spec 017)
+    # Build effective pre-filter from canonical fields (spec 017).
+    # Title judgement is now a Tier 0 rule in the scorer (spec 040), so the
+    # title clauses are no longer part of the SQL pre-filter.
     effective_pre_filter = dict(profile.pre_filter) if profile.pre_filter else {}
-    if profile.job_titles:
-        effective_pre_filter["title_contains"] = list(profile.job_titles)
-    if profile.title_exclude:
-        effective_pre_filter["exclude_title_contains"] = list(profile.title_exclude)
     jobs_to_score = db.get_jobs_for_scoring(
         profile_id=profile.id,
         pre_filter=effective_pre_filter or None,
@@ -433,19 +430,10 @@ def main():
     if not jobs_to_score:
         print("All jobs already scored for this profile — nothing to do.")
     else:
-        gate_filtered = 0
         for i, job_dict in enumerate(jobs_to_score, 1):
             title   = job_dict.get("title", "")
             company = job_dict.get("company", "")
             print(f"  Evaluating {i}/{len(jobs_to_score)}: {title[:50]} @ {company[:30]}")
-
-            # ── Title gate: skip jobs whose title doesn't match the profile ──
-            if job_dict.get("monitored_company_id"):
-                if not title_matches_profile(title, profile.job_titles):
-                    db.set_job_filtered_non_product(job_dict["id"])
-                    gate_filtered += 1
-                    print(f"    → filtered (title not in profile list, monitored company)")
-                    continue
 
             result = score_one(job_dict["id"], profile.id)
 
@@ -459,7 +447,7 @@ def main():
                 tier0_count += 1
                 # Track filter type for detail
                 reason = result.get("reason", "")
-                for key in ("language", "sector", "country", "work_mode"):
+                for key in ("language", "sector", "country", "work_mode", "title"):
                     if key in reason:
                         tier0_details[key] = tier0_details.get(key, 0) + 1
                         break
@@ -471,8 +459,7 @@ def main():
             if i < len(jobs_to_score):
                 time.sleep(4)
 
-        print(f"\nScoring complete: {scored_count} scored, {error_count} errors"
-              + (f", {gate_filtered} filtered (title not in profile list)" if gate_filtered else ""))
+        print(f"\nScoring complete: {scored_count} scored, {error_count} errors")
         if tier0_count:
             details = ", ".join(f"{k}: {v}" for k, v in sorted(tier0_details.items()))
             print(f"  Tier 0 (deterministic): {tier0_count} filtered  ({details})")

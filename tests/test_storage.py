@@ -603,6 +603,66 @@ def test_migration_idempotent():
     assert len(rows) == 1
 
 
+def test_ingestion_scope_seeded_from_active_profile():
+    """Migration seeds config.ingestion_scope from the active profile (spec 040)."""
+    from core.profiles import ACTIVE_PROFILE
+    db = JobStorage(":memory:")
+    scope = db.get_ingestion_scope()
+    assert scope["title_families"] == list(ACTIVE_PROFILE.job_titles)
+    assert scope["exclude"] == list(ACTIVE_PROFILE.title_exclude)
+    assert scope["remote_or_hybrid"] == bool(ACTIVE_PROFILE.scrape_remote_or_hybrid)
+
+
+def test_ingestion_scope_set_round_trip():
+    db = JobStorage(":memory:")
+    db.set_ingestion_scope(["product manager", "head of product"],
+                           ["junior", "intern"], True)
+    assert db.get_ingestion_scope() == {
+        "title_families": ["product manager", "head of product"],
+        "exclude": ["junior", "intern"],
+        "remote_or_hybrid": True,
+    }
+
+
+def test_ingestion_scope_malformed_coerces_to_default():
+    db = JobStorage(":memory:")
+    empty = {"title_families": [], "exclude": [], "remote_or_hybrid": False}
+    db.set_config("ingestion_scope", "not json")
+    assert db.get_ingestion_scope() == empty
+    db.set_config("ingestion_scope",
+                  '{"title_families": "nope", "exclude": [], "remote_or_hybrid": true}')
+    assert db.get_ingestion_scope() == empty
+    with db._conn() as conn:
+        conn.execute("DELETE FROM config WHERE key = 'ingestion_scope'")
+    assert db.get_ingestion_scope() == empty
+
+
+def test_ingestion_scope_set_validates_types():
+    db = JobStorage(":memory:")
+    for bad_titles, bad_exclude, bad_remote in [
+        ("not a list", [], False),
+        ([], [], "not a bool"),
+        ([1], [], False),
+    ]:
+        try:
+            db.set_ingestion_scope(bad_titles, bad_exclude, bad_remote)
+            assert False, "expected ValueError"
+        except ValueError:
+            pass
+
+
+def test_ingestion_scope_migration_idempotent():
+    db = JobStorage(":memory:")
+    scope1 = db.get_ingestion_scope()
+    with db._conn() as conn:
+        db._migrate_ingestion_scope(conn)
+    assert db.get_ingestion_scope() == scope1
+    with db._conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM migrations WHERE name = 'ingestion_scope'").fetchone()
+    assert row is not None
+
+
 def test_backfill_correctness():
     """save_scored writes company fields to companies table; re-init backfills correctly."""
     from datetime import date
@@ -2651,6 +2711,11 @@ TESTS = [
     test_filter_language_empty_list_keeps_all,
     test_filter_all_inactive_keeps_all,
     test_migration_idempotent,
+    test_ingestion_scope_seeded_from_active_profile,
+    test_ingestion_scope_set_round_trip,
+    test_ingestion_scope_malformed_coerces_to_default,
+    test_ingestion_scope_set_validates_types,
+    test_ingestion_scope_migration_idempotent,
     test_backfill_correctness,
     test_dedupe_against_db,
     test_dedupe_against_db_normalization,
