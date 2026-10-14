@@ -204,7 +204,8 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-13)
+## Current focus (as of 2026-10-14)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Step 3 (séparation des espaces) done;
-next: step 4 (périmètre d'ingestion plateforme — gate titre → Tier 0 scoring).
+**API migration roadmap** — `docs/roadmap-api.md`. Step 3 (séparation des espaces)
+shipped to prod (2026-10-14); next: step 4 (périmètre d'ingestion plateforme —
+gate titre → Tier 0 scoring).
