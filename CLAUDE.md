@@ -74,6 +74,7 @@ Migration is progressive: the app MUST stay operational after every step.
 - `core/job_actions.py` — per-job actions (`extract_one`, `score_one`, `prepare_one`)
 - `core/cv_agent/` — LangGraph CV/letter agent (`graph.py`, `nodes.py`, `state.py`, `cli.py`); HITL via `interrupt()` + `SqliteSaver` checkpointer
 - `core/company_researcher.py` — company enrichment / ATS detection
+- `scripts/ingestion_scope.py` — view/edit the platform ingestion scope (`config.ingestion_scope`; the prose path, no deploy)
 - `tracker.py` — Streamlit entry point (multi-page via `st.navigation`)
 - `tracker_views/` — one file per page: `dashboard.py`, `jobs.py`, `settings.py`, `preferences.py`, `companies.py`, `contacts.py`, `reports.py`, `shared.py`, `job_helpers.py`, `forms.py`, `*_detail.py`
 - `core/monitoring_agent.py` — dev-side tool (writes specs and scraper stubs). Never runs in prod, never exposed by the API.
@@ -168,7 +169,7 @@ company_status_history — company status changes (keyed by user_id)
 contacts            — CRM contact records (keyed by user_id; UNIQUE (user_id, linkedin_url))
 interactions        — outreach log (keyed by user_id)
 search_profiles     — serialised SearchProfile JSON (id, user_id, name, criteria)
-config              — key/value store (platform config; active_profile_id/onboarding_complete moved to `users`)
+config              — key/value store (platform config; active_profile_id/onboarding_complete moved to `users`; `ingestion_scope` = the platform title scope, edited via `python -m scripts.ingestion_scope`)
 runs                — run history (ran_at, status, jobs_scraped, jobs_scored, duration_seconds, run_type)
 ```
 
@@ -208,4 +209,6 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 **API migration roadmap** — `docs/roadmap-api.md`. Step 3 (séparation des espaces)
 shipped to prod (2026-10-14); next: step 4 (périmètre d'ingestion plateforme —
-gate titre → Tier 0 scoring).
+gate titre → Tier 0 scoring), specified as `specs/040-platform-ingestion-scope/`
+(plan.md / research.md — no backfill, byte-identical parity + expected-change check
+after the first scoring run; FR-006 also drops the scoring pre-filter title clauses).
