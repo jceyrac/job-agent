@@ -25,6 +25,8 @@ packages = [
     "core.cv_agent",
     "tracker_views",
     "scripts",
+    "api",
+    "api.routers",
 ]
 
 [tool.setuptools.package-data]

@@ -57,3 +57,64 @@ To avoid tailnet downtime, apply the switch in this exact order:
 
 The in-container health check (`localhost:8501`) keeps working unchanged
 throughout.
+
+---
+
+# API exposure — tailnet HTTPS under `/api` (spec 041, FR-016)
+
+The read-only API (`api/` service) listens on `127.0.0.1:8601` only, and is
+served over the tailnet with **TLS under a path** (not a raw TCP forward like
+the tracker). Tailscale terminates TLS and proxies
+`https://<verva>.<tailnet>.ts.net/api/…` → `http://127.0.0.1:8601/…`, stripping
+the `/api` prefix before forwarding. The app sets `root_path="/api"` so generated
+URLs (OpenAPI, `/docs`) carry the prefix.
+
+## Prerequisite (one-time, Tailscale admin console)
+
+`--https` needs **MagicDNS** and **HTTPS certificates** enabled for the tailnet.
+Without them `tailscale serve --https` refuses to start (no certificate). MagicDNS
+also supplies the stable `https://<verva>.<tailnet>.ts.net` name. (The `sudo
+tailscale set --operator=$(whoami)` step above still applies.)
+
+## Enable (run once on verva)
+
+```bash
+tailscale serve --bg --https=443 --set-path /api http://127.0.0.1:8601
+```
+
+The tracker keeps its existing `tcp 8501` exposure unchanged.
+
+## Verify
+
+```bash
+tailscale serve status
+# expect an HTTPS forward for /api → http://127.0.0.1:8601 on 443
+```
+
+From a tailnet device, `https://<verva>.<tailnet>.ts.net/api/health` returns
+`200 {"status":"ok","version":"<sha>"}` with a valid certificate (no `-k`).
+From a non-tailnet LAN device, `http://<verva LAN IP>:8601` is refused (the
+compose publish is loopback-only).
+
+## Configuration
+
+Clients and scripts read the API base URL from `JOB_AGENT_API_URL` (no host is
+hard-coded — FR-016):
+
+- from the tailnet: `https://<verva>.<tailnet>.ts.net/api`
+- on the host / in-container: `http://127.0.0.1:8601`
+
+`scripts/health_check.py --api-url` defaults to `$JOB_AGENT_API_URL`, falling back
+to `http://127.0.0.1:8601`.
+
+## Forwarded headers
+
+Only the loopback proxy (tailscaled on the same host) may set forwarded headers.
+The `api` container binds `127.0.0.1:8601`, so the app does **not** enable
+`--forwarded-allow-ips=*`.
+
+## Undo
+
+```bash
+tailscale serve --bg --https=443 off
+```

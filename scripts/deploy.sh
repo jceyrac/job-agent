@@ -34,7 +34,7 @@ echo "=== Rebuilding images (all services) ==="
 # Build every service by name — not by profile.
 # Profiles (e.g. "manual" on agent) bypass `docker compose build`
 # with no args, so listing names explicitly guarantees nothing is skipped.
-docker compose build tracker agent
+docker compose build tracker agent api
 
 echo "=== Verifying images are current ==="
 # Check that the agent image was built within the last 5 minutes (this run).
@@ -57,6 +57,9 @@ echo "=== Seeding companies ==="
 #  running seed.py on the host writes to a different DB than the tracker serves)
 docker cp data/companies.json job-tracker:/app/data/companies.json
 docker exec job-tracker python -m core.seed
+
+echo "=== Starting API (after seed — first DB open avoids a migration race) ==="
+docker compose up -d api
 
 echo "=== Deploy complete ==="
 docker compose ps

@@ -1,0 +1,2323 @@
+{
+  "components": {
+    "schemas": {
+      "Application": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis": {
+            "title": "Analysis"
+          },
+          "company_research": {
+            "title": "Company Research"
+          },
+          "cover_letter": {
+            "title": "Cover Letter"
+          },
+          "created_at": {
+            "title": "Created At"
+          },
+          "cv_bullets_selected": {
+            "title": "Cv Bullets Selected"
+          },
+          "job_id": {
+            "title": "Job Id"
+          },
+          "language": {
+            "title": "Language"
+          },
+          "prepared_at": {
+            "title": "Prepared At"
+          },
+          "prepared_by": {
+            "title": "Prepared By"
+          },
+          "profile_id": {
+            "title": "Profile Id"
+          },
+          "screening_answers": {
+            "title": "Screening Answers"
+          },
+          "user_id": {
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "user_id",
+          "job_id",
+          "profile_id",
+          "analysis",
+          "cover_letter",
+          "cv_bullets_selected",
+          "company_research",
+          "screening_answers",
+          "language",
+          "prepared_by",
+          "prepared_at",
+          "created_at"
+        ],
+        "title": "Application",
+        "type": "object"
+      },
+      "ApplicationEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Application"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ApplicationEnvelope",
+        "type": "object"
+      },
+      "CatalogueJob": {
+        "additionalProperties": false,
+        "properties": {
+          "base_location": {
+            "title": "Base Location"
+          },
+          "canonical_url": {
+            "title": "Canonical Url"
+          },
+          "company": {
+            "title": "Company"
+          },
+          "company_country": {
+            "title": "Company Country"
+          },
+          "company_id": {
+            "title": "Company Id"
+          },
+          "company_size": {
+            "title": "Company Size"
+          },
+          "contract_type": {
+            "title": "Contract Type"
+          },
+          "country_code": {
+            "title": "Country Code"
+          },
+          "description": {
+            "title": "Description"
+          },
+          "extracted_at": {
+            "title": "Extracted At"
+          },
+          "extracted_by": {
+            "title": "Extracted By"
+          },
+          "first_seen": {
+            "title": "First Seen"
+          },
+          "geo_zone": {
+            "title": "Geo Zone"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "industry_sector": {
+            "title": "Industry Sector"
+          },
+          "language_required": {
+            "title": "Language Required"
+          },
+          "last_seen": {
+            "title": "Last Seen"
+          },
+          "location": {
+            "title": "Location"
+          },
+          "monitored_company_id": {
+            "title": "Monitored Company Id"
+          },
+          "norm_company": {
+            "title": "Norm Company"
+          },
+          "norm_title": {
+            "title": "Norm Title"
+          },
+          "posted_date": {
+            "title": "Posted Date"
+          },
+          "source": {
+            "title": "Source"
+          },
+          "summary": {
+            "title": "Summary"
+          },
+          "title": {
+            "title": "Title"
+          },
+          "url": {
+            "title": "Url"
+          },
+          "work_mode": {
+            "title": "Work Mode"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "company",
+          "company_id",
+          "url",
+          "source",
+          "location",
+          "base_location",
+          "posted_date",
+          "description",
+          "first_seen",
+          "last_seen",
+          "extracted_at",
+          "extracted_by",
+          "monitored_company_id",
+          "canonical_url",
+          "norm_title",
+          "norm_company",
+          "summary",
+          "work_mode",
+          "geo_zone",
+          "company_size",
+          "contract_type",
+          "company_country",
+          "industry_sector",
+          "language_required",
+          "country_code"
+        ],
+        "title": "CatalogueJob",
+        "type": "object"
+      },
+      "CompanyByDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "ats_identifier": {
+            "title": "Ats Identifier"
+          },
+          "ats_provider": {
+            "title": "Ats Provider"
+          },
+          "careers_url": {
+            "title": "Careers Url"
+          },
+          "company_country": {
+            "title": "Company Country"
+          },
+          "company_size": {
+            "title": "Company Size"
+          },
+          "contact_count": {
+            "title": "Contact Count"
+          },
+          "first_seen_at": {
+            "title": "First Seen At"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "industry_sector": {
+            "title": "Industry Sector"
+          },
+          "interaction_count": {
+            "title": "Interaction Count"
+          },
+          "job_count": {
+            "title": "Job Count"
+          },
+          "last_interaction_at": {
+            "title": "Last Interaction At"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At"
+          },
+          "monitored": {
+            "title": "Monitored"
+          },
+          "monitoring_status": {
+            "title": "Monitoring Status"
+          },
+          "name": {
+            "title": "Name"
+          },
+          "notes": {
+            "title": "Notes"
+          },
+          "research_confidence": {
+            "title": "Research Confidence"
+          },
+          "research_notes": {
+            "title": "Research Notes"
+          },
+          "researched_at": {
+            "title": "Researched At"
+          },
+          "scraper_id": {
+            "title": "Scraper Id"
+          },
+          "scraping_method": {
+            "title": "Scraping Method"
+          },
+          "status": {
+            "title": "Status"
+          },
+          "summary": {
+            "title": "Summary"
+          },
+          "website": {
+            "title": "Website"
+          },
+          "x_handle": {
+            "title": "X Handle"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "website",
+          "status",
+          "notes",
+          "company_country",
+          "industry_sector",
+          "company_size",
+          "careers_url",
+          "ats_provider",
+          "ats_identifier",
+          "scraper_id",
+          "monitored",
+          "first_seen_at",
+          "last_seen_at",
+          "summary",
+          "monitoring_status",
+          "scraping_method",
+          "research_notes",
+          "research_confidence",
+          "researched_at",
+          "x_handle",
+          "job_count",
+          "contact_count",
+          "interaction_count",
+          "last_interaction_at"
+        ],
+        "title": "CompanyByDetail",
+        "type": "object"
+      },
+      "CompanyDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "$ref": "#/components/schemas/CompanyByDetail"
+          },
+          "contacts": {
+            "items": {
+              "$ref": "#/components/schemas/Contact"
+            },
+            "title": "Contacts",
+            "type": "array"
+          },
+          "interactions": {
+            "items": {
+              "$ref": "#/components/schemas/Interaction"
+            },
+            "title": "Interactions",
+            "type": "array"
+          },
+          "relationship": {
+            "$ref": "#/components/schemas/RelationshipSummary"
+          }
+        },
+        "required": [
+          "company",
+          "relationship",
+          "contacts",
+          "interactions"
+        ],
+        "title": "CompanyDetailResponse",
+        "type": "object"
+      },
+      "CompanyEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CompanyListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "CompanyEnvelope",
+        "type": "object"
+      },
+      "CompanyFacts": {
+        "additionalProperties": false,
+        "properties": {
+          "ats_identifier": {
+            "title": "Ats Identifier"
+          },
+          "ats_provider": {
+            "title": "Ats Provider"
+          },
+          "careers_url": {
+            "title": "Careers Url"
+          },
+          "company_country": {
+            "title": "Company Country"
+          },
+          "company_size": {
+            "title": "Company Size"
+          },
+          "first_seen_at": {
+            "title": "First Seen At"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "industry_sector": {
+            "title": "Industry Sector"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At"
+          },
+          "monitoring_status": {
+            "title": "Monitoring Status"
+          },
+          "name": {
+            "title": "Name"
+          },
+          "research_confidence": {
+            "title": "Research Confidence"
+          },
+          "research_notes": {
+            "title": "Research Notes"
+          },
+          "researched_at": {
+            "title": "Researched At"
+          },
+          "scraper_id": {
+            "title": "Scraper Id"
+          },
+          "scraping_method": {
+            "title": "Scraping Method"
+          },
+          "summary": {
+            "title": "Summary"
+          },
+          "website": {
+            "title": "Website"
+          },
+          "x_handle": {
+            "title": "X Handle"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "website",
+          "careers_url",
+          "company_country",
+          "industry_sector",
+          "company_size",
+          "ats_provider",
+          "ats_identifier",
+          "scraper_id",
+          "first_seen_at",
+          "last_seen_at",
+          "summary",
+          "monitoring_status",
+          "scraping_method",
+          "research_notes",
+          "research_confidence",
+          "researched_at",
+          "x_handle"
+        ],
+        "title": "CompanyFacts",
+        "type": "object"
+      },
+      "CompanyListItem": {
+        "additionalProperties": false,
+        "properties": {
+          "ats_identifier": {
+            "title": "Ats Identifier"
+          },
+          "ats_provider": {
+            "title": "Ats Provider"
+          },
+          "company_country": {
+            "title": "Company Country"
+          },
+          "company_size": {
+            "title": "Company Size"
+          },
+          "contact_count": {
+            "title": "Contact Count"
+          },
+          "first_seen_at": {
+            "title": "First Seen At"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "industry_sector": {
+            "title": "Industry Sector"
+          },
+          "interaction_count": {
+            "title": "Interaction Count"
+          },
+          "job_count": {
+            "title": "Job Count"
+          },
+          "last_interaction_at": {
+            "title": "Last Interaction At"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At"
+          },
+          "monitored": {
+            "title": "Monitored"
+          },
+          "monitoring_status": {
+            "title": "Monitoring Status"
+          },
+          "name": {
+            "title": "Name"
+          },
+          "notes": {
+            "title": "Notes"
+          },
+          "research_confidence": {
+            "title": "Research Confidence"
+          },
+          "research_notes": {
+            "title": "Research Notes"
+          },
+          "researched_at": {
+            "title": "Researched At"
+          },
+          "scraper_id": {
+            "title": "Scraper Id"
+          },
+          "scraping_method": {
+            "title": "Scraping Method"
+          },
+          "status": {
+            "title": "Status"
+          },
+          "summary": {
+            "title": "Summary"
+          },
+          "website": {
+            "title": "Website"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "website",
+          "status",
+          "notes",
+          "company_country",
+          "industry_sector",
+          "company_size",
+          "first_seen_at",
+          "last_seen_at",
+          "summary",
+          "ats_provider",
+          "ats_identifier",
+          "scraper_id",
+          "monitored",
+          "monitoring_status",
+          "scraping_method",
+          "research_notes",
+          "research_confidence",
+          "researched_at",
+          "job_count",
+          "contact_count",
+          "interaction_count",
+          "last_interaction_at"
+        ],
+        "title": "CompanyListItem",
+        "type": "object"
+      },
+      "Contact": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id"
+          },
+          "created_at": {
+            "title": "Created At"
+          },
+          "email": {
+            "title": "Email"
+          },
+          "email_confidence": {
+            "title": "Email Confidence"
+          },
+          "email_status": {
+            "title": "Email Status"
+          },
+          "first_name": {
+            "title": "First Name"
+          },
+          "first_seen_at": {
+            "title": "First Seen At"
+          },
+          "full_name": {
+            "title": "Full Name"
+          },
+          "github_handle": {
+            "title": "Github Handle"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "is_current": {
+            "title": "Is Current"
+          },
+          "is_unverified": {
+            "title": "Is Unverified"
+          },
+          "last_name": {
+            "title": "Last Name"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At"
+          },
+          "last_verified_at": {
+            "title": "Last Verified At"
+          },
+          "linkedin_url": {
+            "title": "Linkedin Url"
+          },
+          "notes": {
+            "title": "Notes"
+          },
+          "phone": {
+            "title": "Phone"
+          },
+          "role_family": {
+            "title": "Role Family"
+          },
+          "role_title": {
+            "title": "Role Title"
+          },
+          "seniority": {
+            "title": "Seniority"
+          },
+          "telegram_handle": {
+            "title": "Telegram Handle"
+          },
+          "user_id": {
+            "title": "User Id"
+          },
+          "x_handle": {
+            "title": "X Handle"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "company_id",
+          "first_name",
+          "last_name",
+          "full_name",
+          "role_title",
+          "role_family",
+          "seniority",
+          "email",
+          "email_status",
+          "email_confidence",
+          "linkedin_url",
+          "x_handle",
+          "telegram_handle",
+          "github_handle",
+          "phone",
+          "is_current",
+          "is_unverified",
+          "last_verified_at",
+          "notes",
+          "first_seen_at",
+          "last_seen_at",
+          "created_at"
+        ],
+        "title": "Contact",
+        "type": "object"
+      },
+      "ContactDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "contact": {
+            "$ref": "#/components/schemas/Contact"
+          },
+          "interactions": {
+            "items": {
+              "$ref": "#/components/schemas/Interaction"
+            },
+            "title": "Interactions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "contact",
+          "interactions"
+        ],
+        "title": "ContactDetailResponse",
+        "type": "object"
+      },
+      "ContactEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContactListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ContactEnvelope",
+        "type": "object"
+      },
+      "ContactListItem": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id"
+          },
+          "company_name": {
+            "title": "Company Name"
+          },
+          "company_status": {
+            "title": "Company Status"
+          },
+          "created_at": {
+            "title": "Created At"
+          },
+          "email": {
+            "title": "Email"
+          },
+          "email_confidence": {
+            "title": "Email Confidence"
+          },
+          "email_status": {
+            "title": "Email Status"
+          },
+          "first_name": {
+            "title": "First Name"
+          },
+          "first_seen_at": {
+            "title": "First Seen At"
+          },
+          "full_name": {
+            "title": "Full Name"
+          },
+          "github_handle": {
+            "title": "Github Handle"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "is_current": {
+            "title": "Is Current"
+          },
+          "is_unverified": {
+            "title": "Is Unverified"
+          },
+          "last_interaction_at": {
+            "title": "Last Interaction At"
+          },
+          "last_name": {
+            "title": "Last Name"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At"
+          },
+          "linkedin_url": {
+            "title": "Linkedin Url"
+          },
+          "notes": {
+            "title": "Notes"
+          },
+          "phone": {
+            "title": "Phone"
+          },
+          "role_family": {
+            "title": "Role Family"
+          },
+          "role_title": {
+            "title": "Role Title"
+          },
+          "seniority": {
+            "title": "Seniority"
+          },
+          "telegram_handle": {
+            "title": "Telegram Handle"
+          },
+          "x_handle": {
+            "title": "X Handle"
+          }
+        },
+        "required": [
+          "id",
+          "first_name",
+          "last_name",
+          "full_name",
+          "role_title",
+          "role_family",
+          "seniority",
+          "email",
+          "email_status",
+          "email_confidence",
+          "linkedin_url",
+          "x_handle",
+          "telegram_handle",
+          "github_handle",
+          "phone",
+          "is_current",
+          "is_unverified",
+          "notes",
+          "first_seen_at",
+          "last_seen_at",
+          "created_at",
+          "company_id",
+          "company_name",
+          "company_status",
+          "last_interaction_at"
+        ],
+        "title": "ContactListItem",
+        "type": "object"
+      },
+      "Dashboard": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_ups_due_today": {
+            "title": "Follow Ups Due Today"
+          },
+          "recent_inbound": {
+            "title": "Recent Inbound"
+          },
+          "stale_active_outreach": {
+            "title": "Stale Active Outreach"
+          },
+          "unverified_contacts_count": {
+            "title": "Unverified Contacts Count"
+          }
+        },
+        "required": [
+          "follow_ups_due_today",
+          "recent_inbound",
+          "unverified_contacts_count",
+          "stale_active_outreach"
+        ],
+        "title": "Dashboard",
+        "type": "object"
+      },
+      "FeedEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "FeedEnvelope",
+        "type": "object"
+      },
+      "FeedItem": {
+        "additionalProperties": false,
+        "properties": {
+          "base_location": {
+            "title": "Base Location"
+          },
+          "company": {
+            "title": "Company"
+          },
+          "company_country": {
+            "title": "Company Country"
+          },
+          "company_id": {
+            "title": "Company Id"
+          },
+          "company_size": {
+            "title": "Company Size"
+          },
+          "contract_type": {
+            "title": "Contract Type"
+          },
+          "country_code": {
+            "title": "Country Code"
+          },
+          "description": {
+            "title": "Description"
+          },
+          "extracted_at": {
+            "title": "Extracted At"
+          },
+          "extracted_by": {
+            "title": "Extracted By"
+          },
+          "first_seen": {
+            "title": "First Seen"
+          },
+          "geo_zone": {
+            "title": "Geo Zone"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "industry_sector": {
+            "title": "Industry Sector"
+          },
+          "language_required": {
+            "title": "Language Required"
+          },
+          "last_seen": {
+            "title": "Last Seen"
+          },
+          "location": {
+            "title": "Location"
+          },
+          "monitored_company_id": {
+            "title": "Monitored Company Id"
+          },
+          "notes": {
+            "title": "Notes"
+          },
+          "posted_date": {
+            "title": "Posted Date"
+          },
+          "reason": {
+            "title": "Reason"
+          },
+          "score": {
+            "title": "Score"
+          },
+          "score_count": {
+            "title": "Score Count"
+          },
+          "scored_by": {
+            "title": "Scored By"
+          },
+          "source": {
+            "title": "Source"
+          },
+          "status": {
+            "title": "Status"
+          },
+          "status_changed_at": {
+            "title": "Status Changed At"
+          },
+          "summary": {
+            "title": "Summary"
+          },
+          "title": {
+            "title": "Title"
+          },
+          "tracked_status": {
+            "title": "Tracked Status"
+          },
+          "url": {
+            "title": "Url"
+          },
+          "work_mode": {
+            "title": "Work Mode"
+          }
+        },
+        "required": [
+          "id",
+          "company_id",
+          "title",
+          "company",
+          "url",
+          "source",
+          "location",
+          "base_location",
+          "posted_date",
+          "description",
+          "first_seen",
+          "last_seen",
+          "extracted_at",
+          "extracted_by",
+          "monitored_company_id",
+          "summary",
+          "work_mode",
+          "geo_zone",
+          "company_size",
+          "contract_type",
+          "company_country",
+          "industry_sector",
+          "language_required",
+          "score",
+          "reason",
+          "scored_by",
+          "country_code",
+          "tracked_status",
+          "status",
+          "notes",
+          "status_changed_at",
+          "score_count"
+        ],
+        "title": "FeedItem",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "Interaction": {
+        "additionalProperties": false,
+        "properties": {
+          "body_excerpt": {
+            "title": "Body Excerpt"
+          },
+          "company_id": {
+            "title": "Company Id"
+          },
+          "contact_id": {
+            "title": "Contact Id"
+          },
+          "created_at": {
+            "title": "Created At"
+          },
+          "direction": {
+            "title": "Direction"
+          },
+          "follow_up_due_at": {
+            "title": "Follow Up Due At"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "job_id": {
+            "title": "Job Id"
+          },
+          "notes": {
+            "title": "Notes"
+          },
+          "occurred_at": {
+            "title": "Occurred At"
+          },
+          "outcome": {
+            "title": "Outcome"
+          },
+          "source": {
+            "title": "Source"
+          },
+          "source_ref": {
+            "title": "Source Ref"
+          },
+          "subject": {
+            "title": "Subject"
+          },
+          "type": {
+            "title": "Type"
+          },
+          "user_id": {
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "company_id",
+          "contact_id",
+          "job_id",
+          "type",
+          "direction",
+          "outcome",
+          "subject",
+          "body_excerpt",
+          "occurred_at",
+          "follow_up_due_at",
+          "created_at",
+          "notes",
+          "source",
+          "source_ref"
+        ],
+        "title": "Interaction",
+        "type": "object"
+      },
+      "JobDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "application": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Application"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobPrepare"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/LifecycleSummary"
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/Score"
+            },
+            "title": "Scores",
+            "type": "array"
+          }
+        },
+        "required": [
+          "job",
+          "scores",
+          "lifecycle",
+          "events",
+          "application"
+        ],
+        "title": "JobDetailResponse",
+        "type": "object"
+      },
+      "JobListEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogueJob"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "JobListEnvelope",
+        "type": "object"
+      },
+      "JobPrepare": {
+        "additionalProperties": false,
+        "properties": {
+          "base_location": {
+            "title": "Base Location"
+          },
+          "canonical_url": {
+            "title": "Canonical Url"
+          },
+          "company": {
+            "title": "Company"
+          },
+          "company_country": {
+            "title": "Company Country"
+          },
+          "company_id": {
+            "title": "Company Id"
+          },
+          "company_size": {
+            "title": "Company Size"
+          },
+          "contract_type": {
+            "title": "Contract Type"
+          },
+          "country_code": {
+            "title": "Country Code"
+          },
+          "description": {
+            "title": "Description"
+          },
+          "extracted_at": {
+            "title": "Extracted At"
+          },
+          "extracted_by": {
+            "title": "Extracted By"
+          },
+          "first_seen": {
+            "title": "First Seen"
+          },
+          "geo_zone": {
+            "title": "Geo Zone"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "industry_sector": {
+            "title": "Industry Sector"
+          },
+          "language_required": {
+            "title": "Language Required"
+          },
+          "last_seen": {
+            "title": "Last Seen"
+          },
+          "location": {
+            "title": "Location"
+          },
+          "monitored_company_id": {
+            "title": "Monitored Company Id"
+          },
+          "norm_company": {
+            "title": "Norm Company"
+          },
+          "norm_title": {
+            "title": "Norm Title"
+          },
+          "posted_date": {
+            "title": "Posted Date"
+          },
+          "source": {
+            "title": "Source"
+          },
+          "status": {
+            "title": "Status"
+          },
+          "summary": {
+            "title": "Summary"
+          },
+          "title": {
+            "title": "Title"
+          },
+          "url": {
+            "title": "Url"
+          },
+          "work_mode": {
+            "title": "Work Mode"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "company",
+          "company_id",
+          "url",
+          "source",
+          "location",
+          "base_location",
+          "posted_date",
+          "description",
+          "first_seen",
+          "last_seen",
+          "extracted_at",
+          "extracted_by",
+          "monitored_company_id",
+          "canonical_url",
+          "norm_title",
+          "norm_company",
+          "summary",
+          "work_mode",
+          "geo_zone",
+          "company_size",
+          "contract_type",
+          "company_country",
+          "industry_sector",
+          "language_required",
+          "country_code",
+          "status"
+        ],
+        "title": "JobPrepare",
+        "type": "object"
+      },
+      "LifecycleEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At"
+          },
+          "direction": {
+            "title": "Direction"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "notes": {
+            "title": "Notes"
+          },
+          "occurred_at": {
+            "title": "Occurred At"
+          },
+          "outcome": {
+            "title": "Outcome"
+          },
+          "source": {
+            "title": "Source"
+          },
+          "source_ref": {
+            "title": "Source Ref"
+          },
+          "type": {
+            "title": "Type"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "direction",
+          "outcome",
+          "occurred_at",
+          "created_at",
+          "notes",
+          "source",
+          "source_ref"
+        ],
+        "title": "LifecycleEvent",
+        "type": "object"
+      },
+      "LifecycleSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "application_date": {
+            "title": "Application Date"
+          },
+          "decision_date": {
+            "title": "Decision Date"
+          },
+          "decision_outcome": {
+            "title": "Decision Outcome"
+          },
+          "interviews_held": {
+            "title": "Interviews Held"
+          },
+          "label": {
+            "title": "Label"
+          },
+          "last_event_date": {
+            "title": "Last Event Date"
+          },
+          "next_interview": {
+            "title": "Next Interview"
+          },
+          "orp_result": {
+            "title": "Orp Result"
+          },
+          "reason": {
+            "title": "Reason"
+          },
+          "round": {
+            "title": "Round"
+          },
+          "stage": {
+            "title": "Stage"
+          },
+          "withdrawn_date": {
+            "title": "Withdrawn Date"
+          }
+        },
+        "required": [
+          "application_date",
+          "stage",
+          "label",
+          "reason",
+          "interviews_held",
+          "round",
+          "next_interview",
+          "decision_outcome",
+          "decision_date",
+          "withdrawn_date",
+          "last_event_date",
+          "orp_result"
+        ],
+        "title": "LifecycleSummary",
+        "type": "object"
+      },
+      "MeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "active_profile_id": {
+            "title": "Active Profile Id"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/Profile"
+            },
+            "title": "Profiles",
+            "type": "array"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserRow"
+          }
+        },
+        "required": [
+          "user",
+          "active_profile_id",
+          "profiles"
+        ],
+        "title": "MeResponse",
+        "type": "object"
+      },
+      "Profile": {
+        "additionalProperties": false,
+        "properties": {
+          "criteria": {
+            "title": "Criteria"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "name": {
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "criteria"
+        ],
+        "title": "Profile",
+        "type": "object"
+      },
+      "RelationshipSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "by_status": {
+            "title": "By Status"
+          },
+          "company_id": {
+            "title": "Company Id"
+          },
+          "last_interaction_at": {
+            "title": "Last Interaction At"
+          },
+          "total_contacts": {
+            "title": "Total Contacts"
+          }
+        },
+        "required": [
+          "company_id",
+          "total_contacts",
+          "by_status",
+          "last_interaction_at"
+        ],
+        "title": "RelationshipSummary",
+        "type": "object"
+      },
+      "Score": {
+        "additionalProperties": false,
+        "properties": {
+          "profile_id": {
+            "title": "Profile Id"
+          },
+          "reason": {
+            "title": "Reason"
+          },
+          "score": {
+            "title": "Score"
+          },
+          "scored_at": {
+            "title": "Scored At"
+          },
+          "scored_by": {
+            "title": "Scored By"
+          }
+        },
+        "required": [
+          "profile_id",
+          "score",
+          "reason",
+          "scored_by",
+          "scored_at"
+        ],
+        "title": "Score",
+        "type": "object"
+      },
+      "Stats": {
+        "additionalProperties": false,
+        "properties": {
+          "by_status": {
+            "title": "By Status"
+          },
+          "hot": {
+            "title": "Hot"
+          },
+          "scored": {
+            "title": "Scored"
+          },
+          "solid": {
+            "title": "Solid"
+          },
+          "total": {
+            "title": "Total"
+          }
+        },
+        "required": [
+          "total",
+          "scored",
+          "hot",
+          "solid",
+          "by_status"
+        ],
+        "title": "Stats",
+        "type": "object"
+      },
+      "UserRow": {
+        "additionalProperties": false,
+        "properties": {
+          "active_profile_id": {
+            "title": "Active Profile Id"
+          },
+          "display_name": {
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "onboarding_completed_at": {
+            "title": "Onboarding Completed At"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "active_profile_id",
+          "onboarding_completed_at"
+        ],
+        "title": "UserRow",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "job_agent API",
+    "version": "SNAPSHOT"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/v1/companies/{company_id}": {
+      "get": {
+        "operationId": "get_company_v1_companies__company_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "company_id",
+            "required": true,
+            "schema": {
+              "title": "Company Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyFacts"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Company",
+        "tags": [
+          "catalogue"
+        ]
+      }
+    },
+    "/v1/jobs": {
+      "get": {
+        "operationId": "list_jobs_v1_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "company_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Company Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "posted_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Posted After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobListEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Jobs",
+        "tags": [
+          "catalogue"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "get": {
+        "operationId": "get_job_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogueJob"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job",
+        "tags": [
+          "catalogue"
+        ]
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "me_v1_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Me",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/applications": {
+      "get": {
+        "operationId": "applications_v1_me_applications_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Applications",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/companies": {
+      "get": {
+        "operationId": "companies_v1_me_companies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Companies",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/companies/{company_id}": {
+      "get": {
+        "operationId": "company_detail_v1_me_companies__company_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "company_id",
+            "required": true,
+            "schema": {
+              "title": "Company Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Company Detail",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/contacts": {
+      "get": {
+        "operationId": "contacts_v1_me_contacts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Contacts",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/contacts/{contact_id}": {
+      "get": {
+        "operationId": "contact_detail_v1_me_contacts__contact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contact_id",
+            "required": true,
+            "schema": {
+              "title": "Contact Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Contact Detail",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/dashboard": {
+      "get": {
+        "operationId": "dashboard_v1_me_dashboard_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dashboard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dashboard",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/feed": {
+      "get": {
+        "operationId": "feed_v1_me_feed_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_score",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Score"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exclude_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Exclude Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Feed",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/jobs/{job_id}": {
+      "get": {
+        "operationId": "job_detail_v1_me_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Job Detail",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/stats": {
+      "get": {
+        "operationId": "stats_v1_me_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stats",
+        "tags": [
+          "me"
+        ]
+      }
+    }
+  }
+}

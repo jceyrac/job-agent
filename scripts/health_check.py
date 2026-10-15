@@ -14,6 +14,8 @@ health check must not run migrations on the live DB.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sqlite3
 import sys
 import urllib.error
@@ -48,6 +50,24 @@ def check_health(url: str, timeout: int = 10) -> bool:
         ) as resp:
             return resp.read().decode("utf-8").strip() == "ok"
     except (urllib.error.URLError, OSError):
+        return False
+
+
+def check_api_health(url: str, timeout: int = 10) -> bool:
+    """True when ``url/health`` responds with JSON ``{"status": "ok", ...}``.
+
+    Distinct from :func:`check_health` — the API exposes a plain JSON ``/health``
+    endpoint, not the Streamlit ``/_stcore/health`` probe. The base URL is the
+    configurable ``JOB_AGENT_API_URL`` (tailnet ``https://<verva>.<tailnet>.ts.net/api``
+    from the tailnet, ``http://127.0.0.1:8601`` on the host).
+    """
+    try:
+        with urllib.request.urlopen(
+            url.rstrip("/") + "/health", timeout=timeout
+        ) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            return body.get("status") == "ok"
+    except (urllib.error.URLError, OSError, ValueError):
         return False
 
 
@@ -95,6 +115,10 @@ def gate_failures(runs_by_type: dict[str, dict], now: datetime,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Post-deploy health check (spec 031).")
     parser.add_argument("--url", default="http://localhost:8501")
+    parser.add_argument(
+        "--api-url",
+        default=os.environ.get("JOB_AGENT_API_URL", "http://127.0.0.1:8601"),
+    )
     parser.add_argument("--db", default=DB_PATH)
     parser.add_argument("--max-age-hours", type=float, default=DEFAULT_MAX_AGE_HOURS)
     args = parser.parse_args(argv)
@@ -106,6 +130,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"tracker health: FAILED ({args.url}/_stcore/health)", file=sys.stderr)
         failures.append("tracker health")
+
+    if check_api_health(args.api_url):
+        print(f"api health: OK ({args.api_url})")
+    else:
+        print(f"api health: FAILED ({args.api_url}/health)", file=sys.stderr)
+        failures.append("api health")
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     runs = latest_runs_by_type(args.db)
