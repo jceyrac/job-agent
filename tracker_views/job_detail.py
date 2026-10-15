@@ -226,7 +226,7 @@ def _render_detail(job_id: str):
         st.error(f"Job {job_id} not found.")
         return
 
-    scores = db.get_scores_for_job(job_id)
+    scores = db.get_user_scores_for_job(job_id)
     app = db.get_application(job_id)
 
     st.title(job.get("title", ""))

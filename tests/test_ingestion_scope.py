@@ -25,6 +25,7 @@ import pathlib
 import re
 
 from core.storage import JobStorage
+from core.profiles import UNIFIED_JC
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -202,6 +203,7 @@ def test_broad_scrape_pre_save_title_gate_matches_scope():
     from core.models import JobPosting
 
     db = JobStorage(":memory:")
+    db.upsert_profile(UNIFIED_JC)  # seed the profile so profile-scoped get_stats() finds it (spec 041)
     db.set_ingestion_scope(
         title_families=["product manager", "head of product"],
         exclude=["intern", "junior"],

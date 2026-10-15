@@ -15,9 +15,11 @@ Usage typique dans main.py :
     db.touch_many([j["id"] for j in cached])
 """
 
+import hashlib
 import json
 import logging
 import re
+import secrets
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -58,6 +60,9 @@ INTERACTION_TYPES = frozenset({
 })
 INTERACTION_DIRECTIONS = frozenset({"inbound", "outbound", "none"})
 INTERACTION_OUTCOMES = frozenset({"positive", "negative"})
+
+# Scopes a v1 API token may carry (spec 041). Read-only catalogue vs bound-user space.
+API_TOKEN_SCOPES = frozenset({"read:catalogue", "read:me"})
 
 _LEGAL_SUFFIXES = {
     "ag", "gmbh", "sa", "sarl", "inc", "ltd",
@@ -373,6 +378,21 @@ CREATE TABLE IF NOT EXISTS runs (
     run_type TEXT DEFAULT 'full'
 );
 
+-- API bearer tokens — scoped read access (spec 041). User space: owner = user_id.
+-- Raw token never stored; only its SHA-256 hex digest.
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           TEXT PRIMARY KEY,           -- uuid4().hex (32 chars)
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    token_hash   TEXT NOT NULL UNIQUE,       -- sha256(raw).hexdigest()
+    scopes       TEXT NOT NULL,              -- JSON list, e.g. ["read:catalogue"]
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at   TEXT,
+    expires_at   TEXT                        -- FR-013; NULL = no expiry
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
 -- Schema migrations tracking — idempotent, applied exactly once
 CREATE TABLE IF NOT EXISTS migrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -397,6 +417,14 @@ def _set_config(conn, key: str, value: str) -> None:
 
 # JobStorage
 # ---------------------------------------------------------------------------
+
+class ProfileNotFoundError(Exception):
+    """A ``profile_id`` does not belong to the bound user (spec 041 isolation).
+
+    Raised by profile-scoped ``JobStorage`` methods instead of silently returning
+    (or writing) another user's data. The API maps it to 404.
+    """
+
 
 class JobStorage:
 
@@ -952,6 +980,9 @@ class JobStorage:
             # ── Platform ingestion scope — title judgement moves to scoring (spec 040) ──
             self._migrate_ingestion_scope(conn)
 
+            # ── API read tokens — api_tokens table already created by SCHEMA (spec 041) ──
+            self._migrate_api_tokens(conn)
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     def _migration_applied(self, conn, name: str) -> bool:
@@ -966,6 +997,12 @@ class JobStorage:
             "INSERT INTO migrations (name, applied_at) VALUES (?, ?)",
             (name, _now()),
         )
+
+    def _migrate_api_tokens(self, conn) -> None:
+        """Record the api_tokens migration name (the table itself is idempotent in SCHEMA)."""
+        if self._migration_applied(conn, "api_tokens"):
+            return
+        self._record_migration(conn, "api_tokens")
 
     def _migrate_application_lifecycle(self, conn) -> None:
         """Add provenance/notes columns to interactions and backfill lifecycle events.
@@ -1487,6 +1524,17 @@ class JobStorage:
             finally:
                 conn.close()
 
+    def _require_profile(self, conn, profile_id: str) -> None:
+        """Raise ``ProfileNotFoundError`` unless ``profile_id`` is a search
+        profile of the bound user (spec 041 — profile-scoped methods must not
+        leak across users)."""
+        row = conn.execute(
+            "SELECT 1 FROM search_profiles WHERE id = ? AND user_id = ?",
+            (profile_id, self.user_id),
+        ).fetchone()
+        if row is None:
+            raise ProfileNotFoundError(profile_id)
+
     # ------------------------------------------------------------------
     # Gestion des profils
     # ------------------------------------------------------------------
@@ -1521,6 +1569,7 @@ class JobStorage:
     def get_score_result(self, job_id: str, profile_id: str) -> Optional[dict]:
         """Retourne le dict de scoring pour ce job+profil, None si absent."""
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             row = conn.execute(
                 """SELECT s.score, s.reason, s.scored_by,
                           COALESCE(j.summary, '') AS summary,
@@ -1555,6 +1604,8 @@ class JobStorage:
         Un job peut être nouveau pour un profil et caché pour un autre.
         Les jobs connus sans score (échec précédent) sont remis en new_jobs.
         """
+        with self._conn() as conn:
+            self._require_profile(conn, profile_id)
         new_jobs = []
         cached_jobs = []
 
@@ -1812,6 +1863,7 @@ class JobStorage:
         query = f"{base} WHERE {where}"
 
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
@@ -1963,6 +2015,7 @@ class JobStorage:
         """
         now = _now()
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             effective_id = self._upsert_job_raw(job, conn, now, company_id=company_id,
                                                 monitored_company_id=monitored_company_id)
             conn.execute(
@@ -2610,6 +2663,7 @@ class JobStorage:
 
     def get_digest(self, profile_id: str, min_score: int = 5, status: str = "new") -> list[dict]:
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             query = """
                 SELECT j.id, j.company_id, j.title, j.company, j.url, j.source, j.location,
                        j.base_location, j.posted_date, j.description,
@@ -2642,18 +2696,35 @@ class JobStorage:
             return [dict(r) for r in rows]
 
     def get_stats(self, profile_id: str | None = None) -> dict:
-        """Quick stats for logging/display. Pass None to aggregate across all profiles."""
+        """Quick stats for logging/display.
+
+        Pass ``profile_id`` to restrict to one profile; ``None`` aggregates across
+        the bound user's profiles (``job_scores`` is user space — spec 041).
+        """
         with self._conn() as conn:
             total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
             if profile_id is None:
+                # scored/hot/solid count only the bound user's profiles: job_scores
+                # is keyed by profile_id, and search_profiles maps profile → user.
                 scored = conn.execute(
-                    "SELECT COUNT(DISTINCT job_id) FROM job_scores"
+                    """SELECT COUNT(DISTINCT s.job_id)
+                       FROM job_scores s
+                       JOIN search_profiles p ON p.id = s.profile_id AND p.user_id = ?""",
+                    (self.user_id,),
                 ).fetchone()[0]
                 hot = conn.execute(
-                    "SELECT COUNT(DISTINCT job_id) FROM job_scores WHERE score >= 9"
+                    """SELECT COUNT(DISTINCT s.job_id)
+                       FROM job_scores s
+                       JOIN search_profiles p ON p.id = s.profile_id AND p.user_id = ?
+                       WHERE s.score >= 9""",
+                    (self.user_id,),
                 ).fetchone()[0]
                 solid = conn.execute(
-                    "SELECT COUNT(DISTINCT job_id) FROM job_scores WHERE score BETWEEN 7 AND 8"
+                    """SELECT COUNT(DISTINCT s.job_id)
+                       FROM job_scores s
+                       JOIN search_profiles p ON p.id = s.profile_id AND p.user_id = ?
+                       WHERE s.score BETWEEN 7 AND 8""",
+                    (self.user_id,),
                 ).fetchone()[0]
                 by_status = dict(
                     conn.execute(
@@ -2665,6 +2736,7 @@ class JobStorage:
                     ).fetchall()
                 )
             else:
+                self._require_profile(conn, profile_id)
                 scored = conn.execute(
                     "SELECT COUNT(*) FROM job_scores WHERE profile_id = ?", (profile_id,)
                 ).fetchone()[0]
@@ -2752,6 +2824,7 @@ class JobStorage:
         """Upsert a full application package from prepare.py."""
         now = _now()
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             conn.execute(
                 """INSERT INTO job_applications (
                        user_id, job_id, profile_id, cover_letter,
@@ -2805,18 +2878,6 @@ class JobStorage:
                 (self.user_id, job_id),
             ).fetchone()
             return dict(row) if row else None
-
-    def get_scores_for_job(self, job_id: str) -> list[dict]:
-        """Return all profile scores for a job, newest first."""
-        with self._conn() as conn:
-            rows = conn.execute(
-                """SELECT profile_id, score, reason, scored_by, scored_at
-                   FROM job_scores
-                   WHERE job_id = ?
-                   ORDER BY scored_at DESC""",
-                (job_id,),
-            ).fetchall()
-            return [dict(r) for r in rows]
 
     def get_queued_jobs_unprepared(self) -> list[dict]:
         """Jobs with status='queued' that have no prepared application yet."""
@@ -4174,6 +4235,7 @@ class JobStorage:
     def delete_profile(self, profile_id: str) -> tuple[int, int]:
         """Delete a profile and all its scores. Returns (scores_deleted, profile_deleted)."""
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             conn.execute("DELETE FROM job_scores WHERE profile_id = ?", (profile_id,))
             scores = conn.execute("SELECT changes()").fetchone()[0]
             conn.execute(
@@ -4276,6 +4338,7 @@ class JobStorage:
             query += " LIMIT ?"
             params.append(limit)
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             rows = conn.execute(query, params).fetchall()
             result = []
             for row in rows:
@@ -4444,17 +4507,25 @@ class JobStorage:
     # ------------------------------------------------------------------
 
     def get_database_stats(self) -> dict:
-        """Profile-independent catalogue counts (dashboard + settings overview).
+        """Catalogue counts plus user-scoped activity counts (dashboard + settings).
 
-        Returns ``total_jobs``, ``total_scores`` (COUNT(job_scores)),
-        ``distinct_scored`` (COUNT DISTINCT job_id), ``total_companies``,
-        ``total_contacts``, ``unverified_contacts``, ``total_interactions``.
+        ``total_jobs``/``total_companies`` are shared catalogue; ``total_scores``
+        and ``distinct_scored`` count only the bound user's profiles (``job_scores``
+        is user space — spec 041).
         """
         with self._conn() as conn:
             total_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-            total_scores = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
+            total_scores = conn.execute(
+                """SELECT COUNT(*)
+                   FROM job_scores s
+                   JOIN search_profiles p ON p.id = s.profile_id AND p.user_id = ?""",
+                (self.user_id,),
+            ).fetchone()[0]
             distinct_scored = conn.execute(
-                "SELECT COUNT(DISTINCT job_id) FROM job_scores"
+                """SELECT COUNT(DISTINCT s.job_id)
+                   FROM job_scores s
+                   JOIN search_profiles p ON p.id = s.profile_id AND p.user_id = ?""",
+                (self.user_id,),
             ).fetchone()[0]
             total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
             total_contacts = conn.execute(
@@ -4544,6 +4615,7 @@ class JobStorage:
         """
         with self._conn() as conn:
             conn.row_factory = None  # plain tuples, matching the original caller
+            self._require_profile(conn, profile_id)
 
             over_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, t.notes
@@ -4640,17 +4712,20 @@ class JobStorage:
         Returns the number of rows deleted.
         """
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             conn.execute("DELETE FROM job_scores WHERE profile_id = ?", (profile_id,))
             return conn.execute("SELECT changes()").fetchone()[0]
 
     def get_best_score_profile_id(self, job_id: str) -> str | None:
-        """The profile_id with the highest score for a job, or ``None``."""
+        """The bound user's profile_id with the highest score for a job, or ``None``."""
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT profile_id FROM job_scores
-                   WHERE job_id = ? AND score IS NOT NULL
-                   ORDER BY score DESC LIMIT 1""",
-                (job_id,),
+                """SELECT s.profile_id
+                   FROM job_scores s
+                   JOIN search_profiles p ON p.id = s.profile_id AND p.user_id = ?
+                   WHERE s.job_id = ? AND s.score IS NOT NULL
+                   ORDER BY s.score DESC LIMIT 1""",
+                (self.user_id, job_id),
             ).fetchone()
         return row["profile_id"] if row else None
 
@@ -4724,6 +4799,7 @@ class JobStorage:
         Returns ``(true_positive, llm_under_scored, true_negative, filter_cleanup)``.
         """
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             rows = conn.execute(
                 """SELECT j.id, j.title, j.company, j.company_id, j.url,
                           t.status, t.notes,
@@ -4814,6 +4890,7 @@ class JobStorage:
     def get_few_shot_anchors(self, profile_id: str) -> dict:
         """Strong-match (positive) and clear-reject (negative) anchor rows for a profile."""
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             pos_rows = conn.execute(
                 """SELECT j.title, j.company, COALESCE(c.industry_sector, 'other') AS sector,
                           COALESCE(j.work_mode, 'unknown') AS work_mode,
@@ -4852,6 +4929,7 @@ class JobStorage:
     def get_action_item_candidates(self, profile_id: str) -> dict:
         """Calibration + denylist/sector/country/source signals for ``generate_action_items``."""
         with self._conn() as conn:
+            self._require_profile(conn, profile_id)
             over_rows = conn.execute(
                 """SELECT j.title, j.company, s.score, t.notes, s.profile_id
                      FROM jobs j
@@ -4952,6 +5030,196 @@ class JobStorage:
             "countries": [dict(r) for r in country_rows],
             "sources": [dict(r) for r in source_rows],
         }
+
+    # ------------------------------------------------------------------
+    # Catalogue read methods (shared facts — no user-space fields) — spec 041
+    # ------------------------------------------------------------------
+
+    _CATALOGUE_JOB_COLS = """
+        j.id, j.title, j.company, j.company_id, j.url, j.source,
+        j.location, j.base_location, j.posted_date, j.description,
+        j.first_seen, j.last_seen, j.extracted_at, j.extracted_by,
+        j.monitored_company_id,
+        j.canonical_url, j.norm_title, j.norm_company,
+        COALESCE(j.summary, '') AS summary,
+        COALESCE(j.work_mode, 'unknown') AS work_mode,
+        COALESCE(j.geo_zone, 'unknown') AS geo_zone,
+        COALESCE(c.company_size, 'unknown') AS company_size,
+        COALESCE(j.contract_type, 'unknown') AS contract_type,
+        COALESCE(c.company_country, 'unknown') AS company_country,
+        COALESCE(c.industry_sector, 'other') AS industry_sector,
+        COALESCE(j.language_required, 'unknown') AS language_required,
+        j.country_code
+    """
+
+    def get_catalogue_jobs(self, *, company_id: int | None = None,
+                           source: str | None = None,
+                           posted_after: str | None = None) -> list[dict]:
+        """Shared-catalogue job facts, no user-space fields (spec 041, US3-3).
+
+        Optional AND-ed filters: `company_id` (int), `source` (exact),
+        `posted_after` (ISO date, keeps rows with posted_date >= it). Ordered
+        `last_seen DESC`. Pagination is the API layer's job."""
+        where = []
+        params: list = []
+        if company_id is not None:
+            where.append("j.company_id = ?")
+            params.append(company_id)
+        if source is not None:
+            where.append("j.source = ?")
+            params.append(source)
+        if posted_after is not None:
+            where.append("j.posted_date >= ?")
+            params.append(posted_after)
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT {self._CATALOGUE_JOB_COLS} "
+                f"FROM jobs j LEFT JOIN companies c ON j.company_id = c.id"
+                f"{where_sql} ORDER BY j.last_seen DESC",
+                params,
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_catalogue_job(self, job_id: str) -> dict | None:
+        """Shared-catalogue facts for one job (no user-space fields), or None."""
+        with self._conn() as conn:
+            row = conn.execute(
+                f"SELECT {self._CATALOGUE_JOB_COLS} "
+                f"FROM jobs j LEFT JOIN companies c ON j.company_id = c.id "
+                f"WHERE j.id = ?",
+                (job_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_company_facts(self, company_id: int) -> dict | None:
+        """Shared company facts only — no user-space coalesces/aggregates (US3-3)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT c.id, c.name, c.website, c.careers_url,
+                          c.company_country, c.industry_sector, c.company_size,
+                          c.ats_provider, c.ats_identifier, c.scraper_id,
+                          c.first_seen_at, c.last_seen_at, c.summary,
+                          c.monitoring_status, c.scraping_method, c.research_notes,
+                          c.research_confidence, c.researched_at, c.x_handle
+                   FROM companies c
+                   WHERE c.id = ?""",
+                (company_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_user(self) -> dict | None:
+        """The bound user's `users` row (id, display_name, active_profile_id,
+        onboarding_completed_at), or None."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT id, display_name, active_profile_id, onboarding_completed_at
+                   FROM users WHERE id = ?""",
+                (self.user_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_user_scores_for_job(self, job_id: str) -> list[dict]:
+        """Scores for a job restricted to the bound user's profiles, newest first."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT s.profile_id, s.score, s.reason, s.scored_by, s.scored_at
+                   FROM job_scores s
+                   JOIN search_profiles p ON p.id = s.profile_id AND p.user_id = ?
+                   WHERE s.job_id = ?
+                   ORDER BY s.scored_at DESC""",
+                (self.user_id, job_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # API tokens — scoped read access (spec 041). CLI-only create/list/revoke.
+    # ------------------------------------------------------------------
+
+    def create_api_token(self, name: str, scopes: list[str],
+                         user_id: str | None = None,
+                         expires_at: str | None = None) -> str:
+        """Generate a raw token, store its SHA-256 hash, and return the raw token.
+
+        The raw token is returned exactly once and never persisted. Unknown
+        scopes raise `ValueError`; `user_id` defaults to `self.user_id`."""
+        unknown = [s for s in scopes if s not in API_TOKEN_SCOPES]
+        if unknown:
+            raise ValueError(f"Unknown scope(s): {', '.join(unknown)}")
+        raw = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        owner = user_id if user_id is not None else self.user_id
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO api_tokens
+                   (id, user_id, name, token_hash, scopes, created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (uuid.uuid4().hex, owner, name, token_hash,
+                 json.dumps(scopes), _now(), expires_at),
+            )
+        return raw
+
+    def list_api_tokens(self, user_id: str | None = None) -> list[dict]:
+        """Token rows (no secret material), newest first. `user_id=None` → all users."""
+        with self._conn() as conn:
+            if user_id is None:
+                rows = conn.execute(
+                    """SELECT id, user_id, name, scopes, created_at, last_used_at,
+                              revoked_at, expires_at
+                       FROM api_tokens ORDER BY created_at DESC"""
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT id, user_id, name, scopes, created_at, last_used_at,
+                              revoked_at, expires_at
+                       FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC""",
+                    (user_id,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def revoke_api_token(self, token_id: str) -> None:
+        """Revoke a token by id (set revoked_at = now). Unknown id → ValueError.
+
+        Idempotent: revoking an already-revoked token succeeds (no-op write)."""
+        with self._conn() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM api_tokens WHERE id = ?", (token_id,)
+            ).fetchone()
+            if exists is None:
+                raise ValueError(f"Unknown token id: {token_id}")
+            conn.execute(
+                "UPDATE api_tokens SET revoked_at = ? WHERE id = ?",
+                (_now(), token_id),
+            )
+
+    def resolve_api_token(self, token: str) -> dict | None:
+        """Hash + lookup a raw token; return its row (or None when unknown).
+
+        Returns `{id, user_id, name, scopes, revoked_at, expires_at, last_used_at}`
+        with `scopes` parsed to a list. Callers decide 401/403."""
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT id, user_id, name, scopes, revoked_at, expires_at, last_used_at
+                   FROM api_tokens WHERE token_hash = ?""",
+                (token_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        try:
+            d["scopes"] = json.loads(d["scopes"]) if d["scopes"] else []
+        except (TypeError, ValueError):
+            d["scopes"] = []
+        return d
+
+    def touch_api_token(self, token_id: str) -> None:
+        """Set last_used_at = now (throttled by the API layer, FR-005)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE api_tokens SET last_used_at = ? WHERE id = ?",
+                (_now(), token_id),
+            )
 
 
 # ---------------------------------------------------------------------------

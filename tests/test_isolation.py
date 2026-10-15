@@ -13,16 +13,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.storage import JobStorage
+from core.storage import JobStorage, ProfileNotFoundError
 
 # Public user-space methods (read filter on `self.user_id`, write set it).
 # Transcribed from plan.md §3a–§3g; the coverage test below guards completeness.
 USER_SPACE_METHODS = (
     # search_profiles
     "upsert_profile", "get_profile", "get_all_profiles", "delete_profile",
+    # job_scores (user space via search_profiles.user_id — spec 041)
+    "get_score_result", "save_scored", "delete_scores_for_profile",
+    "get_best_score_profile_id",
     # job_tracking / status_history
     "set_status", "record_lifecycle_event", "reconcile_lifecycle_status",
     "get_tracking_status", "get_digest", "get_stats", "get_job_for_prepare",
+    "get_user_scores_for_job",
     "get_jobs_for_company", "get_all_jobs_best_score", "get_all_for_tracker",
     "get_cohort_jobs", "get_classified_jobs", "find_jobs_by_company",
     "get_jobs_for_scoring", "get_queued_jobs_unprepared", "get_queued_jobs",
@@ -49,6 +53,7 @@ USER_SPACE_METHODS = (
     # aggregate
     "get_dashboard_data", "get_database_stats",
     # user identity / settings accessors
+    "get_user",
     "get_active_profile_id", "set_active_profile_id",
     "get_onboarding_completed", "set_onboarding_completed",
     # company import (writes user_companies / company_status_history)
@@ -63,17 +68,25 @@ CROSS_USER_METHODS = (
     # Catalogue seed writer that reads user_companies for the union watch guard
     # (Constitution VIII) — cross-user by design.
     "upsert_company_from_seed",
+    # API token auth/management (spec 041) — keyed by token_id/user_id, not the
+    # bound user's data view; the CLI is the only creator/revoker.
+    "create_api_token", "list_api_tokens", "revoke_api_token",
+    "resolve_api_token", "touch_api_token",
 )
 
 # Tokens that must never appear in an unclassified (catalogue) method's source.
 _USER_SPACE_TOKENS = (
     "self.user_id", "job_tracking", "job_applications", "search_profiles",
-    "status_history", "company_status_history", "user_companies",
+    "status_history", "company_status_history", "user_companies", "job_scores",
 )
 
-# User-space methods that derive their result purely from another user-space
-# method (and so never reference `user_id` / a table name directly).
-_DELEGATING_METHODS = {"get_lifecycle_summary"}
+# User-space methods that never reference `user_id` / a table name directly:
+# either they derive purely from another user-space method, or they delegate the
+# user-binding to `_require_profile` (the profile-ownership check — spec 041).
+_DELEGATING_METHODS = {
+    "get_lifecycle_summary", "get_score_result", "save_scored",
+    "delete_scores_for_profile",
+}
 
 
 def _strip_docstring(src: str) -> str:
@@ -96,10 +109,10 @@ def two_users(tmp_path):
 
     conn = sqlite3.connect(path)
     conn.execute(
-        "INSERT INTO users (id, display_name, created_at) VALUES ('user-a', 'A', '2026-01-01')"
+        "INSERT INTO users (id, display_name, active_profile_id, created_at) VALUES ('user-a', 'A', 'prof-a', '2026-01-01')"
     )
     conn.execute(
-        "INSERT INTO users (id, display_name, created_at) VALUES ('user-b', 'B', '2026-01-01')"
+        "INSERT INTO users (id, display_name, active_profile_id, created_at) VALUES ('user-b', 'B', 'prof-b', '2026-01-01')"
     )
     # Catalogue rows (shared by both users).
     conn.execute(
@@ -170,6 +183,7 @@ def test_user_space_methods_all_actually_bind_user():
 
 def test_set_status_isolated(two_users):
     a, b = two_users
+    b.upsert_profile(_profile("prof-b"))
     a.set_status("job-1", "applied", "note from A")
 
     assert a.get_tracking_status("job-1") == "applied"
@@ -206,6 +220,7 @@ def test_applications_isolated(two_users):
 
 def test_prepared_application_isolated(two_users):
     a, b = two_users
+    a.upsert_profile(_profile("prof-a"))
     a.save_prepared_application(
         "job-1", "prof-a", "cover", {"cv": "x"}, {"co": "y"}, {"s": "z"}, "en", "A",
     )
@@ -268,6 +283,105 @@ def test_delete_profile_scoped(two_users):
     a.delete_profile("prof-a")
     assert a.get_profile("prof-a") is None
     assert b.get_profile("prof-b") is not None  # B's profile untouched
+
+
+# ── Isolation: user-scoped scores (spec 041) ─────────────────────────────────
+
+def test_user_scores_for_job_isolated(two_users):
+    a, b = two_users
+    a.upsert_profile(_profile("prof-a"))
+    b.upsert_profile(_profile("prof-b"))
+
+    # Write a score under each user's own profile directly (job_scores is keyed
+    # by profile_id, not user_id, so we seed through the two profiles).
+    with sqlite3.connect(str(a.db_path)) as c:
+        c.execute(
+            "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+            "VALUES ('job-1', 'prof-a', 9, 'a', 'model', '2026-01-02')"
+        )
+        c.execute(
+            "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+            "VALUES ('job-1', 'prof-b', 2, 'b', 'model', '2026-01-02')"
+        )
+        c.commit()
+
+    # Each user sees only their own profile's score for the same shared job.
+    a_scores = a.get_user_scores_for_job("job-1")
+    b_scores = b.get_user_scores_for_job("job-1")
+    assert [s["profile_id"] for s in a_scores] == ["prof-a"]
+    assert [s["profile_id"] for s in b_scores] == ["prof-b"]
+    assert a_scores[0]["score"] == 9
+    assert b_scores[0]["score"] == 2
+
+
+def test_profile_scoped_methods_reject_foreign_profile(two_users):
+    """A profile_id belonging to another user raises ``ProfileNotFoundError`` —
+    never returns or writes that user's data (spec 041)."""
+    a, b = two_users
+    a.upsert_profile(_profile("prof-a"))
+    b.upsert_profile(_profile("prof-b"))
+
+    calls = [
+        ("get_score_result", lambda: a.get_score_result("job-1", "prof-b")),
+        ("split_new_cached", lambda: a.split_new_cached([], "prof-b")),
+        ("get_jobs_for_scoring", lambda: a.get_jobs_for_scoring("prof-b")),
+        ("save_scored", lambda: a.save_scored(None, {"score": 5}, "prof-b")),
+        ("get_digest", lambda: a.get_digest("prof-b")),
+        ("get_stats", lambda: a.get_stats("prof-b")),
+        ("get_all_for_tracker", lambda: a.get_all_for_tracker("prof-b")),
+        ("get_calibration_signals", lambda: a.get_calibration_signals("prof-b")),
+        ("delete_scores_for_profile", lambda: a.delete_scores_for_profile("prof-b")),
+        ("get_classified_jobs", lambda: a.get_classified_jobs("prof-b")),
+        ("get_few_shot_anchors", lambda: a.get_few_shot_anchors("prof-b")),
+        ("get_action_item_candidates", lambda: a.get_action_item_candidates("prof-b")),
+        ("save_prepared_application",
+         lambda: a.save_prepared_application("job-1", "prof-b", "cover", None, None, None, "en", "A")),
+        ("delete_profile", lambda: a.delete_profile("prof-b")),
+    ]
+
+    for name, call in calls:
+        with pytest.raises(ProfileNotFoundError, match="prof-b"):
+            call()
+
+    # The rejected writes left B's profile (and its data) untouched.
+    assert b.get_profile("prof-b") is not None
+
+
+def test_aggregates_user_scoped(two_users):
+    """``get_stats(None)``, ``get_best_score_profile_id`` and ``get_database_stats``
+    count only the bound user's profiles (``job_scores`` is user space)."""
+    a, b = two_users
+    a.upsert_profile(_profile("prof-a"))
+    b.upsert_profile(_profile("prof-b"))
+
+    # A scores job-1 (9) and job-2 (7); B scores only job-1 (2).
+    with sqlite3.connect(str(a.db_path)) as c:
+        c.execute(
+            "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+            "VALUES ('job-1', 'prof-a', 9, 'a', 'model', '2026-01-02')"
+        )
+        c.execute(
+            "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+            "VALUES ('job-2', 'prof-a', 7, 'a', 'model', '2026-01-02')"
+        )
+        c.execute(
+            "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+            "VALUES ('job-1', 'prof-b', 2, 'b', 'model', '2026-01-02')"
+        )
+        c.commit()
+
+    a_stats = a.get_stats(None)
+    b_stats = b.get_stats(None)
+    assert (a_stats["scored"], a_stats["hot"], a_stats["solid"]) == (2, 1, 1)
+    assert (b_stats["scored"], b_stats["hot"], b_stats["solid"]) == (1, 0, 0)
+
+    assert a.get_best_score_profile_id("job-1") == "prof-a"
+    assert b.get_best_score_profile_id("job-1") == "prof-b"
+
+    assert a.get_database_stats()["total_scores"] == 2
+    assert b.get_database_stats()["total_scores"] == 1
+    assert a.get_database_stats()["distinct_scored"] == 2
+    assert b.get_database_stats()["distinct_scored"] == 1
 
 
 # ── Isolation: company relationship (user_companies) ──────────────────────────
@@ -341,3 +455,132 @@ def test_dashboard_and_stats_isolated(two_users):
     assert a.get_database_stats()["total_contacts"] >= 1
     # Catalogue counts are shared (jobs/companies are not user-scoped).
     assert b.get_database_stats()["total_jobs"] == a.get_database_stats()["total_jobs"]
+
+
+# ── Isolation: through the API (spec 041, FR-010 / T029) ─────────────────────
+
+def test_api_two_user_isolation(two_users):
+    """Two users + two tokens behind a `TestClient`: B must never see A's
+    user-space data, and `/v1/me/jobs/{id}` scores are B's profiles only."""
+    from api.main import create_app
+    from fastapi.testclient import TestClient
+
+    a, b = two_users
+    path = a.db_path
+
+    # Per-user profiles + one score each on job-1 (A=8, B=5).
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO search_profiles (id, user_id, name, criteria) "
+        "VALUES ('prof-a', 'user-a', 'A', '{}')"
+    )
+    conn.execute(
+        "INSERT INTO search_profiles (id, user_id, name, criteria) "
+        "VALUES ('prof-b', 'user-b', 'B', '{}')"
+    )
+    conn.execute(
+        "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+        "VALUES ('job-1', 'prof-a', 8, 'a', 'llm', '2026-01-02')"
+    )
+    conn.execute(
+        "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+        "VALUES ('job-1', 'prof-b', 5, 'b', 'llm', '2026-01-02')"
+    )
+    conn.commit()
+    conn.close()
+
+    # A's user-space data (tracking + contact); B has none.
+    a.set_status("job-1", "applied")
+    a.upsert_contact(company_id=1, first_name="Alice")
+
+    token_a = a.create_api_token("ta", ["read:me", "read:catalogue"])
+    token_b = b.create_api_token("tb", ["read:me", "read:catalogue"])
+
+    app = create_app()
+    app.state.db_path = path
+    client = TestClient(app)
+    ha = {"Authorization": f"Bearer {token_a}"}
+    hb = {"Authorization": f"Bearer {token_b}"}
+
+    # A's contact is invisible to B (404, never 403) but visible to A.
+    contact_id = a.get_all_contacts()[0]["id"]
+    assert client.get(f"/v1/me/contacts/{contact_id}", headers=hb).status_code == 404
+    assert client.get(f"/v1/me/contacts/{contact_id}", headers=ha).status_code == 200
+
+    # B's feed carries no A tracking; A's does.
+    feed_a = {i["id"]: i for i in client.get("/v1/me/feed", headers=ha).json()["items"]}
+    feed_b = {i["id"]: i for i in client.get("/v1/me/feed", headers=hb).json()["items"]}
+    assert feed_a["job-1"]["tracked_status"] == "applied"
+    assert feed_b["job-1"]["tracked_status"] is None
+
+    # B's applications/contacts are empty; A's contact and tracking do not leak.
+    assert client.get("/v1/me/applications", headers=hb).json()["items"] == []
+    assert client.get("/v1/me/contacts", headers=hb).json()["items"] == []
+    assert len(client.get("/v1/me/contacts", headers=ha).json()["items"]) == 1
+
+    # /v1/me/jobs/{id} scores are the bound user's profiles only.
+    scores_b = client.get("/v1/me/jobs/job-1", headers=hb).json()["scores"]
+    assert [s["profile_id"] for s in scores_b] == ["prof-b"]
+    assert scores_b[0]["score"] == 5
+    scores_a = client.get("/v1/me/jobs/job-1", headers=ha).json()["scores"]
+    assert [s["profile_id"] for s in scores_a] == ["prof-a"]
+    assert scores_a[0]["score"] == 8
+
+
+def test_api_feed_foreign_profile_404_and_stats_scoped(two_users):
+    """`/v1/me/feed?profile_id=<other user's>` → 404; `/v1/me/stats` is scoped."""
+    from api.main import create_app
+    from fastapi.testclient import TestClient
+
+    a, b = two_users
+    path = a.db_path
+
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO search_profiles (id, user_id, name, criteria) "
+        "VALUES ('prof-a', 'user-a', 'A', '{}')"
+    )
+    conn.execute(
+        "INSERT INTO search_profiles (id, user_id, name, criteria) "
+        "VALUES ('prof-b', 'user-b', 'B', '{}')"
+    )
+    # A scores job-1 (9) and job-2 (7); B scores only job-1 (2).
+    conn.execute(
+        "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+        "VALUES ('job-1', 'prof-a', 9, 'a', 'llm', '2026-01-02')"
+    )
+    conn.execute(
+        "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+        "VALUES ('job-2', 'prof-a', 7, 'a', 'llm', '2026-01-02')"
+    )
+    conn.execute(
+        "INSERT INTO job_scores (job_id, profile_id, score, reason, scored_by, scored_at) "
+        "VALUES ('job-1', 'prof-b', 2, 'b', 'llm', '2026-01-02')"
+    )
+    conn.commit()
+    conn.close()
+
+    token_a = a.create_api_token("ta", ["read:me"])
+    token_b = b.create_api_token("tb", ["read:me"])
+
+    app = create_app()
+    app.state.db_path = path
+    client = TestClient(app)
+    ha = {"Authorization": f"Bearer {token_a}"}
+    hb = {"Authorization": f"Bearer {token_b}"}
+
+    # B passing A's profile_id → 404 (never A's data); A's own profile → 200.
+    assert (
+        client.get("/v1/me/feed", params={"profile_id": "prof-a"}, headers=hb).status_code
+        == 404
+    )
+    assert (
+        client.get("/v1/me/feed", params={"profile_id": "prof-a"}, headers=ha).status_code
+        == 200
+    )
+
+    # /v1/me/stats is user-scoped: B sees only its own profile's score.
+    stats_a = client.get("/v1/me/stats", headers=ha).json()
+    stats_b = client.get("/v1/me/stats", headers=hb).json()
+    assert (stats_a["scored"], stats_a["hot"]) == (2, 1)
+    assert (stats_b["scored"], stats_b["hot"]) == (1, 0)

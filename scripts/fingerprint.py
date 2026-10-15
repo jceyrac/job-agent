@@ -23,6 +23,7 @@ import tempfile
 from unittest import mock
 
 from core.storage import JobStorage
+from core.profiles import load_active_profile
 
 CORE_TABLES = (
     "jobs",
@@ -176,6 +177,10 @@ def build_fingerprint(db_path: str, as_of: str, profile_id: str | None,
         copy_path = os.path.join(tmp, "jobs.db")
         _copy_db(db_path, copy_path)
         db = JobStorage(copy_path)
+        if profile_id is None:
+            # Seed the active profile on a fresh DB (spec 041) — mirrors the
+            # pipeline's load_active_profile() bootstrap before profile-scoped reads.
+            load_active_profile(db)
         profile = profile_id or db.get_active_profile_id() or "unified_jc"
         feed = db.get_all_for_tracker(profile)
         counts = _table_counts(copy_path)

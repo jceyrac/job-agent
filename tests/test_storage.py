@@ -16,7 +16,9 @@ import traceback
 from datetime import date, timedelta
 
 from core.models import JobPosting
-from core.storage import JobStorage, _normalize_company_name, COMPANY_STATUSES, _now
+from core.storage import (
+    JobStorage, ProfileNotFoundError, _normalize_company_name, COMPANY_STATUSES, _now,
+)
 from tracker_views.shared import (
     score_badge, company_status_badge, relationship_badge,
     sector_label, unverified_badge, apply_filters,
@@ -1932,9 +1934,12 @@ def test_get_stats_empty_db():
     assert stats["solid"] == 0
     assert stats["by_status"] == {}
 
-    stats_p = db.get_stats("no_such_profile")
-    assert stats_p["total"] == 0
-    assert stats_p["scored"] == 0
+    # A profile that isn't the bound user's raises ProfileNotFoundError (spec 041).
+    try:
+        db.get_stats("no_such_profile")
+        raise AssertionError("Expected ProfileNotFoundError was not raised")
+    except ProfileNotFoundError:
+        pass  # expected
 
 
 # ── Filter tests ─────────────────────────────────────────────────────────────
@@ -3695,6 +3700,139 @@ def test_get_action_item_candidates_source_quality():
     cands = db.get_action_item_candidates(PROFILE_ID)
     sources = {r["source"]: (r["total"], r["strong"]) for r in cands["sources"]}
     assert sources["DeadSource"] == (5, 0)
+
+
+# ── API read methods + tokens (spec 041) ─────────────────────────────────────
+
+_CATALOGUE_JOB_KEYS = {
+    "id", "title", "company", "company_id", "url", "source", "location",
+    "base_location", "posted_date", "description", "first_seen", "last_seen",
+    "extracted_at", "extracted_by", "monitored_company_id", "canonical_url",
+    "norm_title", "norm_company", "summary", "work_mode", "geo_zone",
+    "company_size", "contract_type", "company_country", "industry_sector",
+    "language_required", "country_code",
+}
+
+_COMPANY_FACT_KEYS = {
+    "id", "name", "website", "careers_url", "company_country", "industry_sector",
+    "company_size", "ats_provider", "ats_identifier", "scraper_id",
+    "first_seen_at", "last_seen_at", "summary", "monitoring_status",
+    "scraping_method", "research_notes", "research_confidence", "researched_at",
+    "x_handle",
+}
+
+
+def test_api_tokens_table_exists():
+    db = JobStorage(":memory:")
+    with db._conn() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(api_tokens)").fetchall()}
+    assert {"id", "user_id", "name", "token_hash", "scopes", "created_at",
+            "last_used_at", "revoked_at", "expires_at"} <= cols
+
+
+def test_api_token_round_trip():
+    db = JobStorage(":memory:")
+    raw = db.create_api_token("smoke", ["read:catalogue"])
+    assert isinstance(raw, str) and raw
+
+    tokens = db.list_api_tokens()
+    assert len(tokens) == 1
+    assert tokens[0]["name"] == "smoke"
+    assert tokens[0]["scopes"] == '["read:catalogue"]'
+    assert "token_hash" not in tokens[0]  # no secret material in listings
+
+    resolved = db.resolve_api_token(raw)
+    assert resolved is not None
+    assert resolved["name"] == "smoke"
+    assert resolved["scopes"] == ["read:catalogue"]
+    assert "token_hash" not in resolved
+    assert resolved["revoked_at"] is None
+
+    assert db.resolve_api_token("not-a-real-token") is None
+
+    db.touch_api_token(resolved["id"])
+    assert db.resolve_api_token(raw)["last_used_at"] is not None
+
+    db.revoke_api_token(resolved["id"])
+    assert db.resolve_api_token(raw)["revoked_at"] is not None
+
+
+def test_api_token_invalid_scope_rejected():
+    db = JobStorage(":memory:")
+    raised = False
+    try:
+        db.create_api_token("bad", ["read:everything"])
+    except ValueError:
+        raised = True
+    assert raised, "expected ValueError for unknown scope"
+
+
+def test_api_token_expiry_round_trip():
+    db = JobStorage(":memory:")
+    raw = db.create_api_token(
+        "exp", ["read:catalogue", "read:me"],
+        expires_at="2027-01-01T00:00:00+00:00",
+    )
+    resolved = db.resolve_api_token(raw)
+    assert resolved["scopes"] == ["read:catalogue", "read:me"]
+    assert resolved["expires_at"] == "2027-01-01T00:00:00+00:00"
+
+
+def test_get_user_returns_bound_user():
+    db = JobStorage(":memory:")
+    u = db.get_user()
+    assert u is not None
+    assert set(u) == {"id", "display_name", "active_profile_id", "onboarding_completed_at"}
+    assert u["id"] == db.user_id
+
+
+def test_get_catalogue_jobs_shared_facts_only():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    cid = db.upsert_company("Acme Corp")
+    db.update_company_fields(cid, {"company_size": "startup", "company_country": "France"})
+    j = _job("https://example.com/jobs/cat1", title="Cat job", company="Acme Corp")
+    db.save_scored(j, _score(7), PROFILE_ID, company_id=cid)
+    db.set_status(j.id, "applied", notes="tracking note")
+
+    rows = db.get_catalogue_jobs()
+    assert len(rows) == 1
+    row = rows[0]
+    assert set(row) == _CATALOGUE_JOB_KEYS
+    assert row["id"] == j.id
+    assert row["company_size"] == "startup"
+    assert row["company_country"] == "France"
+
+    assert db.get_catalogue_job(j.id) == row
+    assert db.get_catalogue_job("nope") is None
+
+
+def test_get_catalogue_jobs_filters():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    a = _job("https://example.com/jobs/f1", title="F1", source="src-a",
+             posted_date=date(2026, 4, 1))
+    b = _job("https://example.com/jobs/f2", title="F2", source="src-b",
+             posted_date=date(2026, 6, 1))
+    db.save_scored(a, _score(7), PROFILE_ID)
+    db.save_scored(b, _score(7), PROFILE_ID)
+
+    assert {r["source"] for r in db.get_catalogue_jobs(source="src-a")} == {"src-a"}
+    assert {r["id"] for r in db.get_catalogue_jobs(posted_after="2026-05-01")} == {b.id}
+
+
+def test_get_company_facts_shared_only():
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    cid = db.upsert_company("Acme Corp")
+    db.update_company_fields(cid, {"company_country": "France", "industry_sector": "web3_crypto"})
+    db.set_company_status(cid, "blacklisted", "no thanks")  # user-space relationship
+
+    facts = db.get_company_facts(cid)
+    assert set(facts) == _COMPANY_FACT_KEYS
+    assert facts["id"] == cid
+    assert facts["company_country"] == "France"
+    assert db.get_company_facts(999999) is None
 
 
 if __name__ == "__main__":
