@@ -299,6 +299,19 @@ def _run_extraction(limit: int | None = None) -> None:
     print(f"\nExtraction complete: {extracted_count} extracted, {error_count} errors")
 
 
+def _scoring_pre_filter(profile: SearchProfile) -> dict:
+    """SQL pre-filter for a scoring run, with title clauses dropped.
+
+    Title judgement is now the first Tier 0 rule in the scorer (spec 040), so
+    ``title_contains`` / ``exclude_title_contains`` must not reach
+    ``get_jobs_for_scoring`` — otherwise title-mismatched jobs would be silently
+    skipped instead of receiving a ``tier_0`` score. Location/remote clauses are
+    kept for forward-compatibility (currently unread by ``get_jobs_for_scoring``).
+    """
+    return {
+        k: v for k, v in (profile.pre_filter or {}).items()
+        if k not in ("title_contains", "exclude_title_contains")
+    }
 
 
 def main():
@@ -373,8 +386,8 @@ def main():
     total_in_db = db.get_stats(profile.id)["total"]
     # Build effective pre-filter from canonical fields (spec 017).
     # Title judgement is now a Tier 0 rule in the scorer (spec 040), so the
-    # title clauses are no longer part of the SQL pre-filter.
-    effective_pre_filter = dict(profile.pre_filter) if profile.pre_filter else {}
+    # title clauses are dropped from the SQL pre-filter.
+    effective_pre_filter = _scoring_pre_filter(profile)
     jobs_to_score = db.get_jobs_for_scoring(
         profile_id=profile.id,
         pre_filter=effective_pre_filter or None,
