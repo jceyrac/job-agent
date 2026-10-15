@@ -13,6 +13,7 @@ from core.filters import JobFilterEngine
 from core.models import JobFilter, JobPosting
 from core.paths import DB_PATH
 from core.storage import JobStorage
+from core.title_gate import title_excluded, title_matches_profile
 
 from core import scrapers
 import core.scrapers.ats
@@ -342,6 +343,7 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     total_fetched = 0
     total_new = 0
     total_excluded_date = 0
+    total_excluded_title = 0
 
     for ScraperClass in scraper_classes:
         if (getattr(ScraperClass, "ACQUISITION_MODEL", "board") == "company_keyed"
@@ -375,6 +377,10 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
 
         before_count = db.get_stats(profile.id)["total"]
         for job in unique_batch:
+            if not title_matches_profile(job.title, scope["title_families"]) \
+                    or title_excluded(job.title, scope["exclude"]) is not None:
+                total_excluded_title += 1
+                continue
             company_id = None
             if job.company and job.company.strip():
                 try:
@@ -392,6 +398,8 @@ def _run_broad_scrape(db: JobStorage, profile) -> None:
     print(f"\nScrape complete: {total_fetched} fetched, {total_new} new, {already_count} already in DB")
     if total_excluded_date:
         print(f"📅 {total_excluded_date} jobs excluded (posted > {db.get_freshness_days()} days ago)")
+    if total_excluded_title:
+        print(f"🔤 {total_excluded_title} jobs excluded (title not in platform scope)")
 
     db.log_run(
         profile_id=profile.id,

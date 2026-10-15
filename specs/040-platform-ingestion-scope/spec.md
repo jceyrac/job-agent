@@ -34,7 +34,7 @@
 | Where | What | Effect |
 |---|---|---|
 | `core/scrape.py:331–336` `_run_broad_scrape` | `JobFilter(titles=profile.job_titles, exclude=profile.title_exclude, remote_or_hybrid=profile.scrape_remote_or_hybrid, date_from=…)` | The filter passed to every board scraper's `fetch()` — used as **search query terms** by query-driven boards — and to `JobFilterEngine.apply` (title include, exclude words, date) |
-| `core/scrape.py:379` | `title_matches_profile(job.title, profile.job_titles)` before `save_unscored` | A second, profile-based title gate drops jobs before they reach the catalogue |
+| `core/scrape.py:379` | `title_matches_profile(job.title, profile.job_titles)` before `save_unscored` | A second, profile-based title gate drops jobs before they reach the catalogue (re-keyed onto the scope by FR-003) |
 | `core/scrapers/greenhouse.py:168` | `title_matches_profile(..., profile_titles)` on each board's full job list | Company-keyed source filtered by the profile's titles instead of a platform "product family" filter (Constitution I/VIII) |
 | `core/score.py:443–446` | For monitored-company jobs: `title_matches_profile(title, profile.job_titles)` → `db.set_job_filtered_non_product(job_id)` | Writes `jobs.filtered_non_product = TRUE` — a profile judgement on a catalogue row (Constitution X violation) |
 | `core/storage.py:1717, 2737` | Feed queries select `j.filtered_non_product` | The tracker hides / labels jobs from that catalogue flag |
@@ -62,7 +62,7 @@ As the operator, I want a single platform-level ingestion scope (title families,
 
 1. **Given** the migration, **Then** `config` holds `ingestion_scope` (JSON: `title_families`, `exclude`, `remote_or_hybrid`), initialised **once** from the active profile's `job_titles`, `title_exclude`, `scrape_remote_or_hybrid` (see Q2), recorded in `migrations`.
 2. **Given** `_run_broad_scrape`, **Then** `JobFilter` is built from `ingestion_scope` + freshness window; no profile field is read.
-3. **Given** `_run_broad_scrape`, **Then** the second title gate before `save_unscored` (scrape.py:379) is removed — the `JobFilterEngine` title/exclude filter on the platform scope is the only ingestion title filter.
+3. **Given** `_run_broad_scrape`, **Then** the second title gate before `save_unscored` (scrape.py:379) is **kept**, keyed on the platform scope — `title_matches_profile(job.title, scope["title_families"]) and not title_excluded(job.title, scope["exclude"])` — so broad ingestion is byte-identical to the profile-keyed gate on day one. `JobFilterEngine.apply`'s title include is a looser substring match and cannot replace it (see research §2); the gate stays, just against the scope instead of the profile.
 4. **Given** the Greenhouse scraper (and any company-keyed source applying a title filter), **Then** it filters on `ingestion_scope.title_families` (the coarse family filter allowed by Constitution I), not on a profile.
 5. **Given** a fixture where the profile's `job_titles` differs from the scope, **Then** ingestion follows the scope (test).
 
@@ -114,12 +114,12 @@ As a user, I want jobs whose title does not match **my** profile to be filtered 
 
 - **FR-001**: `config.ingestion_scope` (JSON: `title_families: list[str]`, `exclude: list[str]`, `remote_or_hybrid: bool`) with typed accessors on `JobStorage` (`get_ingestion_scope()` / `set_ingestion_scope()`), validated on write.
 - **FR-002**: One-shot migration initialising it from the active profile (Q2), idempotent, recorded in `migrations`; a fresh install gets a documented default (Q2).
-- **FR-003**: `core/scrape.py` and every scraper read titles, exclude words and the remote/hybrid option only from the platform scope; the redundant profile title gate before `save_unscored` is removed.
+- **FR-003**: `core/scrape.py` and every scraper read titles, exclude words and the remote/hybrid option only from the platform scope; the pre-`save_unscored` title gate is re-keyed onto the platform scope (`title_matches_profile(job.title, scope["title_families"]) and not title_excluded(job.title, scope["exclude"])`) so broad ingestion is byte-identical on day one.
 - **FR-004**: `scripts/ingestion_scope.py` (`--show`, `--set-titles`, `--set-exclude`, `--remote-or-hybrid on|off`) to view and edit the scope — the prose path (Constitution II: config in DB, no deploy).
 
 **Title judgement in scoring (US2)**
 
-- **FR-005**: New first Tier 0 rule in `evaluate_for_profile` for profile titles and exclude words (same matching semantics as today: substring include, word-boundary exclude), applied to every job, no LLM call — now the *only* title judgement (the ingestion gate and the scoring pre-filter title clauses are removed, FR-003/FR-006).
+- **FR-005**: New first Tier 0 rule in `evaluate_for_profile` for profile titles and exclude words (same matching semantics as today: substring include, word-boundary exclude), applied to every job, no LLM call — now the *only* **profile** title judgement (the ingestion gate is re-keyed to the scope, FR-003, and the scoring pre-filter title clauses are removed, FR-006).
 - **FR-006**: `set_job_filtered_non_product` and its caller in `core/score.py` are removed, together with the scoring SQL pre-filter's title clauses (`title_contains` / `exclude_title_contains` in `core/score.py` `effective_pre_filter`), so title judgement happens **only** at Tier 0; feed/dashboard/stats derive title-filtered visibility from the profile's Tier 0 row.
 - **FR-007**: No backfill migration. The migration only initialises `config.ingestion_scope`. `jobs.filtered_non_product` is kept unused (dropped at step 10): its runtime writer is removed and its unused `SELECT` columns dropped. Flagged jobs are scored on the next `core.score --profile` run via the Tier 0 title rule (score 1, `tier_0`, no LLM) — they are re-selected once the pre-filter title clause is gone (FR-006).
 - **FR-008**: Guard tests: no ingestion code (`core/scrape.py`, `core/scrapers/**`) reads a profile's `job_titles` / `title_exclude` / `scrape_remote_or_hybrid`; no runtime code reads or writes `jobs.filtered_non_product` (allow-list: the migration that created the column).

@@ -7,12 +7,13 @@
 ## Summary
 
 Roadmap step 4 closes Phase B: today the **active profile** decides what enters the
-shared catalogue (scrape `JobFilter.titles`, the redundant title gate before
+shared catalogue (scrape `JobFilter.titles`, the title gate before
 `save_unscored`, the Greenhouse title filter, and a scoring-time gate that writes
 `jobs.filtered_non_product` on the catalogue row). This step makes ingestion read a
-single **platform scope** (`config.ingestion_scope`, JSON) and moves title judgement
-into the scorer as a **new first Tier 0 rule** stored in `job_scores` (user space,
-through the profile) — no LLM call.
+single **platform scope** (`config.ingestion_scope`, JSON) — re-keying the pre-save
+title gate onto the scope so broad ingestion stays byte-identical — and moves title
+judgement into the scorer as a **new first Tier 0 rule** stored in `job_scores` (user
+space, through the profile) — no LLM call.
 
 Two code paths change (Constitution II kept clean):
 - **Prose path** — `config.ingestion_scope` (edited by `scripts/ingestion_scope.py`,
@@ -98,7 +99,7 @@ specs/040-platform-ingestion-scope/
 core/
 ├── storage.py           # + _migrate_ingestion_scope() (seeds config key only);
 │                        #   + get/set_ingestion_scope(); − set_job_filtered_non_product()
-├── scrape.py            # JobFilter built from scope; − redundant title gate (line 379)
+├── scrape.py            # JobFilter built from scope; title gate re-keyed onto scope (line 379)
 ├── scorer.py            # + first Tier 0 title rule in evaluate_for_profile()
 ├── score.py             # − monitored title gate + set_job_filtered_non_product call (442–448);
 │                        #   − title_contains/exclude_title_contains in effective_pre_filter (376–383)

@@ -191,6 +191,65 @@ def test_broad_scrape_builds_filter_from_scope_not_profile():
     assert jf.titles != _FakeProfile.job_titles
 
 
+def test_broad_scrape_pre_save_title_gate_matches_scope():
+    """The pre-save gate (scope-keyed) must save exactly the jobs whose title
+    matches title_families and carries no excluded word — reproducing the previous
+    profile-keyed gate byte-for-byte when scope == profile values (borderline
+    titles from the 57/15 analysis are the regression cases)."""
+    from unittest import mock
+
+    from core import scrape as scrape_mod
+    from core.models import JobPosting
+
+    db = JobStorage(":memory:")
+    db.set_ingestion_scope(
+        title_families=["product manager", "head of product"],
+        exclude=["intern", "junior"],
+        remote_or_hybrid=False,
+    )
+
+    class _FakeProfile:
+        id = "unified_jc"
+
+    def _post(title):
+        return JobPosting(
+            source="Fake", title=title, company="Acme", location="Remote",
+            url=f"https://example.com/{title.lower().replace(' ', '-')}",
+        )
+
+    postings = [
+        _post("Fintech Co-Founder / Head of Product (100% remote)"),  # match → save
+        _post("Senior Product Manager - MetaMask"),                   # match → save
+        _post("Product Manager (HR Technology) Intern"),              # match + excluded word → skip
+        _post("Junior Product Manager"),                              # match + excluded word → skip
+        _post("Head of Trading"),                                     # mismatch → skip
+        _post("Chief of Staff"),                                      # mismatch → skip
+    ]
+
+    class _FakeScraper:
+        SOURCE_NAME = "Fake"
+        ACQUISITION_MODEL = "board"
+        def __init__(self, storage=None):
+            pass
+        def is_enabled(self):
+            return True
+        def fetch(self, job_filter):
+            return postings
+
+    with mock.patch.object(scrape_mod, "discover_scrapers", return_value=[_FakeScraper]), \
+         mock.patch.object(scrape_mod, "JobFilterEngine") as engine:
+        engine.apply.return_value = (postings, 0, [])
+        scrape_mod._run_broad_scrape(db, _FakeProfile())
+
+    with db._conn() as conn:
+        saved = {r["title"] for r in conn.execute("SELECT title FROM jobs").fetchall()}
+
+    assert saved == {
+        "Fintech Co-Founder / Head of Product (100% remote)",
+        "Senior Product Manager - MetaMask",
+    }
+
+
 def test_board_scrapers_read_titles_from_job_filter_not_scope():
     """indeed.py / linkedin.py must use job_filter.titles, not get_ingestion_scope()."""
     offenders: dict[str, list[str]] = {}

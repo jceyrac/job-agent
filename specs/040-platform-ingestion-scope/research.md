@@ -44,22 +44,44 @@ run converges the flagged set naturally once the pre-filter clause is gone.
 
 ---
 
-## 2. There are two profile-driven title filters at broad ingestion today
+## 2. There are two title filters at broad ingestion today — and they are not interchangeable
 
 **Finding.** In `_run_broad_scrape` (`core/scrape.py:328`):
 
-1. `JobFilterEngine.apply` (`core/filters.py:35–38`) already hard-filters on
-   `job_filter.titles` (substring) and `job_filter.exclude` (word-boundary).
-2. `core/scrape.py:379` then re-checks `title_matches_profile(job.title,
-   profile.job_titles)` before `save_unscored` — **redundant** given (1), and never
-   triggered for a job that passed (1) with a non-empty title list.
+1. `JobFilterEngine.apply` (`core/filters.py:35–38, 29–32`) filters on
+   `job_filter.titles` (substring on the title, only when `titles` is non-empty)
+   and `job_filter.exclude` (word-boundary over the full searchable text —
+   title+company+location+description+tags).
+2. `core/scrape.py:379` re-checks `title_matches_profile(job.title, …)` before
+   `save_unscored`.
+
+These two predicates are **not the same**, so the gate is not simply redundant:
+
+- `title_matches_profile(title, titles)` (`core/title_gate.py`) is a strict,
+  title-only gate: it returns `False` for a missing/empty title, `True` (open) for
+  an empty `titles`, else a case-insensitive substring match on the stripped title.
+- `JobFilterEngine`'s title include is one stage inside a larger filter: it is
+  guarded by `if titles:` (an empty list skips the filter), matches on the
+  unstripped title, and its **exclude** runs over the whole searchable text — not
+  the title alone. The engine is looser than the gate and would admit more jobs.
+
+Because the two differ, deleting the `save_unscored` gate and trusting
+`JobFilterEngine.apply` alone after re-keying the scope would change which jobs
+reach the catalogue — broad ingestion would silently widen (more jobs, more
+extraction LLM cost) instead of staying byte-identical on day one.
 
 **Decision.** The platform scope feeds `JobFilter(titles=…, exclude=…,
-remote_or_hybrid=…)` exactly as the profile does today; `scrape.py:379` is deleted.
-`JobFilterEngine.apply` becomes the *only* ingestion title filter (spec US1 scenario
-3). The title-family filter on query-driven boards stays as the coarse scoping the
-constitution already permits; company-keyed Greenhouse uses the same
-`title_families`.
+remote_or_hybrid=…)` exactly as the profile does today, **and** the pre-save gate
+stays, re-keyed onto the scope (spec US1 scenario 3):
+
+    if not title_matches_profile(job.title, scope["title_families"]) \
+            or title_excluded(job.title, scope["exclude"]) is not None:
+        skip
+
+This is Constitution-compliant (a platform parameter, not a profile) and keeps
+broad ingestion byte-identical on day one. The title-family filter on
+query-driven boards stays as the coarse scoping the constitution already permits;
+company-keyed Greenhouse uses the same `title_families`.
 
 ---
 
@@ -110,7 +132,9 @@ fully on-site".
 remote_or_hybrid: scrape_remote_or_hybrid}`. The migration reads the active profile's
 `search_profiles.criteria` JSON (resolved via `config.active_profile_id` →
 `DEFAULT_PROFILE_ID`), falling back to the `core/profiles` seed defaults for a fresh
-install (no profile row). Names match FR-001 exactly.
+install (no profile row). Names match FR-001 exactly. The scope's `title_families` /
+`exclude` feed **both** the `JobFilter` built in `_run_broad_scrape` and the pre-save
+title gate (FR-003, §2); `remote_or_hybrid` feeds the `JobFilter` only.
 
 ---
 
@@ -174,11 +198,13 @@ is never written in the current path (it is a historical artifact).
 
 **Decision.** FR-006 removes **both** title clauses from `effective_pre_filter`
 (`title_contains` and `exclude_title_contains`), leaving only the location/remote
-clauses, so `get_jobs_for_scoring` selects every fresh job regardless of title. Title
-judgement then happens *only* in the new first Tier 0 rule — which is what makes the
-expected-change check (§1) possible and makes the rule actually fire. This is
-consistent with the whole point of the step: ingestion (and now the scoring *selection*)
-must not filter on the profile's titles.
+clauses, so `get_jobs_for_scoring` selects every fresh job regardless of title.
+Profile title judgement then happens *only* in the new first Tier 0 rule — which is
+what makes the expected-change check (§1) possible and makes the rule actually fire.
+(The ingestion title gate remains, but re-keyed onto the platform scope per §2 — a
+platform filter, not a profile judgement.) This is consistent with the whole point of
+the step: ingestion (and now the scoring *selection*) must not filter on the profile's
+titles.
 
 ---
 

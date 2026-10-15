@@ -38,7 +38,7 @@
 
 ## Phase 3: User Story 1 — Ingestion is driven by a platform scope, not a profile (Priority: P1) 🎯 MVP
 
-**Goal**: `core/scrape.py` and every scraper read titles/exclude/remote-hybrid only from `config.ingestion_scope`; the redundant profile title gate is gone.
+**Goal**: `core/scrape.py` and every scraper read titles/exclude/remote-hybrid only from `config.ingestion_scope`; the profile title gate is re-keyed onto the scope.
 
 **Independent Test**: with the scope initialised from today's profile values, a broad scrape and a monitored scrape ingest the same jobs as before; changing the profile's `job_titles` no longer changes ingestion.
 
@@ -48,7 +48,7 @@
 
 ### Implementation for User Story 1
 
-- [X] T006 [US1] In `core/scrape.py::_run_broad_scrape`, build `JobFilter` from `get_ingestion_scope()` + the freshness window (replacing the profile reads at lines ~331–336); remove the redundant `title_matches_profile` gate before `save_unscored` (line ~379).
+- [X] T006 [US1] In `core/scrape.py::_run_broad_scrape`, build `JobFilter` from `get_ingestion_scope()` + the freshness window (replacing the profile reads at lines ~331–336); re-key the `title_matches_profile` gate before `save_unscored` (line ~379) onto the scope (`title_matches_profile(job.title, scope["title_families"]) and not title_excluded(job.title, scope["exclude"])`).
 - [X] T007 [US1] In `core/scrapers/greenhouse.py` (lines ~140–168), filter on `ingestion_scope["title_families"]` instead of `active_profile.job_titles`.
 - [X] T008 [P] [US1] Add `scripts/ingestion_scope.py` CLI (`--show`, `--set-titles`, `--set-exclude`, `--remote-or-hybrid on|off`); each mutation read-modifies-writes the whole scope and re-prints `--show`; invalid input → stderr + exit `2`; empty `--set-titles` allowed (= open ingestion, warn).
 
