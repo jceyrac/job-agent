@@ -38,6 +38,14 @@ python -m core.score --extract
 # CV + cover letter agent (LangGraph, human-in-the-loop)
 python -m core.cv_agent.cli <job_id | url>
 
+# Serve the read-only API locally (FastAPI, loopback)
+uvicorn api.main:app --host 127.0.0.1 --port 8601
+
+# API tokens (create / list / revoke) — scopes: read:catalogue, read:me
+python -m scripts.api_token create --name <client> --scopes read:me [--expires-in <days>]
+python -m scripts.api_token list [--user <id>] [--json]
+python -m scripts.api_token revoke <token-id>
+
 # Run tests
 python -m pytest tests/
 
@@ -135,8 +143,8 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 
 - **Dev:** MacBook Pro M5 Pro, Python 3.11 venv at `.venv/`, repo at `/Users/jeanclaudevd/AI-Suite/job_agent/`. All development happens here.
 - **Prod (verva):** HPE ProLiant Ubuntu server, Docker Compose, repo at `/opt/job-agent`. Deploy-only — never develop or write specs there. SSH access is available for live diagnostics.
-- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `agent` (cron scrape+score).
-- **Network:** the production tracker is bound to loopback (`127.0.0.1:8501`) in compose and reached only over the tailnet via `tailscale serve` — see `docs/infrastructure.md`.
+- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `api` (always-on FastAPI read-only :8601, Tailscale HTTPS under `/api`), `agent` (cron scrape+score).
+- **Network:** the production tracker is bound to loopback (`127.0.0.1:8501`) in compose and reached only over the tailnet via `tailscale serve`; the API is bound to `127.0.0.1:8601` and served as `https://<verva>.<tailnet>.ts.net/api` via `tailscale serve --bg --https=443 --set-path /api http://127.0.0.1:8601` (app sets `root_path="/api"`) — see `docs/infrastructure.md`. Clients read the API base URL from `JOB_AGENT_API_URL` (never hard-coded).
 - **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod. Live data lives on verva; the local Mac DB is typically empty.
 - **Locations:** `core/paths.py` is the single source of truth for every path (`PROJECT_ROOT`, `DATA_DIR`, `DB_PATH`, `OUTPUT_DIR`, `ENV_PATH`, `data_path()`). Env overrides: `JOB_AGENT_DATA_DIR` (data dir), `JOB_AGENT_OUTPUT_DIR` (outputs dir); `JOB_AGENT_REQUIRE_DB=1` makes `import core.paths` refuse startup (no dir/DB created) if the DB is missing. Rule: locations come from `core/paths.py` only — never derive `data`/`outputs`/`.env` from `__file__` or a CWD-relative `"data/…"` literal; scripts are launched as modules (`-m <module>`, e.g. `python -m core.scrape`), never by `.py` filename.
 - **LLM:** DeepSeek only (`deepseek-chat`), configured in `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) and called exclusively through `llm.call()`.
@@ -151,6 +159,26 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 - If extraction or scoring fails after retries, return `None` — the caller saves the job as unscored for retry next run.
 - The LLM produces prose only; structured fields used for control flow are derived deterministically (Constitution IV).
 - Local Ollama models are not part of the pipeline.
+
+---
+
+## API (v1, read-only)
+
+- `api/` is a read-only FastAPI app over `core`, tailnet-only, auth with scoped
+  bearer tokens (`read:catalogue`, `read:me`) bound to a user. Tokens are managed
+  with `python -m scripts.api_token` (SHA-256 hashes only, raw token printed once).
+- Endpoints are versioned under `/v1` and grouped one router per domain
+  (`api/routers/catalogue.py`, `api/routers/me.py`); `/health` is outside `/v1`
+  and unauthenticated. Each payload equals its `JobStorage` source field-for-field
+  (pydantic `extra="forbid"`).
+- **No SQL in `api/`** — all DB access goes through `JobStorage`; a guard test
+  fails on any non-allow-listed method, a `sqlite3` import, or an unbound
+  `JobStorage` outside `api/deps.py`'s auth path. One `JobStorage` per request
+  (unbound for auth, bound to the token's `user_id` for data). No LLM/long work
+  in a handler.
+- Scores are user-scoped in `JobStorage` (`get_user_scores_for_job`) — the API
+  never calls the cross-user `get_scores_for_job` (spec 039 rule).
+- Future public exposure is a deliberate separate step: see `docs/api-exposure.md`.
 
 ---
 
@@ -212,3 +240,9 @@ shipped to prod (2026-10-14); next: step 4 (périmètre d'ingestion plateforme �
 gate titre → Tier 0 scoring), specified as `specs/040-platform-ingestion-scope/`
 (plan.md / research.md — no backfill, byte-identical parity + expected-change check
 after the first scoring run; FR-006 also drops the scoring pre-filter title clauses).
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+at specs/041-api-read/plan.md
+<!-- SPECKIT END -->

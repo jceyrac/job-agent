@@ -63,7 +63,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | 1b | Projet installable + préprod | `pyproject.toml`, `pip install -e .` dans l'image, suppression des bricolages `sys.path` (scripts, tests), scripts en `python -m scripts.*`, défauts des scripts de diag via `paths` ; `scripts/staging.sh` (tracker de préprod :8502 sur une copie du backup, sans toucher à la prod) — spec 033 | 1,5 |
 | 1c | Déplacement vers `core/` | Phase A (sans déplacer) : derniers `__file__` supprimés (`core/cv_agent/renderer.py` → `.cv_pipeline`, `core/monitoring_agent`, découverte des scrapers) + garde qui résout chaque nom de module écrit en texte (`-m`, `importlib`, `mock.patch`). Phase B : un commit mécanique `git mv` + réécriture des imports par script, **sans shims** ; tracker laissé à la racine. Validation par le flux de mise en prod (préprod sur SHA exact) — spec 034 | 1,5–2 |
 | 1d | Suppression des fichiers morts | `migrate_*.py` exécutés, `tracker_legacy.py`, `test_wellfound.py` **supprimés** (`git rm`, pas de dossier `archive/` : l'historique git les conserve, une note liste le dernier commit qui les contient) — spec 035 | 0,5 |
-| 2 | Assainissement | 2a : SQL brut → méthodes `JobStorage`, dans les vues **et** dans 6 modules de `core/` (inventaire 2026-10-10 : 16 sites dans 7 vues, 7 sites dans `core/`), avec garde qui l'interdit. 2c : retrait de Groq (`core/email_monitor.py` utilise encore le SDK Groq, absent des dépendances ; l'onboarding exige une clé Groq ; `.env.example`) — seul `core/llm.py` connaît le fournisseur — **spec 037**. 2b : `subprocess` du tracker → table `tasks` + conteneur `worker` — spec dédiée, numéro attribué au démarrage (038 est pris par `038-cv-contact-profile-eu-rule`) ; indépendante de la phase B | 3–5 |
+| 2 | Assainissement | 2a : SQL brut → méthodes `JobStorage`, dans les vues **et** dans 6 modules de `core/` (inventaire 2026-10-10 : 16 sites dans 7 vues, 7 sites dans `core/`), avec garde qui l'interdit. 2c : retrait de Groq (`core/email_monitor.py` utilise encore le SDK Groq, absent des dépendances ; l'onboarding exige une clé Groq ; `.env.example`) — seul `core/llm.py` connaît le fournisseur — **spec 037**. 2b : `subprocess` du tracker → table `tasks` + conteneur `worker` — **rattachée à l'étape 6** (décision 2026-10-15 : la file de tâches sert d'abord l'API, la construire pour Streamlit puis la rebrancher serait faire le travail deux fois) | 3–5 |
 
 ### Phase B — Bon modèle de données (risque concentré ici)
 
@@ -76,8 +76,8 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 
 | # | Étape | Contenu | Jours |
 |---|-------|---------|-------|
-| 5 | API lecture | Service `api` (Tailscale), tokens à scopes, `/jobs`, `/me/feed`, `/me/companies`, `/me/contacts` | 4–6 |
-| 6 | API écriture + tâches | Statuts, notes, cycle de vie, `POST /tasks` + SSE ; worker consomme via l'API | 4–6 |
+| 5 | API lecture | Service `api` (Tailscale, port 8601), tokens à scopes stockés hachés, `/v1/jobs`, `/v1/me/feed`, `/v1/me/jobs/{id}`, `/v1/me/companies`, `/v1/me/contacts`, `/v1/me/applications` — **spec 041** | 4–6 |
+| 6 | API écriture + tâches | Statuts, notes, cycle de vie, `POST /tasks` + SSE ; worker consomme via l'API ; **inclut l'étape 2b** (les boutons du tracker passent par la file de tâches) | 5–8 |
 | 6b | Agents via l'API | Le cv_agent (puis les autres agents) lit le job et écrit ses documents de candidature par l'API (token à scopes), plus aucun import de `core` hors `llm`/`paths` côté agent ; la garde de frontière (spec 036) est resserrée en conséquence. Prérequis de l'étape 9 | 2–4 |
 | 7 | Ingestion via API | `core/scrape.py` → `/ingest/batch` derrière `INGEST_VIA_API` ; `BaseScraper` sans `JobStorage` ; une nuit en double pour comparer | 4–6 |
 
