@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Staging tracker on verva (spec 033, FR-009/010/014).
+# Staging tracker + read-only API on verva (spec 033 FR-009/010/014; spec 041 FR-011).
 #
-# Runs a candidate commit as a disposable tracker on port 8502 against a copy of
-# the latest backup, without touching production (its container, images, the
-# `job_data` volume, or `/opt/job-agent`'s working tree).
+# Runs a candidate commit as a disposable tracker on port 8502 and read-only API on
+# 8602/8443 against a copy of the latest backup, without touching production (its
+# container, images, the `job_data` volume, or `/opt/job-agent`'s working tree).
 #
 # Usage:
 #   scripts/staging.sh up <commit-sha | branch>
@@ -24,6 +24,8 @@ IMAGE="job-agent:staging"
 VOLUME="job_agent_staging_data"
 CONTAINER="job-agent-staging"
 PORT="8502"
+API_CONTAINER="job-agent-staging-api"
+API_PORT="8602"
 ENV_FILE="/opt/job-agent/.env"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -106,9 +108,31 @@ up() {
   # 6. Expose it on the tailnet only.
   tailscale serve --bg "--tcp=${PORT}" "tcp://127.0.0.1:${PORT}"
 
+  # 7. Start the read-only API on the same image/volume/env (spec 041, FR-011).
+  #    uvicorn binds 0.0.0.0 inside the container — like the tracker's streamlit —
+  #    so the port mapping reaches it; the host publishes loopback-only.
+  docker run -d --name "$API_CONTAINER" \
+    -p "127.0.0.1:${API_PORT}:8601" \
+    --env-file "$ENV_FILE" \
+    -e JOB_AGENT_DATA_DIR=/app/data \
+    -e JOB_AGENT_REQUIRE_DB=1 \
+    -e GMAIL_APP_PASSWORD= \
+    -e NOTIFY_TO= \
+    -e JOPLIN_TOKEN= \
+    -v "$VOLUME":/app/data \
+    "$IMAGE" \
+    uvicorn api.main:app --host 0.0.0.0 --port 8601
+
+  # 8. Expose the API on the tailnet under /api (TLS, path-stripped).
+  tailscale serve --bg "--https=8443" --set-path /api "http://127.0.0.1:${API_PORT}"
+
   trap - EXIT  # success — keep the staging environment running
   local tip="${TAILSCALE_IP:-$(tailscale ip -4 2>/dev/null || true)}"
+  local api_name
+  api_name="$(tailscale status --self --peers=false --json 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)"
   echo "Staging tracker up at http://${tip:-<tailnet-ip>}:${PORT}"
+  echo "Staging API up at https://${api_name:-<verva>.<tailnet>.ts.net}:8443/api"
 }
 
 run() {
@@ -133,7 +157,9 @@ run() {
 
 down() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  docker rm -f "$API_CONTAINER" >/dev/null 2>&1 || true
   tailscale serve --bg "--tcp=${PORT}" off >/dev/null 2>&1 || true
+  tailscale serve --bg "--https=8443" off >/dev/null 2>&1 || true
   docker rmi "$IMAGE" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
   git -C "$REPO" worktree remove "$WORKTREE" --force >/dev/null 2>&1 || true
@@ -143,6 +169,9 @@ down() {
   local leftover=0
   if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     echo "leftover: container $CONTAINER" >&2; leftover=1
+  fi
+  if docker ps -a --format '{{.Names}}' | grep -qx "$API_CONTAINER"; then
+    echo "leftover: container $API_CONTAINER" >&2; leftover=1
   fi
   if docker images --format '{{.Repository}}:{{.Tag}}' | grep -qx "$IMAGE"; then
     echo "leftover: image $IMAGE" >&2; leftover=1
@@ -156,9 +185,12 @@ down() {
   if tailscale serve status 2>/dev/null | grep -q "$PORT"; then
     echo "leftover: tailscale serve entry on $PORT" >&2; leftover=1
   fi
+  if tailscale serve status 2>/dev/null | grep -q "8443"; then
+    echo "leftover: tailscale serve entry on 8443" >&2; leftover=1
+  fi
 
   if [ "$leftover" -eq 0 ]; then
-    echo "Staging cleaned up — no container, image, volume, worktree or tailscale serve entry on $PORT remains."
+    echo "Staging cleaned up — no container, image, volume, worktree or tailscale serve entry on $PORT/8443 remains."
   else
     echo "ERROR: staging artifacts remain (see above)." >&2
     return 1
