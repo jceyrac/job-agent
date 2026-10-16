@@ -7,7 +7,6 @@ The app runs with `root_path="/api"` (Tailscale strips `/api` before forwarding
 to `127.0.0.1:8601`), so generated URLs (OpenAPI, docs) carry the prefix.
 """
 import os
-import subprocess
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -32,18 +31,9 @@ class HealthResponse(ApiModel):
 
 
 def _git_sha() -> str:
-    """Version = the running image's git SHA (env override, else `git`, else unknown)."""
-    env = os.environ.get("JOB_AGENT_VERSION")
-    if env:
-        return env
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        return out or "unknown"
-    except Exception:
-        return "unknown"
+    """Version = the image's git SHA, baked in at build time via the `GIT_SHA`
+    build arg (the image has no `.git`). Unset → "unknown"."""
+    return os.environ.get("GIT_SHA") or "unknown"
 
 
 def create_app() -> FastAPI:

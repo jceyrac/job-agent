@@ -18,3 +18,9 @@ COPY . .
 RUN pip install --no-deps -e .
 
 RUN mkdir -p /app/data
+
+# Bake the commit SHA into the image so /health can report the running version
+# (the image has no `.git`). Kept last so apt/pip layers stay cached across
+# commits — only this final ENV layer varies with GIT_SHA.
+ARG GIT_SHA
+ENV GIT_SHA=${GIT_SHA}

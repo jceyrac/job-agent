@@ -54,6 +54,20 @@ def test_health(api_env):
     assert isinstance(body["version"], str)
 
 
+def test_health_version_from_env(api_env, monkeypatch):
+    monkeypatch.setenv("GIT_SHA", "deadbeef")
+    r = api_env.client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["version"] == "deadbeef"
+
+
+def test_health_version_unknown_when_unset(api_env, monkeypatch):
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    r = api_env.client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["version"] == "unknown"
+
+
 # ── US3: catalogue ───────────────────────────────────────────────────────────
 
 def test_catalogue_jobs(api_env):

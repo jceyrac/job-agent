@@ -67,7 +67,7 @@ up() {
   echo "Staging commit $sha"
 
   # 2. Build the staging image.
-  docker build -t "$IMAGE" "$WORKTREE"
+  docker build --build-arg GIT_SHA="$sha" -t "$IMAGE" "$WORKTREE"
 
   # 3. Locate the latest backup in the live volume (read-only).
   local jobs_backup checkpoints_backup
