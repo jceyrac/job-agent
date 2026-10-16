@@ -18,7 +18,7 @@ services:
   api:
     build: .
     container_name: job-api
-    command: uvicorn api.main:app --host 127.0.0.1 --port 8601
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8601
     ports:
       - "127.0.0.1:8601:8601"
     volumes:
