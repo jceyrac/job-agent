@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from core.paths import DB_PATH
 from core.storage import JobStorage
@@ -34,6 +35,11 @@ class AuthContext:
 # a single `api` container; the real rate limit arrives with public exposure.
 _last_touch: dict[str, float] = {}
 _failed_auth: dict[str, int] = {}
+
+# OpenAPI security scheme: declares `HTTPBearer` in /api/docs so every /v1 route
+# shows the lock. `auto_error=False` — a missing/non-Bearer header yields None and
+# our own logic below decides the 401/403, never HTTPBearer's default error.
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _now() -> str:
@@ -68,14 +74,17 @@ def get_db(request: Request) -> JobStorage:
 
 
 def get_current_user(
-    request: Request, db: JobStorage = Depends(get_db)
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: JobStorage = Depends(get_db),
 ) -> AuthContext:
-    """Resolve `Authorization: Bearer <token>` to an `AuthContext`, else 401."""
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        _log_failed_auth(request, "missing")
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    token = auth[len("Bearer "):].strip()
+    """Resolve `Authorization: Bearer <token>` to an `AuthContext`, else 401.
+
+    `credentials` comes from `bearer_scheme` (auto_error=False), so a missing or
+    non-Bearer header yields None and we raise our own 401 — HTTPBearer's default
+    error never runs.
+    """
+    token = (credentials.credentials if credentials else "").strip()
     if not token:
         _log_failed_auth(request, "missing")
         raise HTTPException(status_code=401, detail="Missing bearer token")

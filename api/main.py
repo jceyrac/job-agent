@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
         root_path="/api",
         docs_url="/docs",
         openapi_url="/openapi.json",
+        swagger_ui_parameters={"persistAuthorization": False},
     )
 
     @app.get("/health", response_model=HealthResponse)
