@@ -419,10 +419,12 @@ def _set_config(conn, key: str, value: str) -> None:
 # ---------------------------------------------------------------------------
 
 class ProfileNotFoundError(Exception):
-    """A ``profile_id`` does not belong to the bound user (spec 041 isolation).
+    """A ``profile_id`` belongs to another user (spec 041 isolation).
 
     Raised by profile-scoped ``JobStorage`` methods instead of silently returning
-    (or writing) another user's data. The API maps it to 404.
+    (or writing) another user's data. The API maps it to 404. A profile id with
+    no row at all is *not* this error — those return empty results, so the app
+    still works on a fresh install before any profile is seeded (Constitution IX).
     """
 
 
@@ -1525,14 +1527,19 @@ class JobStorage:
                 conn.close()
 
     def _require_profile(self, conn, profile_id: str) -> None:
-        """Raise ``ProfileNotFoundError`` unless ``profile_id`` is a search
-        profile of the bound user (spec 041 — profile-scoped methods must not
-        leak across users)."""
+        """Guard profile-scoped methods against a cross-user leak (spec 041).
+
+        A ``profile_id`` that belongs to the bound user is allowed. A profile
+        that exists under a *different* user raises ``ProfileNotFoundError``
+        (the API maps it to 404). A ``profile_id`` with no row at all is
+        **not** an error — the caller proceeds and returns empty results, so the
+        app still works on a fresh install before any profile is seeded
+        (Constitution IX).
+        """
         row = conn.execute(
-            "SELECT 1 FROM search_profiles WHERE id = ? AND user_id = ?",
-            (profile_id, self.user_id),
+            "SELECT user_id FROM search_profiles WHERE id = ?", (profile_id,)
         ).fetchone()
-        if row is None:
+        if row is not None and row[0] != self.user_id:
             raise ProfileNotFoundError(profile_id)
 
     # ------------------------------------------------------------------

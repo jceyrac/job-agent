@@ -347,6 +347,22 @@ def test_profile_scoped_methods_reject_foreign_profile(two_users):
     assert b.get_profile("prof-b") is not None
 
 
+def test_missing_profile_returns_empty_not_error(tmp_path):
+    """A ``profile_id`` with no ``search_profiles`` row is not a cross-user leak:
+    profile-scoped reads return empty results, so the app still works on a fresh
+    install before any profile is seeded (Constitution IX). Only a profile owned
+    by another user raises ``ProfileNotFoundError``."""
+    db = JobStorage(str(tmp_path / "fresh.db"))  # default user only, no profile
+
+    assert db.get_all_for_tracker("unified_jc") == []
+    assert db.get_digest("unified_jc") == []
+    assert db.get_jobs_for_scoring("unified_jc") == []
+    assert db.get_score_result("job-1", "unified_jc") is None
+    assert db.get_best_score_profile_id("job-1") is None
+    stats = db.get_stats("unified_jc")
+    assert stats["total"] == 0 and stats["scored"] == 0
+
+
 def test_aggregates_user_scoped(two_users):
     """``get_stats(None)``, ``get_best_score_profile_id`` and ``get_database_stats``
     count only the bound user's profiles (``job_scores`` is user space)."""

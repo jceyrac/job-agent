@@ -27,6 +27,7 @@ docker-compose.override.yml
 claude-deepseek.sh
 .DS_Store
 .claude_backup/
+.claude/
 data/jobs.db.pre-*
 outputs/
 data/orp_*.csv

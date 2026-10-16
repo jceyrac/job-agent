@@ -17,7 +17,7 @@ from datetime import date, timedelta
 
 from core.models import JobPosting
 from core.storage import (
-    JobStorage, ProfileNotFoundError, _normalize_company_name, COMPANY_STATUSES, _now,
+    JobStorage, _normalize_company_name, COMPANY_STATUSES, _now,
 )
 from tracker_views.shared import (
     score_badge, company_status_badge, relationship_badge,
@@ -1934,12 +1934,10 @@ def test_get_stats_empty_db():
     assert stats["solid"] == 0
     assert stats["by_status"] == {}
 
-    # A profile that isn't the bound user's raises ProfileNotFoundError (spec 041).
-    try:
-        db.get_stats("no_such_profile")
-        raise AssertionError("Expected ProfileNotFoundError was not raised")
-    except ProfileNotFoundError:
-        pass  # expected
+    # A profile_id with no search_profiles row is not an error (Constitution IX):
+    # it returns empty counts, never ProfileNotFoundError.
+    missing = db.get_stats("no_such_profile")
+    assert missing["total"] == 0 and missing["scored"] == 0
 
 
 # ── Filter tests ─────────────────────────────────────────────────────────────
