@@ -1,9 +1,10 @@
 """API token management CLI (spec 041, FR-004 / FR-013).
 
 The **only** creator/revoker of API tokens in v1 — the API itself never mints
-or revokes tokens. Tokens are read-scoped to `{read:catalogue, read:me}` and
-hashed at rest (only a SHA-256 digest is stored); the raw token is printed
-exactly once by `create` and never persisted.
+or revokes tokens. Tokens carry a subset of `API_TOKEN_SCOPES` (`read:catalogue`,
+`read:me`, `write:me`, `write:catalogue`) and are hashed at rest (only a SHA-256
+digest is stored); the raw token is printed exactly once by `create` and never
+persisted.
 
 Usage:
   python -m scripts.api_token create --name <name> --scopes read:catalogue,read:me \
@@ -93,14 +94,14 @@ def _cmd_revoke(args: argparse.Namespace, db: JobStorage) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="api_token",
-        description="Create/list/revoke scoped read-only API tokens (spec 041).",
+        description="Create/list/revoke scoped API tokens (spec 041/042).",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_create = sub.add_parser("create", help="mint a new token (prints it once)")
     p_create.add_argument("--name", required=True, help="operator label")
     p_create.add_argument("--scopes", required=True,
-                          help="comma-separated subset of read:catalogue,read:me")
+                          help="comma-separated subset of read:catalogue,read:me,write:me,write:catalogue")
     p_create.add_argument("--user", default=None, help="token owner (default: default user)")
     p_create.add_argument("--expires-in", type=int, default=None, metavar="DAYS",
                           help="expire after N days (default: no expiry)")

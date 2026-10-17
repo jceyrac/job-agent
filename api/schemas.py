@@ -9,13 +9,219 @@ internal column fails the contract test instead of leaking (US3-4).
 Only the list envelope scalars (`total`, `limit`, `offset`) are typed `int` —
 they are produced by the API's pagination layer, never read from the DB.
 """
+from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# ── Write request enums (spec 042) — values mirror the `JobStorage` constants ──
+
+class JobStatus(str, Enum):
+    new = "new"
+    queued = "queued"
+    ready = "ready"
+    applied = "applied"
+    interviewing = "interviewing"
+    offer = "offer"
+    rejected = "rejected"
+    withdrawn = "withdrawn"
+    archived = "archived"
+    expired = "expired"
+
+
+class LifecycleEventType(str, Enum):
+    application_submitted = "application_submitted"
+    interview_invited = "interview_invited"
+    interview = "interview"
+    decision_received = "decision_received"
+    withdrawn = "withdrawn"
+
+
+class InteractionType(str, Enum):
+    discovered_on_posting = "discovered_on_posting"
+    discovered_manual = "discovered_manual"
+    outreach_sent = "outreach_sent"
+    reply_received = "reply_received"
+    intro_received = "intro_received"
+    call = "call"
+    meeting = "meeting"
+    application_submitted = "application_submitted"
+    interview_invited = "interview_invited"
+    interview = "interview"
+    decision_received = "decision_received"
+    withdrawn = "withdrawn"
+    note = "note"
+
+
+class InteractionDirection(str, Enum):
+    inbound = "inbound"
+    outbound = "outbound"
+    none = "none"
+
+
+class InteractionOutcome(str, Enum):
+    positive = "positive"
+    negative = "negative"
+
+
+class CompanyStatus(str, Enum):
+    prospect = "prospect"
+    watching = "watching"
+    active_outreach = "active_outreach"
+    engaged = "engaged"
+    dormant = "dormant"
+    passed_by_me = "passed_by_me"
+    declined_by_them = "declined_by_them"
+    blacklisted = "blacklisted"
+
+
+# ── write request models (spec 042) ───────────────────────────────────────────
+
+# Statuses the tracker routes through `record_lifecycle_event` with a user-chosen
+# date (tracker_views/job_helpers.py `_LIFECYCLE_ACTIONS`) — never `set_status`.
+LIFECYCLE_STATUSES = frozenset(
+    {"applied", "interviewing", "offer", "rejected", "withdrawn"}
+)
+
+
+class StatusUpdate(ApiModel):
+    status: JobStatus
+    occurred_at: str | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def _require_date_for_lifecycle(self):
+        if self.status.value in LIFECYCLE_STATUSES and self.occurred_at is None:
+            raise ValueError("occurred_at is required for lifecycle statuses")
+        return self
+
+
+class LifecycleEventCreate(ApiModel):
+    event: LifecycleEventType
+    occurred_at: str
+    new_status: JobStatus
+    outcome: InteractionOutcome | None = None
+    notes: str | None = None
+
+
+class LifecycleEventUpdate(ApiModel):
+    occurred_at: str | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        if self.occurred_at is None and self.notes is None:
+            raise ValueError("provide at least one of occurred_at or notes")
+        return self
+
+
+# ── write request models — US2 (companies, contacts, interactions) ──────────
+
+class CompanyRelationshipUpdate(ApiModel):
+    status: CompanyStatus | None = None
+    notes: str | None = None
+    monitored: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        if self.status is None and self.notes is None and self.monitored is None:
+            raise ValueError("provide at least one of status, notes, or monitored")
+        return self
+
+
+class ContactCreate(ApiModel):
+    company_id: int
+    linkedin_url: str | None = None
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    role_title: str | None = None
+    role_family: str | None = None
+    seniority: str | None = None
+    email_status: str | None = None
+    email_confidence: float | None = None
+    x_handle: str | None = None
+    telegram_handle: str | None = None
+    github_handle: str | None = None
+    phone: str | None = None
+    is_unverified: bool = False
+    notes: str | None = None
+
+
+class ContactUpdate(ApiModel):
+    is_unverified: bool | None = None
+    last_verified_at: str | None = None
+    is_current: bool | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        if all(
+            v is None
+            for v in (self.is_unverified, self.last_verified_at, self.is_current, self.notes)
+        ):
+            raise ValueError("provide at least one field")
+        return self
+
+
+class InteractionCreate(ApiModel):
+    type: InteractionType
+    contact_id: int | None = None
+    job_id: str | None = None
+    direction: InteractionDirection = InteractionDirection.none
+    outcome: InteractionOutcome | None = None
+    subject: str | None = None
+    body_excerpt: str | None = None
+    occurred_at: str | None = None
+    follow_up_due_at: str | None = None
+
+
+# ── write request models — US3 (profile) ──────────────────────────────────────
+
+class ActiveProfileUpdate(ApiModel):
+    profile_id: str
+
+
+class ProfileUpdate(ApiModel):
+    name: str
+    criteria: dict
+
+
+# ── write request models — US4 (catalogue company facts) ─────────────────────
+
+class CompanyFactUpdate(ApiModel):
+    """Fact fields only — `notes`/`status`/`monitored` are absent and rejected as
+    unknown fields by `extra="forbid"` (they are user-space, never catalogue)."""
+    name: str | None = None
+    website: str | None = None
+    company_country: str | None = None
+    industry_sector: str | None = None
+    company_size: str | None = None
+    x_handle: str | None = None
+    careers_url: str | None = None
+    ats_provider: str | None = None
+    ats_identifier: str | None = None
+    scraping_method: str | None = None
+    research_notes: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        if all(
+            v is None
+            for v in (
+                self.name, self.website, self.company_country, self.industry_sector,
+                self.company_size, self.x_handle, self.careers_url, self.ats_provider,
+                self.ats_identifier, self.scraping_method, self.research_notes,
+            )
+        ):
+            raise ValueError("provide at least one company fact field")
+        return self
 
 
 # ── Catalogue ────────────────────────────────────────────────────────────────
@@ -334,6 +540,11 @@ class CompanyDetailResponse(ApiModel):
     relationship: RelationshipSummary
     contacts: list["Contact"]
     interactions: list["Interaction"]
+
+
+class CompanyRelationshipResponse(ApiModel):
+    company: CompanyByDetail
+    relationship: RelationshipSummary
 
 
 # ── read:me — contacts ───────────────────────────────────────────────────────

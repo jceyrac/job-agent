@@ -61,8 +61,8 @@ INTERACTION_TYPES = frozenset({
 INTERACTION_DIRECTIONS = frozenset({"inbound", "outbound", "none"})
 INTERACTION_OUTCOMES = frozenset({"positive", "negative"})
 
-# Scopes a v1 API token may carry (spec 041). Read-only catalogue vs bound-user space.
-API_TOKEN_SCOPES = frozenset({"read:catalogue", "read:me"})
+# Scopes a v1 API token may carry (spec 041/042). Read + write, catalogue vs user.
+API_TOKEN_SCOPES = frozenset({"read:catalogue", "read:me", "write:me", "write:catalogue"})
 
 _LEGAL_SUFFIXES = {
     "ag", "gmbh", "sa", "sarl", "inc", "ltd",

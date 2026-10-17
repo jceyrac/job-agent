@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.storage import ProfileNotFoundError
 from api.deps import get_user_db, require_scope
+from api.middleware import RequestSizeLimitMiddleware
 from api.routers import catalogue, me
 from api.schemas import ApiModel
 
@@ -22,6 +23,8 @@ _ERROR_CODES = {
     401: "unauthorized",
     403: "forbidden",
     404: "not_found",
+    413: "payload_too_large",
+    422: "validation_error",
 }
 
 
@@ -45,6 +48,7 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         swagger_ui_parameters={"persistAuthorization": False},
     )
+    app.add_middleware(RequestSizeLimitMiddleware)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
