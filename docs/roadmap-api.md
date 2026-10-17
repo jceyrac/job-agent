@@ -70,14 +70,14 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | # | Étape | Contenu | Jours |
 |---|-------|---------|-------|
 | 3 | Séparation des espaces ✅ (fait 2026-10-13) | Table `users` (1 ligne), `user_id` sur tracking/history/applications/interactions/contacts, `user_companies`, backfill ; anciennes colonnes conservées — **spec 039** | 3–5 |
-| 4 | Périmètre d'ingestion plateforme ← prochaine | Gate titre → Tier 0 scoring ; config plateforme ; surveiller volume d'extraction LLM dans `runs` | 2–3 |
+| 4 | Périmètre d'ingestion plateforme ✅ (fait 2026-10-15) | Gate titre → Tier 0 scoring ; config plateforme ; surveiller volume d'extraction LLM dans `runs` | 2–3 |
 
 ### Phase C — API en parallèle (additive)
 
 | # | Étape | Contenu | Jours |
 |---|-------|---------|-------|
-| 5 | API lecture | Service `api` (Tailscale, port 8601), tokens à scopes stockés hachés, `/v1/jobs`, `/v1/me/feed`, `/v1/me/jobs/{id}`, `/v1/me/companies`, `/v1/me/contacts`, `/v1/me/applications` — **spec 041** | 4–6 |
-| 6 | API écriture + tâches | Découpée en deux (décision 2026-10-17) : **partie 1 — spec 042**, routes d'écriture synchrones de l'espace utilisateur (statut, cycle de vie, relation entreprise, contacts, interactions, profil) + faits entreprise sous `write:catalogue`, mêmes effets que le tracker ; **partie 2 — spec 043**, file de tâches + worker + progression SSE, les boutons du tracker passent par la file (ancienne étape 2b). L'étape 6b suit la partie 2 | 5–8 |
+| 5 | API lecture ✅ (fait 2026-10-17) | Service `api` (Tailscale, port 8601), tokens à scopes stockés hachés, `/v1/jobs`, `/v1/me/feed`, `/v1/me/jobs/{id}`, `/v1/me/companies`, `/v1/me/contacts`, `/v1/me/applications` — **spec 041** | 4–6 |
+| 6 | API écriture + tâches | Découpée en deux (décision 2026-10-17) : **partie 1 — spec 042** ✅ (fait 2026-10-17), routes d'écriture synchrones de l'espace utilisateur (statut, cycle de vie, relation entreprise, contacts, interactions, profil) + faits entreprise sous `write:catalogue`, mêmes effets que le tracker ; **partie 2 — spec 043** ← prochaine, file de tâches + worker + progression SSE, les boutons du tracker passent par la file (ancienne étape 2b). L'étape 6b suit la partie 2 | 5–8 |
 | 6b | Agents via l'API | Le cv_agent (puis les autres agents) lit le job et écrit ses documents de candidature par l'API (token à scopes), plus aucun import de `core` hors `llm`/`paths` côté agent ; la garde de frontière (spec 036) est resserrée en conséquence. Prérequis de l'étape 9 | 2–4 |
 | 7 | Ingestion via API | `core/scrape.py` → `/ingest/batch` derrière `INGEST_VIA_API` ; `BaseScraper` sans `JobStorage` ; une nuit en double pour comparer | 4–6 |
 
@@ -89,7 +89,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | 9 | Chat CV agent | Nœud d'édition ciblée dans le graphe, sessions `cv-sessions` streamées (SSE), page de session dans `web/` (aperçu cliquable + chat + révisions). Dès l'étape 6 + une fiche job dans `web/` ; en parallèle de l'étape 8 | 6–10 |
 | 10 | Contraction | Suppression des anciennes colonnes ; **retrait complet de Streamlit** (`tracker.py`, `tracker_views/`, dépendance `streamlit`, service `tracker` du compose) une fois toutes les pages migrées | 2–3 |
 
-**Total : ~50–79 jours de travail**, chat CV et passage des agents par l'API inclus (réestimé le 2026-10-09 ; l'ancien total de 42–65 n'incluait ni l'étape 9 ni l'étape 6b). Mesure à date : étapes 0 à 3 faites (0–1c en ~6 jours de calendrier, conforme aux estimations ; 3 — séparation des espaces — clos le 2026-10-13). Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
+**Total : ~50–79 jours de travail**, chat CV et passage des agents par l'API inclus (réestimé le 2026-10-09 ; l'ancien total de 42–65 n'incluait ni l'étape 9 ni l'étape 6b). Mesure à date : étapes 0 à 5 faites + 6-partie-1 (042) — 0–1c en ~6 jours de calendrier ; 3 clos le 2026-10-13, 4 (040) le 2026-10-15, 5 (041) et 6-partie-1 (042) le 2026-10-17 ; 6-partie-2 (043) en cours. Chaque étape laisse un système en production ; arrêt possible après n'importe laquelle.
 
 ## Points ouverts
 

@@ -116,12 +116,12 @@
 - [X] T024 [US5] Regenerate `api/openapi.json` (deliberately) and make `tests/test_api_openapi.py` green — the new write routes appear with `security: [{HTTPBearer: []}]`.
 - [X] T025 [US5] Update the API section of `CLAUDE.md` (write scopes + write routes + `write:catalogue` fact fields).
 - [X] T026 [US5] Add the CSRF note to `docs/api-exposure.md` (bearer-only today; revisit with cookie sessions).
-- [ ] T027 [US5] Staging round-trip (quickstart §8) — **STOP before this step**:
+- [X] T027 [US5] Staging round-trip (quickstart §8) — **STOP before this step**:
   1. Stage the **exact SHA** with the **branch's** `scripts/staging.sh up <full-sha>` (never the branch name); confirm `/api/health` version == staged SHA.
   2. Mint a staging `write:me` token **on the staging volume** (never printed in logs).
   3. From the Mac, exercise **each** write route once with that token; confirm each effect is visible in the staging tracker, and a tracker-side write is visible through the API.
   4. Confirm tracker parity vs the **prod image** is byte-identical **before** any API write on staging.
-- [ ] T028 [US5] Deploy — **STOP before this step; deploy outside 07:00/11:00/16:00**:
+- [X] T028 [US5] Deploy — **STOP before this step; deploy outside 07:00/11:00/16:00**:
   `./scripts/deploy.sh` → `/api/health` version == staged SHA; tracker + next cron unaffected; **no production write token created by default** (mint one only when a client needs it).
 
 ---

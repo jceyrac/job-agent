@@ -149,7 +149,7 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 - **Locations:** `core/paths.py` is the single source of truth for every path (`PROJECT_ROOT`, `DATA_DIR`, `DB_PATH`, `OUTPUT_DIR`, `ENV_PATH`, `data_path()`). Env overrides: `JOB_AGENT_DATA_DIR` (data dir), `JOB_AGENT_OUTPUT_DIR` (outputs dir); `JOB_AGENT_REQUIRE_DB=1` makes `import core.paths` refuse startup (no dir/DB created) if the DB is missing. Rule: locations come from `core/paths.py` only — never derive `data`/`outputs`/`.env` from `__file__` or a CWD-relative `"data/…"` literal; scripts are launched as modules (`-m <module>`, e.g. `python -m core.scrape`), never by `.py` filename.
 - **LLM:** DeepSeek only (`deepseek-chat`), configured in `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) and called exclusively through `llm.call()`.
 - **Deploy:** `git push` on Mac → `scripts/deploy.sh` on server (git pull, rebuild all images, restart).
-- **Release process** (every step — branch → staging → ff-only merge → deploy → SHA check): work on a spec branch; validate the **exact SHA** on staging (`scripts/staging.sh up <full-sha>`, never the branch name); `git merge --ff-only <full-sha>` onto `main` (refuse non-ff); `./scripts/deploy.sh` on verva, then `tailscale serve --bg --tcp=8501 tcp://127.0.0.1:8501`; confirm `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA. See `docs/migration-checklist.md`.
+- **Release process** (every step — branch → staging → ff-only merge → deploy → SHA check): work on a spec branch; validate the **exact SHA** on staging (`scripts/staging.sh up <full-sha>`, never the branch name); `git merge --ff-only <full-sha>` onto `main` (refuse non-ff); `./scripts/deploy.sh` on verva; verify `tailscale serve status` still lists `tcp 8501` and `https 443 /api` (persistent config — no re-run needed); confirm `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA. See `docs/migration-checklist.md`.
 
 ---
 
@@ -249,13 +249,12 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-14)
+## Current focus (as of 2026-10-17)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Step 3 (séparation des espaces)
-shipped to prod (2026-10-14); next: step 4 (périmètre d'ingestion plateforme —
-gate titre → Tier 0 scoring), specified as `specs/040-platform-ingestion-scope/`
-(plan.md / research.md — no backfill, byte-identical parity + expected-change check
-after the first scoring run; FR-006 also drops the scoring pre-filter title clauses).
+**API migration roadmap** — `docs/roadmap-api.md`. Steps 3–5 shipped (039 user-space
+separation → 040 platform ingestion scope → 041 read API) and step 6-partie-1 (042 write
+API) shipped to prod (2026-10-17). Next: **step 6-partie-2 — spec 043** (`specs/043-task-queue/`),
+the `tasks` table + worker + SSE progression; the tracker's launch buttons move onto the queue.
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,

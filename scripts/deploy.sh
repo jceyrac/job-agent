@@ -15,6 +15,12 @@ if [ "${DEPLOY_REEXEC:-0}" != "1" ]; then
     exec bash "$0" "$@"
 fi
 
+echo "=== Checking no staging environment is running ==="
+# Refuse to deploy while staging containers are up (they share the tailnet and
+# repo). The guard reads `docker ps` names on stdin and exits 1 if any
+# job-agent-staging* container is present; `set -e` then aborts the deploy.
+docker ps --format '{{.Names}}' | scripts/guard_staging_down.sh
+
 echo "=== Backing up live DB (pre-deploy safety net) ==="
 # Copy the freshly-pulled stdlib backup script into the running container (the
 # running image may predate this script on the first deploy) and take a verified

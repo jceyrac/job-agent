@@ -17,7 +17,8 @@ validated on staging.
    `git checkout main && git pull --ff-only && git merge --ff-only <full-sha> && git push origin main`.
    Refuse anything that is not fast-forward.
 4. **Deploy** — on verva: `./scripts/deploy.sh` (git pull + pre-rebuild backup + rebuild +
-   restart), then `tailscale serve --bg --tcp=8501 tcp://127.0.0.1:8501`.
+   restart); verify `tailscale serve status` still lists `tcp 8501` and `https 443 /api`
+   (the config is persistent — no re-run needed).
 5. **SHA check** — `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA; health check
    OK; parity green.
 
