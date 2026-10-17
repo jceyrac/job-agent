@@ -295,3 +295,536 @@ def test_catalogue_scope_rejected_for_me_token(api_env):
     tok = api_env.make_token(["read:me"])
     r = api_env.client.get("/v1/jobs", headers=_auth(tok))
     assert r.status_code == 403
+
+
+# ── spec 042 write contracts (US1 — jobs & lifecycle) ────────────────────────
+#
+# For each route, drive the API on one copy of the seeded DB and the matching
+# `JobStorage` method(s) on an identical copy, then assert the user-space rows
+# (`job_tracking` / `status_history` / `interactions`) are byte-identical.
+# `changed_at`/`created_at` are wall-clock (`_now()`) and differ between the two
+# writes, so they are dropped from the comparison.
+
+import logging
+import shutil
+import sqlite3
+from datetime import date
+
+from core.profiles import SearchProfile
+from core.storage import JobStorage
+
+
+def _copy_db(src_path, tmp_path, name):
+    dest = str(tmp_path / name)
+    shutil.copy(src_path, dest)
+    return dest
+
+
+def _write_snapshot(path):
+    """User-space rows a write touches, ordered deterministically, timestamps dropped."""
+    conn = sqlite3.connect(path)
+    snap = {
+        "job_tracking": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, job_id, status, notes FROM job_tracking ORDER BY user_id, job_id"
+            )
+        ],
+        "status_history": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, job_id, status FROM status_history ORDER BY id"
+            )
+        ],
+        "interactions": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, company_id, job_id, type, direction, outcome, "
+                "notes, source, source_ref FROM interactions ORDER BY id"
+            )
+        ],
+    }
+    conn.close()
+    return snap
+
+
+def test_write_status_lifecycle_contract(api_env, tmp_path):
+    """A lifecycle status goes through `record_lifecycle_event` (not `set_status`),
+    so the event is dated by the client and `source='manual'` — byte-identical to
+    the tracker's `_confirm_lifecycle` mapping (FR-002)."""
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    r = api_env.client.put(
+        "/v1/me/jobs/job-2/status",
+        json={"status": "applied", "occurred_at": "2026-01-05"},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "applied"
+
+    direct.record_lifecycle_event(
+        "job-2", event="application_submitted", occurred_at="2026-01-05", new_status="applied"
+    )
+
+    assert _write_snapshot(api_env.path) == _write_snapshot(direct_path)
+
+    # No today-dated back-fill: the only lifecycle event is the client's date.
+    events = api_env.db.get_lifecycle_events("job-2")
+    assert [e["occurred_at"] for e in events] == ["2026-01-05"]
+    assert all(e["occurred_at"] != date.today().isoformat() for e in events)
+
+
+def test_write_status_nonlifecycle_contract(api_env, tmp_path):
+    """Non-lifecycle statuses still go through `set_status` (no date required)."""
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    r = api_env.client.put(
+        "/v1/me/jobs/job-1/status",
+        json={"status": "queued", "notes": "via api"},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"
+
+    direct.set_status("job-1", "queued", "via api")
+
+    assert _write_snapshot(api_env.path) == _write_snapshot(direct_path)
+
+
+def test_write_status_lifecycle_requires_occurred_at_422(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.put(
+        "/v1/me/jobs/job-2/status", json={"status": "applied"}, headers=_auth(tok)
+    )
+    assert r.status_code == 422
+    assert r.json() == {"error": "validation_error", "message": "Invalid request"}
+
+
+def test_write_event_create_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    body = {"event": "interview_invited", "occurred_at": "2026-02-01", "new_status": "interviewing"}
+    r = api_env.client.post("/v1/me/jobs/job-1/events", json=body, headers=_auth(tok))
+    assert r.status_code == 200
+    # `occurred_at` passes through verbatim — the API never defaults it to "now".
+    assert any(
+        e["type"] == "interview_invited" and e["occurred_at"] == "2026-02-01"
+        for e in r.json()
+    )
+
+    direct.record_lifecycle_event(
+        "job-1", event="interview_invited", occurred_at="2026-02-01", new_status="interviewing"
+    )
+
+    assert _write_snapshot(api_env.path) == _write_snapshot(direct_path)
+
+
+def test_write_event_patch_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    event_id = api_env.db.get_lifecycle_events("job-1")[0]["id"]
+
+    r = api_env.client.patch(
+        f"/v1/me/jobs/job-1/events/{event_id}",
+        json={"notes": "patched"},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 200
+
+    direct.update_lifecycle_event(event_id, notes="patched")
+    direct.reconcile_lifecycle_status("job-1")
+
+    assert _write_snapshot(api_env.path) == _write_snapshot(direct_path)
+
+
+def test_write_event_delete_contract(api_env, tmp_path):
+    # Delete the event that drives `interviewing` → reconcile reverts to `applied`.
+    tok = api_env.make_token(["write:me"])
+    api_env.db.record_lifecycle_event(
+        "job-1", event="interview_invited", occurred_at="2026-02-01", new_status="interviewing"
+    )
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    event_id = next(
+        e["id"] for e in api_env.db.get_lifecycle_events("job-1") if e["type"] == "interview_invited"
+    )
+
+    r = api_env.client.delete(
+        f"/v1/me/jobs/job-1/events/{event_id}", headers=_auth(tok)
+    )
+    assert r.status_code == 204
+
+    direct.delete_lifecycle_event(event_id)
+    direct.reconcile_lifecycle_status("job-1")
+
+    assert _write_snapshot(api_env.path) == _write_snapshot(direct_path)
+
+
+def test_write_event_create_missing_occurred_at_422(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.post(
+        "/v1/me/jobs/job-1/events",
+        json={"event": "interview_invited", "new_status": "interviewing"},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 422
+    assert r.json() == {"error": "validation_error", "message": "Invalid request"}
+
+
+def test_write_status_unknown_job_404(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.put(
+        "/v1/me/jobs/nope/status",
+        json={"status": "applied", "occurred_at": "2026-01-05"},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not_found", "message": "Job not found"}
+
+
+def test_write_event_unknown_event_404(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.patch(
+        "/v1/me/jobs/job-1/events/9999", json={"notes": "x"}, headers=_auth(tok)
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not_found", "message": "Event not found"}
+
+
+# ── spec 042 write contracts (US2 — companies, contacts, interactions) ───────
+
+def _us2_snapshot(path):
+    """Company-relationship / contact / interaction rows, timestamps dropped."""
+    conn = sqlite3.connect(path)
+    snap = {
+        "user_companies": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, company_id, status, notes, monitored FROM user_companies "
+                "ORDER BY user_id, company_id"
+            )
+        ],
+        "company_status_history": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, company_id, status, note FROM company_status_history ORDER BY id"
+            )
+        ],
+        "contacts": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, company_id, first_name, last_name, full_name, role_title, "
+                "role_family, seniority, email, email_status, email_confidence, linkedin_url, "
+                "x_handle, telegram_handle, github_handle, phone, is_current, is_unverified, "
+                "last_verified_at, notes FROM contacts ORDER BY id"
+            )
+        ],
+        "interactions": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, company_id, contact_id, job_id, type, direction, outcome, "
+                "subject, body_excerpt, follow_up_due_at, notes, source, source_ref "
+                "FROM interactions ORDER BY id"
+            )
+        ],
+    }
+    conn.close()
+    return snap
+
+
+def test_write_company_relationship_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    r = api_env.client.patch(
+        "/v1/me/companies/1",
+        json={"status": "blacklisted", "notes": "nope", "monitored": True},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 200
+    assert r.json()["company"]["status"] == "blacklisted"
+    assert r.json()["company"]["monitored"] == 1
+    assert r.json()["company"]["notes"] == "nope"
+
+    direct.set_company_status(1, "blacklisted")
+    direct.update_company_fields(1, {"notes": "nope"})
+    direct.set_company_monitored(1, True)
+
+    assert _us2_snapshot(api_env.path) == _us2_snapshot(direct_path)
+
+
+def test_write_contact_create_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    body = {
+        "company_id": 2,
+        "first_name": "Jane",
+        "last_name": "Roe",
+        "email": "jane@example.com",
+        "linkedin_url": "https://linkedin.com/in/jane",
+    }
+    r = api_env.client.post("/v1/me/contacts", json=body, headers=_auth(tok))
+    assert r.status_code == 200
+    assert r.json()["first_name"] == "Jane"
+
+    direct.upsert_contact(
+        company_id=2, first_name="Jane", last_name="Roe",
+        email="jane@example.com", linkedin_url="https://linkedin.com/in/jane",
+    )
+
+    assert _us2_snapshot(api_env.path) == _us2_snapshot(direct_path)
+
+
+def test_write_contact_upsert_merge(api_env):
+    tok = api_env.make_token(["write:me"])
+    body = {"company_id": 1, "linkedin_url": "https://linkedin.com/in/john", "first_name": "John"}
+    r1 = api_env.client.post("/v1/me/contacts", json=body, headers=_auth(tok))
+    assert r1.status_code == 200
+    cid = r1.json()["id"]
+
+    # Same linkedin_url → merge into the same id (no 409, no new row).
+    r2 = api_env.client.post(
+        "/v1/me/contacts",
+        json={"company_id": 1, "linkedin_url": "https://linkedin.com/in/john", "last_name": "Doe"},
+        headers=_auth(tok),
+    )
+    assert r2.status_code == 200
+    assert r2.json()["id"] == cid
+    assert len(api_env.db.get_all_contacts()) == 2  # seeded + this one, no duplicate
+
+
+def test_write_contact_update_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    r = api_env.client.patch(
+        "/v1/me/contacts/1", json={"notes": "updated", "is_unverified": True}, headers=_auth(tok)
+    )
+    assert r.status_code == 200
+
+    direct.update_contact_fields(1, {"notes": "updated", "is_unverified": True})
+
+    assert _us2_snapshot(api_env.path) == _us2_snapshot(direct_path)
+
+
+def test_write_contact_interaction_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    body = {"type": "outreach_sent", "direction": "outbound", "occurred_at": "2026-03-01"}
+    r = api_env.client.post("/v1/me/contacts/1/interactions", json=body, headers=_auth(tok))
+    assert r.status_code == 201
+
+    direct.log_interaction(
+        company_id=1, contact_id=1, type="outreach_sent", direction="outbound",
+        occurred_at="2026-03-01",
+    )
+
+    assert _us2_snapshot(api_env.path) == _us2_snapshot(direct_path)
+
+
+def test_write_company_interaction_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    body = {"type": "call", "direction": "outbound", "occurred_at": "2026-03-02"}
+    r = api_env.client.post("/v1/me/companies/1/interactions", json=body, headers=_auth(tok))
+    assert r.status_code == 201
+
+    direct.log_interaction(company_id=1, contact_id=None, type="call", direction="outbound", occurred_at="2026-03-02")
+
+    assert _us2_snapshot(api_env.path) == _us2_snapshot(direct_path)
+
+
+def test_write_contact_unknown_company_404(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.post(
+        "/v1/me/contacts", json={"company_id": 999, "first_name": "X"}, headers=_auth(tok)
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not_found", "message": "Company not found"}
+
+
+# ── spec 042 write contracts (US3 — profile) ──────────────────────────────────
+
+def _profile_snapshot(path):
+    """Profile rows + active-profile pointer + score rows (should not change)."""
+    conn = sqlite3.connect(path)
+    snap = {
+        "search_profiles": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT id, user_id, name, criteria FROM search_profiles ORDER BY id"
+            )
+        ],
+        "active_profile": [
+            tuple(r)
+            for r in conn.execute("SELECT id, active_profile_id FROM users ORDER BY id")
+        ],
+        "job_scores": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT job_id, profile_id, score, reason, scored_by, scored_at "
+                "FROM job_scores ORDER BY job_id, profile_id"
+            )
+        ],
+    }
+    conn.close()
+    return snap
+
+
+def test_write_active_profile_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    r = api_env.client.put(
+        "/v1/me/active-profile", json={"profile_id": "prof-b"}, headers=_auth(tok)
+    )
+    assert r.status_code == 204
+
+    direct.set_active_profile_id("prof-b")
+
+    assert _profile_snapshot(api_env.path) == _profile_snapshot(direct_path)
+
+
+def test_write_profile_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    body = {"name": "Renamed", "criteria": {"allowed_geo_zones": ["fr"], "job_titles": ["product manager"]}}
+    r = api_env.client.put("/v1/me/profiles/prof-a", json=body, headers=_auth(tok))
+    assert r.status_code == 200
+    assert r.json()["name"] == "Renamed"
+
+    direct.upsert_profile(SearchProfile.from_criteria("prof-a", "Renamed", body["criteria"]))
+
+    # Identical rows — and no score rows were written (scoring is spec 043).
+    assert _profile_snapshot(api_env.path) == _profile_snapshot(direct_path)
+
+
+def test_write_profile_unknown_404(api_env):
+    tok = api_env.make_token(["write:me"])
+
+    # Missing profile → 404 for both routes (no create-with-new-id, no 403).
+    assert (
+        api_env.client.put(
+            "/v1/me/active-profile", json={"profile_id": "nope"}, headers=_auth(tok)
+        ).status_code
+        == 404
+    )
+    assert (
+        api_env.client.put(
+            "/v1/me/profiles/nope", json={"name": "X", "criteria": {}}, headers=_auth(tok)
+        ).status_code
+        == 404
+    )
+
+
+# ── spec 042 write contracts (US4 — catalogue company facts) ─────────────────
+
+def _company_facts_snapshot(path):
+    conn = sqlite3.connect(path)
+    snap = [
+        tuple(r)
+        for r in conn.execute(
+            "SELECT id, name, website, company_country, industry_sector, company_size, "
+            "x_handle, careers_url, ats_provider, ats_identifier, scraping_method, "
+            "research_notes FROM companies ORDER BY id"
+        )
+    ]
+    conn.close()
+    return snap
+
+
+def test_write_company_facts_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:catalogue"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    r = api_env.client.patch(
+        "/v1/companies/1",
+        json={"website": "https://alpha.example.com", "company_size": "scaleup"},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 200
+    assert r.json()["website"] == "https://alpha.example.com"
+
+    direct.update_company_fields(
+        1, {"website": "https://alpha.example.com", "company_size": "scaleup"}
+    )
+
+    assert _company_facts_snapshot(api_env.path) == _company_facts_snapshot(direct_path)
+
+
+def test_write_company_facts_unknown_company_404(api_env):
+    tok = api_env.make_token(["write:catalogue"])
+    r = api_env.client.patch(
+        "/v1/companies/999", json={"website": "https://x.example.com"}, headers=_auth(tok)
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not_found", "message": "Company not found"}
+
+
+def test_write_company_facts_reject_relationship_field_422(api_env):
+    # `notes`/`status`/`monitored` are user-space, not catalogue facts → 422.
+    tok = api_env.make_token(["write:catalogue"])
+    r = api_env.client.patch("/v1/companies/1", json={"notes": "x"}, headers=_auth(tok))
+    assert r.status_code == 422
+    assert r.json() == {"error": "validation_error", "message": "Invalid request"}
+
+
+# ── spec 042 write safety (US4 — body cap, validation, write log) ────────────
+
+def test_write_body_over_64kb_413(api_env):
+    tok = api_env.make_token(["write:me"])
+    big = {"status": "applied", "notes": "x" * 70000}
+    r = api_env.client.put("/v1/me/jobs/job-1/status", json=big, headers=_auth(tok))
+    assert r.status_code == 413
+    assert r.json() == {"error": "payload_too_large", "message": "Request body too large"}
+
+
+def test_write_unknown_field_422(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.put(
+        "/v1/me/jobs/job-1/status", json={"status": "applied", "bogus": 1}, headers=_auth(tok)
+    )
+    assert r.status_code == 422
+    assert r.json() == {"error": "validation_error", "message": "Invalid request"}
+
+
+def test_write_log_emits_one_line_no_body_or_token(api_env, caplog):
+    raw = api_env.make_token(["write:me"])
+    row = api_env.db.resolve_api_token(raw)
+
+    with caplog.at_level(logging.INFO, logger="api.write"):
+        r = api_env.client.put(
+            "/v1/me/jobs/job-1/status",
+            json={"status": "queued", "notes": "secret-body"},
+            headers=_auth(raw),
+        )
+    assert r.status_code == 200
+
+    lines = [ln for ln in caplog.text.splitlines() if "write_ok" in ln]
+    assert len(lines) == 1
+    assert f"token_id={row['id']}" in lines[0]
+    assert "user_id=user-a" in lines[0]
+    assert "status=200" in lines[0]
+    assert "secret-body" not in caplog.text
+    assert raw not in caplog.text

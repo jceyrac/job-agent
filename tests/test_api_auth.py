@@ -38,7 +38,9 @@ def _auth(token: str) -> dict:
 # ── scope constants (FR-004) ─────────────────────────────────────────────────
 
 def test_api_token_scopes_are_fixed():
-    assert API_TOKEN_SCOPES == frozenset({"read:catalogue", "read:me"})
+    assert API_TOKEN_SCOPES == frozenset(
+        {"read:catalogue", "read:me", "write:me", "write:catalogue"}
+    )
 
 
 # ── 401 semantics (FR-005) ───────────────────────────────────────────────────
@@ -176,3 +178,55 @@ def test_cli_invalid_scope_and_days(api_env, tmp_path):
 
     p = _run_cli(tmp_path, "create", "--name", "bad", "--scopes", "read:me", "--expires-in", "0")
     assert p.returncode == 2
+
+
+# ── spec 042 scope enforcement on write routes (FR-005 / US4) ────────────────
+
+_WRITE_ME_ROUTES = [
+    ("PUT", "/v1/me/jobs/job-1/status", {"status": "applied", "occurred_at": "2026-01-05"}),
+    ("POST", "/v1/me/jobs/job-1/events",
+     {"event": "application_submitted", "occurred_at": "2026-01-05", "new_status": "applied"}),
+    ("PATCH", "/v1/me/jobs/job-1/events/1", {"notes": "x"}),
+    ("DELETE", "/v1/me/jobs/job-1/events/1", None),
+    ("PATCH", "/v1/me/companies/1", {"status": "blacklisted"}),
+    ("POST", "/v1/me/contacts", {"company_id": 1, "first_name": "X"}),
+    ("PATCH", "/v1/me/contacts/1", {"notes": "x"}),
+    ("POST", "/v1/me/contacts/1/interactions", {"type": "call"}),
+    ("POST", "/v1/me/companies/1/interactions", {"type": "call"}),
+    ("PUT", "/v1/me/active-profile", {"profile_id": "prof-a"}),
+    ("PUT", "/v1/me/profiles/prof-a", {"name": "X", "criteria": {}}),
+]
+
+
+@pytest.mark.parametrize("method,path,body", _WRITE_ME_ROUTES)
+def test_read_only_token_403_on_write_me_route(api_env, method, path, body):
+    tok = api_env.make_token(["read:me"])
+    r = api_env.client.request(method, path, json=body, headers=_auth(tok))
+    assert r.status_code == 403
+    assert r.json() == {"error": "forbidden", "message": "Insufficient scope"}
+
+
+def test_read_only_token_403_on_catalogue_write(api_env):
+    tok = api_env.make_token(["read:catalogue"])
+    r = api_env.client.patch(
+        "/v1/companies/1", json={"website": "https://example.com"}, headers=_auth(tok)
+    )
+    assert r.status_code == 403
+    assert r.json() == {"error": "forbidden", "message": "Insufficient scope"}
+
+
+def test_write_me_token_403_on_catalogue_write(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.patch(
+        "/v1/companies/1", json={"website": "https://example.com"}, headers=_auth(tok)
+    )
+    assert r.status_code == 403
+    assert r.json() == {"error": "forbidden", "message": "Insufficient scope"}
+
+
+@pytest.mark.parametrize("method,path,body", _WRITE_ME_ROUTES)
+def test_write_catalogue_token_403_on_write_me_route(api_env, method, path, body):
+    tok = api_env.make_token(["write:catalogue"])
+    r = api_env.client.request(method, path, json=body, headers=_auth(tok))
+    assert r.status_code == 403
+    assert r.json() == {"error": "forbidden", "message": "Insufficient scope"}

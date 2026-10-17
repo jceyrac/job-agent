@@ -600,3 +600,164 @@ def test_api_feed_foreign_profile_404_and_stats_scoped(two_users):
     stats_b = client.get("/v1/me/stats", headers=hb).json()
     assert (stats_a["scored"], stats_a["hot"]) == (2, 1)
     assert (stats_b["scored"], stats_b["hot"]) == (1, 0)
+
+
+# ── Isolation: spec 042 write routes ──────────────────────────────────────────
+
+def _write_client(two_users):
+    """Two write:me tokens + a `TestClient` over the shared two-user DB."""
+    from api.main import create_app
+    from fastapi.testclient import TestClient
+
+    a, b = two_users
+    path = a.db_path
+    token_a = a.create_api_token("ta", ["write:me", "read:me"])
+    token_b = b.create_api_token("tb", ["write:me", "read:me"])
+
+    app = create_app()
+    app.state.db_path = path
+    client = TestClient(app)
+    ha = {"Authorization": f"Bearer {token_a}"}
+    hb = {"Authorization": f"Bearer {token_b}"}
+    return a, b, client, ha, hb
+
+
+def test_api_write_status_isolated(two_users):
+    a, b, client, ha, _ = _write_client(two_users)
+
+    r = client.put(
+        "/v1/me/jobs/job-1/status",
+        json={"status": "applied", "occurred_at": "2026-01-05"},
+        headers=ha,
+    )
+    assert r.status_code == 200
+
+    # A's write is visible to A, invisible to B (B's tracking for the shared job
+    # stays None — no cross-user leak through the write route).
+    assert a.get_tracking_status("job-1") == "applied"
+    assert b.get_tracking_status("job-1") is None
+    assert b.get_lifecycle_events("job-1") == []
+
+
+def test_api_write_event_foreign_user_404(two_users):
+    a, b, client, _, hb = _write_client(two_users)
+
+    a.record_lifecycle_event(
+        "job-1", event="application_submitted", occurred_at="2026-01-05", new_status="applied"
+    )
+    a.record_lifecycle_event(
+        "job-1", event="interview_invited", occurred_at="2026-02-01", new_status="interviewing"
+    )
+    event_id = next(
+        e["id"] for e in a.get_lifecycle_events("job-1") if e["type"] == "interview_invited"
+    )
+
+    # B addressing A's event → 404 (never 403 — no existence oracle), and A's
+    # event/status are untouched by the rejected write.
+    r = client.patch(
+        f"/v1/me/jobs/job-1/events/{event_id}", json={"notes": "hijack"}, headers=hb
+    )
+    assert r.status_code == 404
+
+    assert a.get_tracking_status("job-1") == "interviewing"
+    assert any(e["id"] == event_id for e in a.get_lifecycle_events("job-1"))
+    assert b.get_lifecycle_events("job-1") == []
+    assert b.get_tracking_status("job-1") is None
+
+
+def test_api_write_event_cross_job_404(two_users):
+    a, b, client, ha, _ = _write_client(two_users)
+
+    a.record_lifecycle_event(
+        "job-1", event="application_submitted", occurred_at="2026-01-05", new_status="applied"
+    )
+    event_id = a.get_lifecycle_events("job-1")[0]["id"]
+
+    # The event exists on job-1 but is addressed under job-2 → 404, and
+    # reconciliation never runs on the wrong job (job-2 stays untracked, job-1
+    # untouched).
+    r = client.delete(f"/v1/me/jobs/job-2/events/{event_id}", headers=ha)
+    assert r.status_code == 404
+
+    assert a.get_lifecycle_events("job-1")[0]["id"] == event_id
+    assert a.get_tracking_status("job-1") == "applied"
+    assert a.get_tracking_status("job-2") is None
+
+
+def test_api_write_company_relationship_isolated(two_users):
+    a, b, client, ha, _ = _write_client(two_users)
+
+    r = client.patch(
+        "/v1/me/companies/1", json={"status": "blacklisted", "monitored": True}, headers=ha
+    )
+    assert r.status_code == 200
+
+    # A's relationship write is visible only to A; B keeps the default
+    # relationship and therefore no blacklisted jobs in its own feed.
+    assert a.get_company_by_id(1)["status"] == "blacklisted"
+    assert a.get_company_by_id(1)["monitored"] == 1
+    assert b.get_company_by_id(1)["status"] == "prospect"
+    assert b.count_blacklisted_jobs() == 0
+    assert a.count_blacklisted_jobs() >= 1
+
+
+def test_api_write_contact_isolated(two_users):
+    a, b, client, ha, hb = _write_client(two_users)
+
+    r = client.post(
+        "/v1/me/contacts",
+        json={"company_id": 1, "linkedin_url": "https://linkedin.com/in/alice", "first_name": "Alice"},
+        headers=ha,
+    )
+    assert r.status_code == 200
+    cid = r.json()["id"]
+
+    # A's contact is visible to A, invisible to B (404, never 403), and B
+    # writing A's contact id → 404 without touching it.
+    assert a.get_contact(cid) is not None
+    assert b.get_contact(cid) is None
+    assert b.get_all_contacts() == []
+    assert b.get_company_contacts(1) == []
+
+    assert (
+        client.patch(f"/v1/me/contacts/{cid}", json={"notes": "hijack"}, headers=hb).status_code
+        == 404
+    )
+    assert a.get_contact(cid)["notes"] is None
+
+
+def test_api_write_profile_isolated(two_users):
+    a, b, client, ha, hb = _write_client(two_users)
+    a.upsert_profile(_profile("prof-a"))
+    b.upsert_profile(_profile("prof-b"))
+
+    # A edits its own profile and switches to it via the API.
+    r = client.put(
+        "/v1/me/profiles/prof-a",
+        json={"name": "A edited", "criteria": {"allowed_geo_zones": ["ch"]}},
+        headers=ha,
+    )
+    assert r.status_code == 200
+    assert client.put(
+        "/v1/me/active-profile", json={"profile_id": "prof-a"}, headers=ha
+    ).status_code == 204
+
+    assert a.get_profile("prof-a")["name"] == "A edited"
+    assert b.get_profile("prof-a") is None
+
+    # B cannot edit A's profile or switch to it (foreign → 404, never 403), and
+    # A's row is untouched by the rejected writes.
+    assert (
+        client.put(
+            "/v1/me/profiles/prof-a",
+            json={"name": "hijack", "criteria": {"allowed_geo_zones": []}},
+            headers=hb,
+        ).status_code
+        == 404
+    )
+    assert (
+        client.put("/v1/me/active-profile", json={"profile_id": "prof-a"}, headers=hb).status_code
+        == 404
+    )
+    assert a.get_profile("prof-a")["name"] == "A edited"
+    assert b.get_profile("prof-b")["name"] == "Profile prof-b"  # B's own profile intact

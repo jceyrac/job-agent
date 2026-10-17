@@ -1,9 +1,9 @@
-"""Guard test for the read-only API (spec 041, FR-009).
+"""Guard test for the API (spec 041 FR-009 / spec 042 FR-005).
 
 Fails if `api/`:
   - imports `sqlite3` (all DB access goes through `JobStorage`, spec 037),
-  - calls a `JobStorage` method outside the read allow-list (e.g. the
-    cross-user `get_scores_for_job`, or any writer), or
+  - calls a `JobStorage` method outside the read+write allow-list (e.g. the
+    cross-user `get_scores_for_job`, or a platform/pipeline write), or
   - constructs a `JobStorage` anywhere but `deps.py`, where the unbound site is
     exactly `get_db` and every other construction binds the token's `user_id`.
 """
@@ -15,11 +15,11 @@ from core.storage import JobStorage
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_DIR = os.path.join(REPO_ROOT, "api")
 
-# Every `JobStorage` method the API may call. `get_scores_for_job` is
-# deliberately absent (cross-user leak, spec 039 rule). Writers/CLI-only
-# accessors (`create_api_token`, `list_api_tokens`, `revoke_api_token`, …) are
-# absent too — the API never mints or revokes tokens in v1.
-READ_ALLOW_LIST = frozenset({
+# Every `JobStorage` method the API may call (read + the spec 042 write set).
+# `get_scores_for_job` is deliberately absent (cross-user leak, spec 039 rule).
+# Token minting/revocation and platform/pipeline writes are absent too — see
+# FORBIDDEN_METHODS below.
+ALLOW_LIST = frozenset({
     # catalogue
     "get_catalogue_jobs", "get_catalogue_job", "get_company_facts",
     # me: identity / feed
@@ -34,8 +34,30 @@ READ_ALLOW_LIST = frozenset({
     "get_company_contacts", "get_company_interactions",
     # me: contacts
     "get_all_contacts", "get_contact", "get_contact_interactions",
+    # me: profile (US3 write pre-check)
+    "get_profile",
     # auth accessors (deps.py only)
     "resolve_api_token", "touch_api_token",
+    # ── spec 042 writes ──
+    # US1 — jobs & lifecycle
+    "set_status", "record_lifecycle_event", "update_lifecycle_event",
+    "delete_lifecycle_event", "reconcile_lifecycle_status",
+    # US2 — companies, contacts, interactions
+    "set_company_status", "set_company_monitored", "upsert_contact",
+    "update_contact_fields", "log_interaction",
+    # US3 — profile
+    "set_active_profile_id", "upsert_profile",
+    # US4 — catalogue company facts
+    "update_company_fields",
+})
+
+# Platform/pipeline writes the API must never call (spec 042, FR-005). Named so
+# a forbidden call fails loudly and self-documents the boundary.
+FORBIDDEN_METHODS = frozenset({
+    "save_unscored", "save_scored", "update_job_extraction", "log_run",
+    "set_ingestion_scope", "set_config", "upsert_company", "upsert_company_from_seed",
+    "create_api_token", "list_api_tokens", "revoke_api_token",
+    "purge_stale_jobs", "import_companies_from_csv",
 })
 
 _AUTH_ACCESSORS = frozenset({"resolve_api_token", "touch_api_token"})
@@ -89,10 +111,25 @@ def test_api_calls_only_allowlisted_methods():
         for node in ast.walk(tree):
             # `db.<method>` (the storage variable is a plain name in routers/deps).
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                if node.attr in public and node.attr not in READ_ALLOW_LIST:
+                if node.attr in public and node.attr not in ALLOW_LIST:
                     problems.append(
                         f"{_rel(path)}:{node.lineno}: calls JobStorage.{node.attr} "
                         f"(not allow-listed)"
+                    )
+    assert problems == [], "\n".join(problems)
+
+
+def test_api_never_calls_forbidden_methods():
+    # Pipeline/platform writes (spec 042 FR-005). The allow-list already excludes
+    # them; this named list makes the exclusion self-documenting and loud.
+    problems = []
+    for path in _api_files():
+        tree = ast.parse(_read(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                if node.attr in FORBIDDEN_METHODS:
+                    problems.append(
+                        f"{_rel(path)}:{node.lineno}: calls forbidden JobStorage.{node.attr}"
                     )
     assert problems == [], "\n".join(problems)
 
@@ -128,15 +165,16 @@ def test_jobstorage_built_only_in_deps():
 # ── negative self-tests (the scanner must actually fire) ─────────────────────
 
 def test_guard_negative_disallowed_method():
-    src = "def f(db):\n    return db.set_status('x', 'applied')\n"
+    # `save_scored` is a pipeline write — the scanner must flag it.
+    src = "def f(db):\n    return db.save_scored('x')\n"
     tree = ast.parse(src)
     public = _public_storage_methods()
     hits = [
         node.attr for node in ast.walk(tree)
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
-        and node.attr in public and node.attr not in READ_ALLOW_LIST
+        and node.attr in public and node.attr not in ALLOW_LIST
     ]
-    assert "set_status" in hits
+    assert "save_scored" in hits
 
 
 def test_guard_negative_unbound_jobstorage():
