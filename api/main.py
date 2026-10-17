@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.storage import ProfileNotFoundError
 from api.deps import get_user_db, require_scope
+from api.logging_config import configure_logging
 from api.middleware import RequestSizeLimitMiddleware
 from api.routers import catalogue, me
 from api.schemas import ApiModel
@@ -40,6 +41,11 @@ def _git_sha() -> str:
 
 
 def create_app() -> FastAPI:
+    # Wire the `api.*` loggers (write audit + failed-auth) to stdout. Runs before
+    # uvicorn applies its own LOGGING_CONFIG; both are `disable_existing_loggers=
+    # False`, so uvicorn's loggers stay unchanged and this logger survives.
+    configure_logging()
+
     app = FastAPI(
         title="job_agent API",
         version=_git_sha(),
