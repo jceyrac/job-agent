@@ -71,7 +71,8 @@ class PipelineLockTimeout(Exception):
 
 
 @contextmanager
-def pipeline_lock(label: str, db=None, timeout: float | None = None):
+def pipeline_lock(label: str, db=None, timeout: float | None = None,
+                  heartbeat=None, heartbeat_interval: float = 15.0):
     """Exclusive lock serialising the worker and cron (spec R4).
 
     Takes an exclusive ``fcntl.flock`` on ``data_path(".pipeline.lock")``. On
@@ -79,12 +80,17 @@ def pipeline_lock(label: str, db=None, timeout: float | None = None):
     (``"worker"`` or ``"cron"``) and clears it on release, so the tracker can
     render "waiting for the scheduled pipeline" deterministically. ``timeout``
     bounds the wait (cron); ``None`` blocks until acquired (worker).
+
+    While waiting, ``heartbeat`` (a zero-arg callable, optional) is invoked every
+    ``heartbeat_interval`` seconds so a worker parked behind cron's ~40 min run
+    keeps its liveness heartbeat fresh (spec 043, FR-005).
     """
     import fcntl  # Unix-only; imported lazily so core.storage stays portable.
 
     path = data_path(_LOCK_FILENAME)
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     deadline = time.monotonic() + timeout if timeout else None
+    last_beat = time.monotonic()
     try:
         while True:
             try:
@@ -95,6 +101,11 @@ def pipeline_lock(label: str, db=None, timeout: float | None = None):
                     raise
                 if deadline is not None and time.monotonic() >= deadline:
                     raise PipelineLockTimeout(label) from None
+                if heartbeat is not None:
+                    now = time.monotonic()
+                    if now - last_beat >= heartbeat_interval:
+                        heartbeat()
+                        last_beat = now
                 time.sleep(0.25)
         if db is not None:
             db.set_pipeline_lock_holder(label)

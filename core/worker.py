@@ -54,12 +54,15 @@ def _terminate(proc: subprocess.Popen) -> None:
 
 
 def _run_task(db: JobStorage, task: dict, state: _WorkerState,
-              argv: list[str] | None = None, timeout: float | None = None) -> None:
+              argv: list[str] | None = None, timeout: float | None = None,
+              heartbeat_interval: float = HEARTBEAT_INTERVAL) -> None:
     """Run one claimed task to completion, streaming lines into ``task_events``.
 
     The timeout deadline starts here, at claim time after the lock is held, so a
     lock-wait behind cron never eats the budget (research R3). ``argv``/``timeout``
-    are injectable for tests; they default to the type map.
+    are injectable for tests; they default to the type map. The worker heartbeat
+    is refreshed every ``heartbeat_interval`` seconds for the whole run, so the
+    worker stays "alive" even while the subprocess prints nothing (FR-005).
     """
     task_id = task["id"]
     if argv is None:
@@ -82,7 +85,12 @@ def _run_task(db: JobStorage, task: dict, state: _WorkerState,
         flush()
         db.finish_task(task_id, status, exit_code=exit_code, error=error)
 
+    last_beat = time.monotonic()
     while proc.poll() is None:
+        now = time.monotonic()
+        if now - last_beat >= heartbeat_interval:
+            db.set_worker_heartbeat(_now())
+            last_beat = now
         try:
             ready, _, _ = select.select([fd], [], [], 0.25)
         except (ValueError, OSError):
@@ -139,13 +147,19 @@ def _run_task(db: JobStorage, task: dict, state: _WorkerState,
 
 
 def _poll_once(db: JobStorage, state: _WorkerState,
-               argv: list[str] | None = None, timeout: float | None = None):
+               argv: list[str] | None = None, timeout: float | None = None,
+               heartbeat_interval: float = HEARTBEAT_INTERVAL):
     """One worker iteration: lock → claim → run. Idle iterations release the lock
-    immediately (an idle worker never holds it between polls)."""
-    with pipeline_lock("worker", db):
+    immediately (an idle worker never holds it between polls). While waiting for
+    the lock (behind cron) or running a task, the heartbeat is refreshed so the
+    worker always looks alive (FR-005)."""
+    with pipeline_lock("worker", db,
+                       heartbeat=lambda: db.set_worker_heartbeat(_now()),
+                       heartbeat_interval=heartbeat_interval):
         task = db.claim_next_task()
         if task is not None:
-            _run_task(db, task, state, argv=argv, timeout=timeout)
+            _run_task(db, task, state, argv=argv, timeout=timeout,
+                      heartbeat_interval=heartbeat_interval)
     return task
 
 

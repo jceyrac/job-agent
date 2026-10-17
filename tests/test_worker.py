@@ -4,6 +4,7 @@
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 
 from core.storage import JobStorage
 from core.tasks import PipelineLockTimeout, TASK_TIMEOUTS, command_for, pipeline_lock
@@ -12,6 +13,13 @@ from core.worker import _WorkerState, _poll_once, _run_task
 
 def _slow_argv(seconds: float) -> list[str]:
     return [sys.executable, "-c", f"import time; time.sleep({seconds})"]
+
+
+def _heartbeat_age(db: JobStorage) -> float:
+    """Seconds since the worker's last heartbeat (UTC-aware, like the worker)."""
+    ts = db.get_worker_heartbeat()
+    assert ts is not None
+    return (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
 
 
 # ── command map (R2) ──────────────────────────────────────────────────────────
@@ -188,3 +196,62 @@ def test_idle_worker_releases_lock(tmp_path):
     db = JobStorage(str(tmp_path / "db.sqlite"))
     assert _poll_once(db, _WorkerState()) is None   # nothing queued
     assert db.get_pipeline_lock_holder() is None    # lock released between polls
+
+
+# ── heartbeat liveness (FR-005) ───────────────────────────────────────────────
+
+def test_heartbeat_stays_fresh_during_silent_task(tmp_path):
+    """A silent subprocess (prints nothing) must not let the heartbeat go stale."""
+    db = JobStorage(str(tmp_path / "db.sqlite"))
+    task = db.enqueue_task("extract", {})
+    db.claim_next_task()
+    db.set_worker_heartbeat(datetime.now(timezone.utc).isoformat())
+
+    _run_task(db, task, _WorkerState(), argv=_slow_argv(0.6), timeout=5,
+              heartbeat_interval=0.05)
+
+    # Refreshed inside the run: far younger than the ~0.6 s the subprocess spent
+    # silent, not left at the pre-run timestamp.
+    assert _heartbeat_age(db) < 0.4
+
+
+def test_heartbeat_fresh_while_waiting_for_cron_lock_then_runs(tmp_path):
+    """Behind cron's lock, the worker keeps beating and the task stays queued."""
+    db = JobStorage(str(tmp_path / "db.sqlite"))
+    task = db.enqueue_task("extract", {})
+    state = _WorkerState()
+    started = threading.Event()
+    release = threading.Event()
+
+    def hold_cron():
+        with pipeline_lock("cron", db):
+            started.set()
+            release.wait(timeout=5)
+
+    t = threading.Thread(target=hold_cron)
+    t.start()
+    assert started.wait(timeout=2)
+
+    db.set_worker_heartbeat(datetime.now(timezone.utc).isoformat())
+
+    polled = {}
+
+    def poll():
+        polled["task"] = _poll_once(
+            db, state, argv=[sys.executable, "-c", "pass"], timeout=5,
+            heartbeat_interval=0.05,
+        )
+
+    p = threading.Thread(target=poll)
+    p.start()
+    time.sleep(0.7)   # several heartbeat intervals while parked on the lock
+
+    # Parked on the lock: still queued, cron still holds, heartbeat still fresh.
+    assert db.get_task(task["id"])["status"] == "queued"
+    assert db.get_pipeline_lock_holder() == "cron"
+    assert _heartbeat_age(db) < 0.5
+
+    release.set()
+    t.join(timeout=5)
+    p.join(timeout=5)
+    assert db.get_task(task["id"])["status"] == "succeeded"
