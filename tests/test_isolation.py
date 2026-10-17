@@ -58,6 +58,9 @@ USER_SPACE_METHODS = (
     "get_onboarding_completed", "set_onboarding_completed",
     # company import (writes user_companies / company_status_history)
     "import_companies_from_csv",
+    # tasks (spec 043) — user-scoped queue reads/writes
+    "enqueue_task", "get_task", "list_tasks", "get_active_task",
+    "mark_cancelled", "request_cancel",
 )
 
 # Deliberately unfiltered (cross-user) — plan.md §5 / FR-010, FR-011.
@@ -72,6 +75,13 @@ CROSS_USER_METHODS = (
     # bound user's data view; the CLI is the only creator/revoker.
     "create_api_token", "list_api_tokens", "revoke_api_token",
     "resolve_api_token", "touch_api_token",
+    # Task worker lifecycle (spec 043) — the worker is the single consumer for
+    # every user's queue; these act on a task_id (or global/config state) without
+    # the bound user's filter.
+    "claim_next_task", "append_task_events", "get_task_events", "finish_task",
+    "is_cancel_requested", "recover_interrupted", "prune_task_history",
+    "get_worker_heartbeat", "set_worker_heartbeat",
+    "get_pipeline_lock_holder", "set_pipeline_lock_holder",
 )
 
 # Tokens that must never appear in an unclassified (catalogue) method's source.

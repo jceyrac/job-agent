@@ -38,7 +38,10 @@ def _auth(token: str) -> dict:
 
 def test_api_token_scopes_are_fixed():
     assert API_TOKEN_SCOPES == frozenset(
-        {"read:catalogue", "read:me", "write:me", "write:catalogue"}
+        {
+            "read:catalogue", "read:me", "write:me", "write:catalogue",
+            "tasks:run", "tasks:pipeline",
+        }
     )
 
 

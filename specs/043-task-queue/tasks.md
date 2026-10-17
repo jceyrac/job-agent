@@ -10,7 +10,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm baseline: on branch `043-task-queue`, `.venv` active, `python -m pytest tests/ -q` green (record the passing count as the pre-change baseline).
+- [X] T001 Confirm baseline: on branch `043-task-queue`, `.venv` active, `python -m pytest tests/ -q` green (record the passing count as the pre-change baseline).
 
 ---
 
@@ -19,11 +19,11 @@
 *The shared substrate every story builds on: the `tasks`/`task_events` schema, the task-type
 allow-list + command map + lock, and the scope/schema plumbing. No story can start until this is green.*
 
-- [ ] T002 Add `tasks` + `task_events` tables to `SCHEMA` in `core/storage.py` (idempotent `CREATE TABLE IF NOT EXISTS`, per `data-model.md`) and a `_migrate_tasks(conn)` that records the `tasks` migration name (the `_migrate_api_tokens` pattern) and registers it in `_init_db`.
-- [ ] T003 [P] Add `tasks:run` and `tasks:pipeline` to `API_TOKEN_SCOPES` in `core/storage.py` (line 65).
-- [ ] T004 [P] Create `core/tasks.py` (new): `TASK_TYPES`, `TASK_COMMANDS` (`type`+`params` → the exact `[sys.executable, "-u", "-m", …]` argv per `research.md` R2), `TASK_TIMEOUTS`, and `pipeline_lock()` (exclusive `fcntl.flock` on `core.paths.data_path(".pipeline.lock")`, writing/clearing `config["pipeline.lock_holder"]`).
-- [ ] T005 [P] Add `TaskType` enum, `TaskCreate`, `Task`, `TaskEvent` models in `api/schemas.py` (`extra="forbid"`), and `tasks_run = require_scope("tasks:run")` / `tasks_pipeline = require_scope("tasks:pipeline")` in `api/deps.py`.
-- [ ] T006 [P] Update `scripts/api_token.py` `--help`/docstring/`--scopes` help to name the two new scopes (cosmetic — validation already reads `API_TOKEN_SCOPES`).
+- [X] T002 Add `tasks` + `task_events` tables to `SCHEMA` in `core/storage.py` (idempotent `CREATE TABLE IF NOT EXISTS`, per `data-model.md`) and a `_migrate_tasks(conn)` that records the `tasks` migration name (the `_migrate_api_tokens` pattern) and registers it in `_init_db`.
+- [X] T003 [P] Add `tasks:run` and `tasks:pipeline` to `API_TOKEN_SCOPES` in `core/storage.py` (line 65).
+- [X] T004 [P] Create `core/tasks.py` (new): `TASK_TYPES`, `TASK_COMMANDS` (`type`+`params` → the exact `[sys.executable, "-u", "-m", …]` argv per `research.md` R2), `TASK_TIMEOUTS`, and `pipeline_lock()` (exclusive `fcntl.flock` on `core.paths.data_path(".pipeline.lock")`, writing/clearing `config["pipeline.lock_holder"]`).
+- [X] T005 [P] Add `TaskType` enum, `TaskCreate`, `Task`, `TaskEvent` models in `api/schemas.py` (`extra="forbid"`), and `tasks_run = require_scope("tasks:run")` / `tasks_pipeline = require_scope("tasks:pipeline")` in `api/deps.py`.
+- [X] T006 [P] Update `scripts/api_token.py` `--help`/docstring/`--scopes` help to name the two new scopes (cosmetic — validation already reads `API_TOKEN_SCOPES`).
 
 **Checkpoint**: migration creates `tasks`/`task_events`; a `tasks:run` token mints; `core.tasks` imports and the type→argv map is importable.
 
@@ -39,15 +39,15 @@ recorded; a second identical enqueue returns the existing task (no duplicate).
 
 ### Tests (write first — FAIL before implementation)
 
-- [ ] T007 [P] [US1] Storage tests in `tests/test_tasks.py`: `enqueue_task` + dedup (partial unique index returns the existing active row, no new one); `claim_next_task` is atomic and oldest-first; `append_task_events`/`get_task_events` with `after_seq`; `finish_task`/`mark_cancelled`/`request_cancel`/`is_cancel_requested`/`recover_interrupted`; `prune_task_history` (events older than 7 days and finished rows older than 30 days removed); user-scoping isolation (`get_task`/`list_tasks` hide a foreign `user_id`'s task); `score` for a foreign profile → `ProfileNotFoundError`.
+- [X] T007 [P] [US1] Storage tests in `tests/test_tasks.py`: `enqueue_task` + dedup (partial unique index returns the existing active row, no new one); `claim_next_task` is atomic and oldest-first; `append_task_events`/`get_task_events` with `after_seq`; `finish_task`/`mark_cancelled`/`request_cancel`/`is_cancel_requested`/`recover_interrupted`; `prune_task_history` (events older than 7 days and finished rows older than 30 days removed); user-scoping isolation (`get_task`/`list_tasks` hide a foreign `user_id`'s task); `score` for a foreign profile → `ProfileNotFoundError`.
 
 ### Implementation
 
-- [ ] T008 [US1] Implement the `JobStorage` task methods in `core/storage.py` (`enqueue_task`, `get_task`, `list_tasks`, `get_active_task`, `claim_next_task`, `append_task_events`, `get_task_events`, `finish_task`, `mark_cancelled`, `request_cancel`, `is_cancel_requested`, `recover_interrupted`, `prune_task_history`, `get_worker_heartbeat`/`set_worker_heartbeat`, `get_pipeline_lock_holder`/`set_pipeline_lock_holder`) — per `data-model.md`.
-- [ ] T009 [US1] Create `core/worker.py` (new): single-consumer loop — startup `recover_interrupted()`; `pipeline_lock()` **then** `claim_next_task()` (`started_at` + the `TASK_TIMEOUTS` deadline begin at claim, after the lock is held; release the lock immediately when no task is queued); run the mapped command as `subprocess.Popen(stdout=PIPE, stderr=STDOUT)` streaming lines into `append_task_events` (batched); `finish_task`; per-type timeout (SIGTERM→SIGKILL → `failed: timeout`); cancel (SIGTERM→SIGKILL → `cancelled`); graceful SIGTERM; heartbeat (`set_worker_heartbeat`) at startup and every ~15 s.
-- [ ] T010 [P] [US1] Worker tests in `tests/test_worker.py`: the exact argv per type; `recover_interrupted` flips `running`→`failed:interrupted`; timeout → `error="timeout"`; cancel → `cancel_requested` then `cancelled` (fake subprocess); a task queued while the lock is held stays `queued` and then runs with its full timeout allowance; an idle worker never holds the lock between polls.
-- [ ] T011 [US1] Add the `worker` service to `docker-compose.yml` (same image, `command: python -m core.worker`, `job_data` mount, env as `agent`, `restart: unless-stopped`, json-file rotation); build + `up -d worker` it in `scripts/deploy.sh`.
-- [ ] T012 [US1] Bound event storage in `append_task_events` (keep the last 4000 events per active task) and a worker idle-tick prune of finished tasks' events after 7 days and finished task rows after 30 days.
+- [X] T008 [US1] Implement the `JobStorage` task methods in `core/storage.py` (`enqueue_task`, `get_task`, `list_tasks`, `get_active_task`, `claim_next_task`, `append_task_events`, `get_task_events`, `finish_task`, `mark_cancelled`, `request_cancel`, `is_cancel_requested`, `recover_interrupted`, `prune_task_history`, `get_worker_heartbeat`/`set_worker_heartbeat`, `get_pipeline_lock_holder`/`set_pipeline_lock_holder`) — per `data-model.md`.
+- [X] T009 [US1] Create `core/worker.py` (new): single-consumer loop — startup `recover_interrupted()`; `pipeline_lock()` **then** `claim_next_task()` (`started_at` + the `TASK_TIMEOUTS` deadline begin at claim, after the lock is held; release the lock immediately when no task is queued); run the mapped command as `subprocess.Popen(stdout=PIPE, stderr=STDOUT)` streaming lines into `append_task_events` (batched); `finish_task`; per-type timeout (SIGTERM→SIGKILL → `failed: timeout`); cancel (SIGTERM→SIGKILL → `cancelled`); graceful SIGTERM; heartbeat (`set_worker_heartbeat`) at startup and every ~15 s.
+- [X] T010 [P] [US1] Worker tests in `tests/test_worker.py`: the exact argv per type; `recover_interrupted` flips `running`→`failed:interrupted`; timeout → `error="timeout"`; cancel → `cancel_requested` then `cancelled` (fake subprocess); a task queued while the lock is held stays `queued` and then runs with its full timeout allowance; an idle worker never holds the lock between polls.
+- [X] T011 [US1] Add the `worker` service to `docker-compose.yml` (same image, `command: python -m core.worker`, `job_data` mount, env as `agent`, `restart: unless-stopped`, json-file rotation); build + `up -d worker` it in `scripts/deploy.sh`.
+- [X] T012 [US1] Bound event storage in `append_task_events` (keep the last 4000 events per active task) and a worker idle-tick prune of finished tasks' events after 7 days and finished task rows after 30 days.
 
 **Checkpoint**: `pytest tests/test_tasks.py tests/test_worker.py -q` green; a manual worker run completes a cheap `extract` task with events.
 
@@ -63,11 +63,11 @@ after release; with a task running, `core.main` waits (bounded) and logs.
 
 ### Tests
 
-- [ ] T013 [P] [US2] Lock tests in `tests/test_worker.py`: `pipeline_lock()` records/clears `config["pipeline.lock_holder"]`; a second acquirer blocks and then proceeds.
+- [X] T013 [P] [US2] Lock tests in `tests/test_worker.py`: `pipeline_lock()` records/clears `config["pipeline.lock_holder"]`; a second acquirer blocks and then proceeds.
 
 ### Implementation
 
-- [ ] T014 [US2] Wrap each subprocess step in `core/main.py` (monitored scrape, broad scrape, extraction, scoring) in `pipeline_lock()` with a bounded wait + log line (holder label `"cron"`).
+- [X] T014 [US2] Wrap each subprocess step in `core/main.py` (monitored scrape, broad scrape, extraction, scoring) in `pipeline_lock()` with a bounded wait + log line (holder label `"cron"`).
 
 **Checkpoint**: `pytest tests/test_worker.py -q` green; `core.main` + a task serialize on the lock (verified on staging in US5).
 
@@ -82,13 +82,13 @@ streams lines as SSE and closes with a final status; cancel works on queued and 
 
 ### Tests (write first)
 
-- [ ] T015 [P] [US3] Contract + scope tests in `tests/test_tasks_api.py`: enqueue `202` + dedup returns the existing task; `extract`/`score` need `tasks:run`, `scrape`/`scrape_monitored` need `tasks:run`+`tasks:pipeline` (403 otherwise); `score` for a foreign profile → 404; `GET`/`GET {id}` user-scoping (foreign → 404); SSE stream yields `id:`/`data:` lines, a ≤15 s heartbeat comment, and a final `status` event; JSON fallback paginates by `after_seq`; cancel on queued (→`cancelled`), running (→`cancel_requested`), terminal (→`409`).
+- [X] T015 [P] [US3] Contract + scope tests in `tests/test_tasks_api.py`: enqueue `202` + dedup returns the existing task; `extract`/`score` need `tasks:run`, `scrape`/`scrape_monitored` need `tasks:run`+`tasks:pipeline` (403 otherwise); `score` for a foreign profile → 404; `GET`/`GET {id}` user-scoping (foreign → 404); SSE stream yields `id:`/`data:` lines, a ≤15 s heartbeat comment, and a final `status` event; JSON fallback paginates by `after_seq`; cancel on queued (→`cancelled`), running (→`cancel_requested`), terminal (→`409`).
 
 ### Implementation
 
-- [ ] T016 [US3] Create `api/routers/tasks.py` (new) with `POST /tasks` (202), `GET /tasks`, `GET /tasks/{id}`, `GET /tasks/{id}/events` (SSE `StreamingResponse` + JSON fallback), `POST /tasks/{id}/cancel` per `contracts/tasks-api.md`; register it in `api/main.py` under `/v1/me`.
-- [ ] T017 [US3] Extend `tests/test_api_guard.py`: add the task methods the API calls to the allow-list, the worker-only methods to `FORBIDDEN_METHODS`, and a new test that `api/` imports neither `subprocess` nor the pipeline entry points (`core.scrape`, `core.score`, `core.main`, `core.worker`).
-- [ ] T018 [US3] Regenerate `api/openapi.json` (deliberately) and make `tests/test_api_openapi.py` green (new routes appear with `HTTPBearer`).
+- [X] T016 [US3] Create `api/routers/tasks.py` (new) with `POST /tasks` (202), `GET /tasks`, `GET /tasks/{id}`, `GET /tasks/{id}/events` (SSE `StreamingResponse` + JSON fallback), `POST /tasks/{id}/cancel` per `contracts/tasks-api.md`; register it in `api/main.py` under `/v1/me`.
+- [X] T017 [US3] Extend `tests/test_api_guard.py`: add the task methods the API calls to the allow-list, the worker-only methods to `FORBIDDEN_METHODS`, and a new test that `api/` imports neither `subprocess` nor the pipeline entry points (`core.scrape`, `core.score`, `core.main`, `core.worker`).
+- [X] T018 [US3] Regenerate `api/openapi.json` (deliberately) and make `tests/test_api_openapi.py` green (new routes appear with `HTTPBearer`).
 
 **Checkpoint**: `pytest tests/test_tasks_api.py tests/test_api_guard.py tests/test_api_openapi.py -q` green; SSE streamed over the test client.
 
@@ -104,14 +104,14 @@ second press shows the existing task; `tracker_views/` imports no `subprocess`/`
 
 ### Tests (write first)
 
-- [ ] T019 [P] [US4] Guard test `tests/test_tracker_no_subprocess.py`: `tracker_views/` contains no `subprocess` or `threading` import.
+- [X] T019 [P] [US4] Guard test `tests/test_tracker_no_subprocess.py`: `tracker_views/` contains no `subprocess` or `threading` import.
 
 ### Implementation
 
-- [ ] T020 [US4] Create `tracker_views/task_progress.py` (new): `render_task_progress(db, type, params)` — dedup/resume via `get_active_task`; three queued states ("The scheduled pipeline (07:00, 11:00, 16:00) is running — your task starts when it finishes." when `pipeline.lock_holder == "cron"`; "waiting for worker" when the heartbeat is stale; "queued · waiting for "<other task label>" to finish" when a different task is `running` ahead); live tail from `get_task_events`; terminal messages (✅/❌ unchanged; ⏹ from `queued` = "⏹ <Task> cancelled", from `running` = "⏹ <Task> stopped — results saved before the stop are kept.").
-- [ ] T021 [US4] Rework `tracker_views/jobs.py`: the 3 launch buttons (Run scrape, Run scoring, Re-extract) enqueue via `db.enqueue_task(…, requested_by="tracker")` and render `render_task_progress`; remove the `bg_process`/`bg_output` session-state machinery and the blocking `subprocess.run(…, timeout=600)`.
-- [ ] T022 [US4] Rework `tracker_views/settings.py`: the 4 launch buttons (scrape, monitoring, scoring, re-extract) enqueue and render; remove the `Popen`/helper-thread machinery.
-- [ ] T023 [US4] Constitution PATCH (v2.0.3 → v2.0.4): remove the resolved known violation "subprocess lancés par le tracker" and update the Sync Impact Report in `.specify/memory/constitution.md`; update the `CLAUDE.md` API section (new scopes + `/v1/me/tasks` routes).
+- [X] T020 [US4] Create `tracker_views/task_progress.py` (new): `render_task_progress(db, type, params)` — dedup/resume via `get_active_task`; three queued states ("The scheduled pipeline (07:00, 11:00, 16:00) is running — your task starts when it finishes." when `pipeline.lock_holder == "cron"`; "waiting for worker" when the heartbeat is stale; "queued · waiting for "<other task label>" to finish" when a different task is `running` ahead); live tail from `get_task_events`; terminal messages (✅/❌ unchanged; ⏹ from `queued` = "⏹ <Task> cancelled", from `running` = "⏹ <Task> stopped — results saved before the stop are kept.").
+- [X] T021 [US4] Rework `tracker_views/jobs.py`: the 3 launch buttons (Run scrape, Run scoring, Re-extract) enqueue via `db.enqueue_task(…, requested_by="tracker")` and render `render_task_progress`; remove the `bg_process`/`bg_output` session-state machinery and the blocking `subprocess.run(…, timeout=600)`.
+- [X] T022 [US4] Rework `tracker_views/settings.py`: the 4 launch buttons (scrape, monitoring, scoring, re-extract) enqueue and render; remove the `Popen`/helper-thread machinery.
+- [X] T023 [US4] Constitution PATCH (v2.0.3 → v2.0.4): remove the resolved known violation "subprocess lancés par le tracker" and update the Sync Impact Report in `.specify/memory/constitution.md`; update the `CLAUDE.md` API section (new scopes + `/v1/me/tasks` routes).
 
 **Checkpoint**: `pytest tests/test_tracker_no_subprocess.py -q` green; all 7 buttons work through the queue locally (quickstart §5).
 
@@ -139,8 +139,8 @@ second press shows the existing task; `tracker_views/` imports no `subprocess`/`
 
 ## Phase 8: Polish & validation
 
-- [ ] T029 Run `python -m pytest tests/ -q` (full suite green — 582 baseline + new task tests).
-- [ ] T030 Run `quickstart.md` §1–§5 locally; confirm each behaviour (dedup, resume, SSE, scopes, guards).
+- [X] T029 Run `python -m pytest tests/ -q` (full suite green — 582 baseline + new task tests).
+- [X] T030 Run `quickstart.md` §1–§5 locally; confirm each behaviour (dedup, resume, SSE, scopes, guards).
 
 ---
 

@@ -1,7 +1,18 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 2.0.2 → 2.0.3
+  Version change: 2.0.3 → 2.0.4
+  Bump rationale: PATCH — suppression de la violation connue résolue par
+  l'étape 6 partie 2 (spec 043) : les boutons du tracker n'enchaînent plus
+  de subprocess (plus de `subprocess`/`threading` dans `tracker_views/`) ;
+  le travail long passe par la table `tasks` + un worker dédié, l'API et le
+  tracker suivent la progression. Aucun changement de sens des principes.
+
+  Modified sections:
+    - Known violations at ratification — retrait de la violation
+      « subprocess lancés par le tracker (Architecture Constraints) ».
+
+  Prior version (2.0.3) :
   Bump rationale: PATCH — suppression de la violation connue résolue par
   l'étape 4 (spec 040) : `scrape.py` n'applique plus `title_matches_profile`
   avant sauvegarde. Le jugement de titre devient une règle Tier 0 du scoring
@@ -54,7 +65,6 @@
     - job_tracking, status_history, job_applications, interactions,
       contacts sans `user_id` ; `companies.monitored` sur l'entité
       partagée (Principe X) → étape 3.
-    - subprocess lancés par le tracker (Architecture Constraints) → étape 2.
 
   Templates requiring updates:
     - .specify/templates/plan-template.md     ✅ No changes needed
@@ -378,4 +388,4 @@ constitution, la constitution prévaut.
 - Les violations connues listées dans le Sync Impact Report sont tolérées
   jusqu'à l'étape de roadmap qui les résout.
 
-**Version**: 2.0.3 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-14
+**Version**: 2.0.4 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-17

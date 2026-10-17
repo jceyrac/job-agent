@@ -17,7 +17,7 @@ from core.storage import ProfileNotFoundError
 from api.deps import get_user_db, require_scope
 from api.logging_config import configure_logging
 from api.middleware import RequestSizeLimitMiddleware
-from api.routers import catalogue, me
+from api.routers import catalogue, me, tasks
 from api.schemas import ApiModel
 
 _ERROR_CODES = {
@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
     # One router per domain (Constitution: "monolithe modulaire").
     app.include_router(catalogue.router, prefix="/v1", tags=["catalogue"])
     app.include_router(me.router, prefix="/v1/me", tags=["me"])
+    app.include_router(tasks.router, prefix="/v1/me/tasks", tags=["tasks"])
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exc_handler(request: Request, exc: StarletteHTTPException):

@@ -1,8 +1,4 @@
 """tracker_views/jobs.py — Jobs list view."""
-import subprocess
-import sys
-import time
-
 import streamlit as st
 
 from core.profiles import ACTIVE_PROFILE_ID, DEFAULT_PROFILE_ID
@@ -16,19 +12,7 @@ from tracker_views.shared import (
 from tracker_views.job_helpers import (
     _source_label, _derive_state, _run_score, _render_action_bar, _request_archive,
 )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _launch_bg(label: str, cmd: list[str]):
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=False)
-    st.session_state.bg_process = proc
-    st.session_state.bg_label = label
-    st.session_state.bg_output = ""
-    st.session_state.bg_start = time.time()
-    st.rerun()
+from tracker_views.task_progress import enqueue, render_task_progress
 
 
 # ---------------------------------------------------------------------------
@@ -36,133 +20,32 @@ def _launch_bg(label: str, cmd: list[str]):
 # ---------------------------------------------------------------------------
 
 def _render_controls_bar(db):
-    """Compact run + cache strip at top of Jobs page."""
-    # ── Session-state keys for background processes ──────────────────────
-    if "bg_process" not in st.session_state:
-        st.session_state.bg_process = None
-    if "bg_label" not in st.session_state:
-        st.session_state.bg_label = ""
-    if "bg_output" not in st.session_state:
-        st.session_state.bg_output = ""
-    if "bg_start" not in st.session_state:
-        st.session_state.bg_start = 0.0
-
+    """Compact run + cache strip at top of Jobs page (queue-backed)."""
     active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     unscored = len(db.get_jobs_for_scoring(active_id))
 
-    # ── Pending result from a completed run (display once, then clear) ──
-    pending = st.session_state.get("bg_result")
-    if pending:
-        st.session_state.bg_result = None
-        if pending["type"] == "success":
-            st.success(pending["message"])
-        else:
-            st.error(pending["message"])
-        with st.expander("Last run output", expanded=False):
-            output = pending.get("output", "")
-            st.text(output[-8000:] if len(output) > 8000 else output)
-        st.cache_data.clear()
-
     c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1])
-
-    proc = st.session_state.bg_process
-    label = st.session_state.bg_label
-
-    if proc is not None and proc.poll() is None:
-        # Process running
-        elapsed = int(time.time() - st.session_state.get("bg_start", time.time()))
-        mins, secs = divmod(elapsed, 60)
-        with c1:
-            st.info(f"⏳ {label.title()} — {mins}m {secs}s")
-        with c2:
-            if st.button("⏹ Stop", use_container_width=True):
-                proc.kill()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
-                st.session_state.bg_process = None
-                st.session_state.bg_label = ""
-                st.rerun()
-        with c3:
-            if st.button("🔄 Refresh", use_container_width=True):
-                st.rerun()
-    else:
-        # Check if a process just finished
-        if proc is not None and proc.poll() is not None:
-            ret = proc.returncode
-            # Read remaining output
-            try:
-                remaining = proc.stdout.read()
-                if remaining:
-                    st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
-            except Exception:
-                pass
-
-            final_output = st.session_state.bg_output
-            st.session_state.bg_process = None
-            st.session_state.bg_label = ""
-            st.session_state.bg_output = ""
-            st.session_state.bg_start = 0.0
-
-            st.session_state.bg_result = {
-                "type": "success" if ret == 0 else "error",
-                "message": f"✅ {label.title()} completed successfully!" if ret == 0
-                           else f"❌ {label.title()} exited with code {ret}",
-                "output": final_output,
-            }
+    with c1:
+        if st.button("🕸 Run scrape", use_container_width=True):
+            enqueue(db, "scrape")
+    with c2:
+        if st.button("🎯 Run scoring", use_container_width=True):
+            enqueue(db, "score", {"profile_id": active_id})
+    with c3:
+        if st.button("🔄 Clear Cache", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Cache cleared.")
             st.rerun()
-
-        # No process running — show launch buttons
-        with c1:
-            if st.button("🕸 Run scrape", use_container_width=True):
-                _launch_bg("scrape", [sys.executable, "-u", "-m", "core.scrape"])
-        with c2:
-            if st.button("🎯 Run scoring", use_container_width=True):
-                active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
-                _launch_bg("score", [sys.executable, "-u", "-m", "core.score", "--profile", active_id])
-        with c3:
-            if st.button("🔄 Clear Cache", use_container_width=True):
-                st.cache_data.clear()
-                st.success("Cache cleared.")
-                st.rerun()
-        with c4:
-            if st.button("🔍 Re-extract", use_container_width=True,
-                         help="Run score.py --extract to re-extract job fields"):
-                with st.spinner("Re-extracting…"):
-                    try:
-                        result = subprocess.run(
-                            [sys.executable, "-m", "core.score", "--extract"],
-                            capture_output=True, text=True, timeout=600,
-                        )
-                        st.cache_data.clear()
-                        if result.returncode == 0:
-                            st.success("Re-extract done.")
-                        else:
-                            st.error(result.stderr[:500])
-                    except subprocess.TimeoutExpired:
-                        st.error("Re-extract timed out after 10 minutes — it may still be running in the background.")
-
+    with c4:
+        if st.button("🔍 Re-extract", use_container_width=True,
+                     help="Run score.py --extract to re-extract job fields"):
+            enqueue(db, "extract")
     with c5:
         st.metric("Unscored", unscored)
 
-    # Show live output if a process is running
-    if proc is not None and proc.poll() is None:
-        # Read any new output
-        try:
-            import select as _sel
-            import os as _os
-            ready, _, _ = _sel.select([proc.stdout], [], [], 0)
-            if ready:
-                chunk = _os.read(proc.stdout.fileno(), 65536)
-                if chunk:
-                    st.session_state.bg_output += chunk.decode("utf-8", errors="replace")
-        except Exception:
-            pass
-
-        if st.session_state.bg_output:
-            with st.expander("Live output", expanded=False):
-                st.text(st.session_state.bg_output[-8000:])
+    render_task_progress(db, "scrape")
+    render_task_progress(db, "score", {"profile_id": active_id})
+    render_task_progress(db, "extract")
 
 
 # ---------------------------------------------------------------------------

@@ -165,9 +165,9 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 ## API (v1, read + write)
 
 - `api/` is a FastAPI app over `core`, tailnet-only, auth with scoped bearer
-  tokens (`read:catalogue`, `read:me`, `write:me`, `write:catalogue`) bound to a
-  user. Tokens are managed with `python -m scripts.api_token` (SHA-256 hashes
-  only, raw token printed once).
+  tokens (`read:catalogue`, `read:me`, `write:me`, `write:catalogue`,
+  `tasks:run`, `tasks:pipeline`) bound to a user. Tokens are managed with
+  `python -m scripts.api_token` (SHA-256 hashes only, raw token printed once).
 - Endpoints are versioned under `/v1` and grouped one router per domain
   (`api/routers/catalogue.py`, `api/routers/me.py`); `/health` is outside `/v1`
   and unauthenticated. Each payload equals its `JobStorage` source field-for-field
@@ -187,6 +187,16 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
     (`extra="forbid"` → `422`), and emit one structured log line
     (`api/write_log.py` — token id, user id, route, resource id, status; never
     the body or token value).
+- **Tasks (spec 043)** — long work is requested, not run, by clients. A `POST
+  /v1/me/tasks` (`{type, params}`) validates and enqueues (or returns the
+  identical active task) and answers `202`; the `worker` container claims and
+  runs it as the same module command as today. `GET /v1/me/tasks`,
+  `GET …/tasks/{id}`, `GET …/tasks/{id}/events` (SSE `Accept:
+  text/event-stream` with `Last-Event-ID` resume + JSON fallback) and
+  `POST …/tasks/{id}/cancel` complete the surface. Scopes: `extract`/`score`
+  need `tasks:run`; `scrape`/`scrape_monitored` need `tasks:run` +
+  `tasks:pipeline`; reads need `read:me`. No LLM/subprocess in a handler (guard
+  test).
 - **No SQL in `api/`** — all DB access goes through `JobStorage`; a guard test
   fails on any non-allow-listed method (read + write set), a `sqlite3` import,
   or an unbound `JobStorage` outside `api/deps.py`'s auth path. One `JobStorage`

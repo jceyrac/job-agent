@@ -35,6 +35,24 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  worker:
+    build: .
+    container_name: job-worker
+    command: python -m core.worker
+    volumes:
+      - job_data:/app/data
+    env_file:
+      - .env
+    environment:
+      - JOB_AGENT_DATA_DIR=/app/data
+      - JOB_AGENT_REQUIRE_DB=1
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   agent:
     build: .
     container_name: job-agent

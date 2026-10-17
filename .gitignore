@@ -1,6 +1,7 @@
 data/jobs.db
 data/jobs.db-wal
 data/jobs.db-shm
+data/.pipeline.lock
 data/cv_agent_checkpoints.sqlite
 data/cv_agent_checkpoints.sqlite-wal
 data/cv_agent_checkpoints.sqlite-shm

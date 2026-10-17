@@ -23,11 +23,17 @@ import secrets
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
 from core.paths import DB_PATH
+from core.tasks import (
+    EVENT_RETENTION_DAYS,
+    EVENT_WINDOW,
+    TASK_RETENTION_DAYS,
+    TASK_TYPES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +67,12 @@ INTERACTION_TYPES = frozenset({
 INTERACTION_DIRECTIONS = frozenset({"inbound", "outbound", "none"})
 INTERACTION_OUTCOMES = frozenset({"positive", "negative"})
 
-# Scopes a v1 API token may carry (spec 041/042). Read + write, catalogue vs user.
-API_TOKEN_SCOPES = frozenset({"read:catalogue", "read:me", "write:me", "write:catalogue"})
+# Scopes a v1 API token may carry (spec 041/042/043). Read + write, catalogue vs
+# user, plus the task queue (tasks:run / tasks:pipeline).
+API_TOKEN_SCOPES = frozenset({
+    "read:catalogue", "read:me", "write:me", "write:catalogue",
+    "tasks:run", "tasks:pipeline",
+})
 
 _LEGAL_SUFFIXES = {
     "ag", "gmbh", "sa", "sarl", "inc", "ltd",
@@ -392,6 +402,37 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     expires_at   TEXT                        -- FR-013; NULL = no expiry
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+-- Task queue + worker (spec 043) — one row per requested long-running task.
+-- params is canonical JSON (sorted keys) so identical requests dedup.
+CREATE TABLE IF NOT EXISTS tasks (
+    id               TEXT PRIMARY KEY,       -- uuid4().hex
+    user_id          TEXT NOT NULL,          -- requester (owner)
+    type             TEXT NOT NULL,          -- scrape|scrape_monitored|extract|score
+    params           TEXT NOT NULL,          -- canonical JSON: {} or {"profile_id": "…"}
+    status           TEXT NOT NULL DEFAULT 'queued',
+    requested_by     TEXT,                   -- "tracker" or an API token id
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL,
+    started_at       TEXT,
+    finished_at      TEXT,
+    exit_code        INTEGER,
+    error            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_user   ON tasks (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_active_dedup
+    ON tasks (user_id, type, params) WHERE status IN ('queued', 'running');
+
+-- One stdout/stderr line per task, monotonic seq per task (spec 043).
+CREATE TABLE IF NOT EXISTS task_events (
+    task_id TEXT NOT NULL,
+    seq     INTEGER NOT NULL,
+    ts      TEXT NOT NULL,
+    line    TEXT NOT NULL,
+    PRIMARY KEY (task_id, seq),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
 
 -- Schema migrations tracking — idempotent, applied exactly once
 CREATE TABLE IF NOT EXISTS migrations (
@@ -985,6 +1026,9 @@ class JobStorage:
             # ── API read tokens — api_tokens table already created by SCHEMA (spec 041) ──
             self._migrate_api_tokens(conn)
 
+            # ── Task queue — tasks/task_events tables already created by SCHEMA (spec 043) ──
+            self._migrate_tasks(conn)
+
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
     def _migration_applied(self, conn, name: str) -> bool:
@@ -1005,6 +1049,12 @@ class JobStorage:
         if self._migration_applied(conn, "api_tokens"):
             return
         self._record_migration(conn, "api_tokens")
+
+    def _migrate_tasks(self, conn) -> None:
+        """Record the tasks migration name (the tables are idempotent in SCHEMA)."""
+        if self._migration_applied(conn, "tasks"):
+            return
+        self._record_migration(conn, "tasks")
 
     def _migrate_application_lifecycle(self, conn) -> None:
         """Add provenance/notes columns to interactions and backfill lifecycle events.
@@ -1541,6 +1591,223 @@ class JobStorage:
         ).fetchone()
         if row is not None and row[0] != self.user_id:
             raise ProfileNotFoundError(profile_id)
+
+    # ------------------------------------------------------------------
+    # Task queue + worker (spec 043)
+    # ------------------------------------------------------------------
+
+    def _task_row(self, row):
+        """Decode a ``tasks`` row: parse the canonical params JSON back to a dict."""
+        if row is None:
+            return None
+        d = dict(row)
+        params = d.get("params")
+        d["params"] = json.loads(params) if params else {}
+        return d
+
+    def _canonical_params(self, params: dict | None) -> str:
+        return json.dumps(params or {}, sort_keys=True, separators=(",", ":"))
+
+    def enqueue_task(self, type: str, params: dict | None = None,
+                     requested_by: str | None = None) -> dict | None:
+        """Validate + insert a task; on an active-dedup conflict return the existing task.
+
+        The partial unique index ``idx_tasks_active_dedup`` makes the dedup
+        race-free: an identical ``(user_id, type, params)`` already queued or
+        running raises ``IntegrityError`` and we return that row instead of a
+        new one (spec FR-001 / US1-4).
+        """
+        if type not in TASK_TYPES:
+            raise ValueError(f"unknown task type: {type}")
+        params = params or {}
+        if type == "score" and not params.get("profile_id"):
+            raise ValueError("score requires a profile_id")
+        params_canonical = self._canonical_params(params)
+        task_id = uuid.uuid4().hex
+        with self._conn() as conn:
+            if type == "score":
+                self._require_profile(conn, params["profile_id"])
+            try:
+                conn.execute(
+                    "INSERT INTO tasks (id, user_id, type, params, status, requested_by, created_at) "
+                    "VALUES (?, ?, ?, ?, 'queued', ?, ?)",
+                    (task_id, self.user_id, type, params_canonical, requested_by, _now()),
+                )
+            except sqlite3.IntegrityError:
+                row = conn.execute(
+                    "SELECT * FROM tasks WHERE user_id = ? AND type = ? AND params = ? "
+                    "AND status IN ('queued', 'running')",
+                    (self.user_id, type, params_canonical),
+                ).fetchone()
+                return self._task_row(row)
+        return self.get_task(task_id)
+
+    def get_task(self, task_id: str) -> dict | None:
+        """User-scoped: a foreign or absent task reads as ``None`` (spec 039)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ? AND user_id = ?",
+                (task_id, self.user_id),
+            ).fetchone()
+        return self._task_row(row)
+
+    def list_tasks(self, status: str | None = None, type: str | None = None,
+                   limit: int = 100, offset: int = 0):
+        """User-scoped, newest first. Returns ``(rows, total)``."""
+        where = ["user_id = ?"]
+        args = [self.user_id]
+        if status is not None:
+            where.append("status = ?")
+            args.append(status)
+        if type is not None:
+            where.append("type = ?")
+            args.append(type)
+        where_sql = " AND ".join(where)
+        with self._conn() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM tasks WHERE {where_sql}", args
+            ).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT * FROM tasks WHERE {where_sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                args + [limit, offset],
+            ).fetchall()
+        return [self._task_row(r) for r in rows], total
+
+    def get_active_task(self, type: str, params: dict | None = None) -> dict | None:
+        """The dedup row for a ``(type, params)`` key (tracker resume-after-reload)."""
+        params_canonical = self._canonical_params(params)
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE user_id = ? AND type = ? AND params = ? "
+                "AND status IN ('queued', 'running')",
+                (self.user_id, type, params_canonical),
+            ).fetchone()
+        return self._task_row(row)
+
+    def claim_next_task(self) -> dict | None:
+        """Atomically claim the oldest queued task (spec FR-003).
+
+        Global across users: the worker is the single consumer for every user's
+        queue. ``RETURNING`` (SQLite ≥ 3.35) makes claim + fetch one statement.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "UPDATE tasks SET status = 'running', started_at = ?, cancel_requested = 0 "
+                "WHERE id = (SELECT id FROM tasks WHERE status = 'queued' "
+                "ORDER BY created_at, id LIMIT 1) RETURNING *",
+                (_now(),),
+            ).fetchone()
+        return self._task_row(row)
+
+    def append_task_events(self, task_id: str, lines: list[str]) -> None:
+        """Insert a batch of output lines with sequential ``seq``, then trim to
+        the last ``EVENT_WINDOW`` events (spec R6)."""
+        if not lines:
+            return
+        with self._conn() as conn:
+            next_seq = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) FROM task_events WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()[0] + 1
+            ts = _now()
+            conn.executemany(
+                "INSERT INTO task_events (task_id, seq, ts, line) VALUES (?, ?, ?, ?)",
+                [(task_id, next_seq + i, ts, line) for i, line in enumerate(lines)],
+            )
+            conn.execute(
+                "DELETE FROM task_events WHERE task_id = ? AND seq <= ("
+                "SELECT seq FROM task_events WHERE task_id = ? "
+                "ORDER BY seq DESC LIMIT 1 OFFSET ?)",
+                (task_id, task_id, EVENT_WINDOW),
+            )
+
+    def get_task_events(self, task_id: str, after_seq: int = 0, limit: int | None = None) -> list:
+        """Lines with ``seq > after_seq``, ascending (spec R5 resumability)."""
+        sql = "SELECT seq, ts, line FROM task_events WHERE task_id = ? AND seq > ? ORDER BY seq ASC"
+        args = [task_id, after_seq]
+        if limit is not None:
+            sql += " LIMIT ?"
+            args.append(limit)
+        with self._conn() as conn:
+            rows = conn.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
+
+    def finish_task(self, task_id: str, status: str,
+                    exit_code: int | None = None, error: str | None = None) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE tasks SET status = ?, finished_at = ?, exit_code = ?, error = ? WHERE id = ?",
+                (status, _now(), exit_code, error, task_id),
+            )
+
+    def mark_cancelled(self, task_id: str) -> None:
+        """``queued`` → ``cancelled`` (user-scoped)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE tasks SET status = 'cancelled', finished_at = ? "
+                "WHERE id = ? AND user_id = ? AND status = 'queued'",
+                (_now(), task_id, self.user_id),
+            )
+
+    def request_cancel(self, task_id: str) -> None:
+        """Set ``cancel_requested = 1`` on a running task (user-scoped)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE tasks SET cancel_requested = 1 "
+                "WHERE id = ? AND user_id = ? AND status = 'running'",
+                (task_id, self.user_id),
+            )
+
+    def is_cancel_requested(self, task_id: str) -> bool:
+        """Polled by the worker between output reads."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT cancel_requested FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    def recover_interrupted(self) -> None:
+        """``running`` → ``failed`` (``error="interrupted"``) at worker startup (US1-6)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE tasks SET status = 'failed', error = 'interrupted', finished_at = ? "
+                "WHERE status = 'running'",
+                (_now(),),
+            )
+
+    def get_worker_heartbeat(self) -> str | None:
+        return self.get_config("worker.heartbeat")
+
+    def set_worker_heartbeat(self, ts: str) -> None:
+        self.set_config("worker.heartbeat", ts)
+
+    def get_pipeline_lock_holder(self) -> str | None:
+        return self.get_config("pipeline.lock_holder")
+
+    def set_pipeline_lock_holder(self, label: str | None) -> None:
+        if label is None:
+            with self._conn() as conn:
+                conn.execute("DELETE FROM config WHERE key = 'pipeline.lock_holder'")
+        else:
+            self.set_config("pipeline.lock_holder", label)
+
+    def prune_task_history(self, event_days: int = EVENT_RETENTION_DAYS,
+                           task_days: int = TASK_RETENTION_DAYS) -> None:
+        """Idle-tick cleanup (spec R6): drop finished tasks' events older than
+        ``event_days`` and finished task rows older than ``task_days``."""
+        finished = ("succeeded", "failed", "cancelled")
+        event_cutoff = (datetime.now(timezone.utc) - timedelta(days=event_days)).isoformat()
+        task_cutoff = (datetime.now(timezone.utc) - timedelta(days=task_days)).isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM task_events WHERE task_id IN "
+                "(SELECT id FROM tasks WHERE status IN (?, ?, ?) AND finished_at < ?)",
+                (*finished, event_cutoff),
+            )
+            conn.execute(
+                "DELETE FROM tasks WHERE status IN (?, ?, ?) AND finished_at < ?",
+                (*finished, task_cutoff),
+            )
 
     # ------------------------------------------------------------------
     # Gestion des profils

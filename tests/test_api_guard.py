@@ -49,6 +49,9 @@ ALLOW_LIST = frozenset({
     "set_active_profile_id", "upsert_profile",
     # US4 — catalogue company facts
     "update_company_fields",
+    # ── spec 043 tasks (request + follow) ──
+    "enqueue_task", "get_task", "list_tasks", "get_task_events",
+    "mark_cancelled", "request_cancel",
 })
 
 # Platform/pipeline writes the API must never call (spec 042, FR-005). Named so
@@ -58,6 +61,11 @@ FORBIDDEN_METHODS = frozenset({
     "set_ingestion_scope", "set_config", "upsert_company", "upsert_company_from_seed",
     "create_api_token", "list_api_tokens", "revoke_api_token",
     "purge_stale_jobs", "import_companies_from_csv",
+    # worker/cron-only task methods (spec 043): the API requests and follows, the
+    # worker claims/runs/finishes.
+    "claim_next_task", "append_task_events", "finish_task", "is_cancel_requested",
+    "recover_interrupted", "prune_task_history",
+    "set_worker_heartbeat", "set_pipeline_lock_holder",
 })
 
 _AUTH_ACCESSORS = frozenset({"resolve_api_token", "touch_api_token"})
@@ -98,6 +106,27 @@ def test_api_imports_no_sqlite3():
             elif isinstance(node, ast.ImportFrom):
                 if (node.module or "").startswith("sqlite3"):
                     problems.append(f"{_rel(path)}:{node.lineno}: from sqlite3 import ...")
+    assert problems == [], "\n".join(problems)
+
+
+# ── FR-008: no pipeline work reachable from a request handler ─────────────────
+
+_PIPELINE_MODULES = ("subprocess", "core.scrape", "core.score", "core.main", "core.worker")
+
+
+def test_api_imports_no_subprocess_nor_pipeline_entrypoints():
+    problems = []
+    for path in _api_files():
+        tree = ast.parse(_read(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in _PIPELINE_MODULES:
+                        problems.append(f"{_rel(path)}:{node.lineno}: import {alias.name}")
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                if mod in _PIPELINE_MODULES:
+                    problems.append(f"{_rel(path)}:{node.lineno}: from {mod} import ...")
     assert problems == [], "\n".join(problems)
 
 

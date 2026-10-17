@@ -633,3 +633,51 @@ class Interaction(ApiModel):
     notes: Any
     source: Any
     source_ref: Any
+
+
+# ── tasks (spec 043) ──────────────────────────────────────────────────────────
+
+class TaskType(str, Enum):
+    scrape = "scrape"
+    scrape_monitored = "scrape_monitored"
+    extract = "extract"
+    score = "score"
+
+
+class TaskCreate(ApiModel):
+    type: TaskType
+    params: dict
+
+
+class Task(ApiModel):
+    id: Any
+    user_id: Any
+    type: Any
+    params: Any
+    status: Any
+    requested_by: Any
+    cancel_requested: Any
+    created_at: Any
+    started_at: Any
+    finished_at: Any
+    exit_code: Any
+    error: Any
+
+
+class TaskEvent(ApiModel):
+    seq: Any
+    ts: Any
+    line: Any
+
+
+class TaskListEnvelope(ApiModel):
+    items: list[Task]
+    total: int
+    limit: int
+    offset: int
+
+
+class TaskEventEnvelope(ApiModel):
+    items: list[TaskEvent]
+    after_seq: int
+    task_status: Any

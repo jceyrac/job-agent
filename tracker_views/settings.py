@@ -1,10 +1,5 @@
 """tracker_views/settings.py — Profile management, stats, and actions."""
 import os
-import platform
-import subprocess
-import sys
-import time
-from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -12,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from tracker_views.shared import ensure_db, get_db, set_secret, SECTOR_LABELS
+from tracker_views.task_progress import enqueue, render_task_progress
 
 SECRET_SECTOR_CODES = list(SECTOR_LABELS.values())
 
@@ -38,204 +34,44 @@ def _textarea_to_list(value: str) -> list[str]:
     return [line.strip() for line in value.split("\n") if line.strip()]
 
 
-def _read_available(pipe) -> str:
-    """Read all currently available data from a subprocess pipe without blocking.
-
-    Uses select() on Unix/macOS (supports arbitrary file descriptors).
-    Falls back to a non-blocking thread-based read on Windows, where
-    select() only works with sockets.
-    """
-    if platform.system() == "Windows":
-        # Windows: read with a short timeout via a thread so we don't block
-        import threading
-        chunks = []
-
-        def _reader():
-            try:
-                chunk = pipe.read(65536)
-                if chunk:
-                    chunks.append(chunk)
-            except (ValueError, OSError):
-                pass
-
-        t = threading.Thread(target=_reader, daemon=True)
-        t.start()
-        t.join(timeout=0.05)   # 50 ms — fast enough for live output polling
-        return b"".join(chunks).decode("utf-8", errors="replace")
-    else:
-        import select as _select
-        import os as _os
-        chunks = []
-        fd = pipe.fileno()
-        while True:
-            ready, _, _ = _select.select([pipe], [], [], 0)
-            if not ready:
-                break
-            try:
-                chunk = _os.read(fd, 65536)
-            except (ValueError, OSError):
-                break
-            if not chunk:
-                break
-            chunks.append(chunk)
-        return b"".join(chunks).decode("utf-8", errors="replace")
-
-
 def _render_run_controls(db):
-    """Buttons to trigger scrape & score from the UI with stop capability."""
+    """Queue-backed launch buttons for scrape, monitoring, scoring and re-extract."""
     from core.profiles import DEFAULT_PROFILE_ID
 
     st.subheader("🚀 Run")
 
-    # ── Session-state keys for background processes ──────────────────────
-    if "bg_process" not in st.session_state:
-        st.session_state.bg_process = None       # Popen | None
-    if "bg_label" not in st.session_state:
-        st.session_state.bg_label = ""            # "scrape" | "score"
-    if "bg_output" not in st.session_state:
-        st.session_state.bg_output = ""            # accumulated stdout+stderr
-    if "bg_start" not in st.session_state:
-        st.session_state.bg_start = 0.0
-
-    proc = st.session_state.bg_process
-    label = st.session_state.bg_label
-    bg_output = st.session_state.bg_output
-    bg_start = st.session_state.bg_start
-
-    # ── Pending result from a completed run (display once, then clear) ──
-    pending = st.session_state.get("bg_result")
-    if pending:
-        st.session_state.bg_result = None
-        if pending["type"] == "success":
-            st.success(pending["message"])
-        else:
-            st.error(pending["message"])
-        output = pending.get("output", "")
-        st.text_area(f"{pending.get('label', 'run')} output", output, height=200)
-        if pending["type"] == "success":
-            st.cache_data.clear()
-
-    # ── Live metric (always fresh — recomputed on every render) ──────────
     active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
     unscored = len(db.get_jobs_for_scoring(active_id))
     st.metric("Unscored jobs", unscored)
 
-    # ── If a process is running, show its status ─────────────────────────
-    if proc is not None and proc.poll() is None:
-        elapsed = int(time.time() - bg_start)
-        mins, secs = divmod(elapsed, 60)
-        st.info(f"⏳ **{label.title()}** running — {mins}m {secs}s elapsed")
-
-        # Read any new output (stderr is merged into stdout via Popen)
-        try:
-            new_out = _read_available(proc.stdout)
-            if new_out:
-                st.session_state.bg_output += new_out
-        except Exception:
-            pass
-
-        if st.session_state.bg_output:
-            with st.expander("Live output", expanded=False):
-                st.text(st.session_state.bg_output[-8000:])
-
-        c1, c2 = st.columns([1, 3])
-        with c1:
-            if st.button(f"⏹ Stop {label}", use_container_width=True, type="primary"):
-                proc.kill()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    pass
-                # Read any final output
-                try:
-                    remaining = proc.stdout.read()
-                    if remaining:
-                        st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
-                except Exception:
-                    pass
-                st.session_state.bg_process = None
-                st.session_state.bg_label = ""
-                st.warning(f"{label.title()} stopped.")
-                st.rerun()
-        with c2:
-            if st.button("🔄 Refresh output", use_container_width=True):
-                st.rerun()
-        return
-
-    # ── If a process just finished, store result for next pass ──────────
-    if proc is not None and proc.poll() is not None:
-        ret = proc.returncode
-        # Read any remaining output (stderr is merged into stdout via Popen)
-        try:
-            remaining = proc.stdout.read()
-            if remaining:
-                st.session_state.bg_output += remaining.decode("utf-8", errors="replace")
-        except Exception:
-            pass
-
-        final_output = st.session_state.bg_output
-        finished_label = label
-
-        # Clean up session state
-        st.session_state.bg_process = None
-        st.session_state.bg_label = ""
-        st.session_state.bg_output = ""
-        st.session_state.bg_start = 0.0
-
-        st.session_state.bg_result = {
-            "type": "success" if ret == 0 else "error",
-            "message": f"✅ {finished_label.title()} completed successfully!" if ret == 0
-                       else f"❌ {finished_label.title()} exited with code {ret}",
-            "output": final_output,
-            "label": finished_label,
-        }
-        st.rerun()
-
-    # ── No process running — show launch buttons ─────────────────────────
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         if st.button("🕸 Run scrape", use_container_width=True,
-                     help="Fetch new jobs from all enabled scrapers. Can be stopped."):
-            proc = subprocess.Popen(
-                [sys.executable, "-u", "-m", "core.scrape"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=False,  # binary mode for non-blocking reads
-            )
-            st.session_state.bg_process = proc
-            st.session_state.bg_label = "scrape"
-            st.session_state.bg_output = ""
-            st.session_state.bg_start = time.time()
-            st.rerun()
-
+                     help="Fetch new jobs from all enabled scrapers."):
+            enqueue(db, "scrape")
     with c2:
         if st.button("🎯 Run monitoring", use_container_width=True,
-                     help="Run scrape.py --monitored-only. Fetches all openings "
-                          "from monitored companies, independent of the broad scrape."):
-            proc = subprocess.Popen(
-                [sys.executable, "-u", "-m", "core.scrape", "--monitored-only"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=False,
-            )
-            st.session_state.bg_process = proc
-            st.session_state.bg_label = "monitoring"
-            st.session_state.bg_output = ""
-            st.session_state.bg_start = time.time()
-            st.rerun()
-
+                     help="Fetch all openings from monitored companies, "
+                          "independent of the broad scrape."):
+            enqueue(db, "scrape_monitored")
     with c3:
         if st.button("🎯 Run scoring", use_container_width=True,
-                     help="Score all unscored jobs for the active profile. Can be stopped."):
-            active_id = db.get_active_profile_id() or DEFAULT_PROFILE_ID
-            proc = subprocess.Popen(
-                [sys.executable, "-u", "-m", "core.score", "--profile", active_id],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=False,
-            )
-            st.session_state.bg_process = proc
-            st.session_state.bg_label = "score"
-            st.session_state.bg_output = ""
-            st.session_state.bg_start = time.time()
-            st.rerun()
+                     help="Score all unscored jobs for the active profile."):
+            enqueue(db, "score", {"profile_id": active_id})
+    with c4:
+        if st.button("🔍 Re-extract", use_container_width=True,
+                     help="Re-extract job fields (score.py --extract)."):
+            enqueue(db, "extract")
+
+    if st.button("🔄 Clear Cache"):
+        st.cache_data.clear()
+        st.success("Cache cleared.")
+        st.rerun()
+
+    render_task_progress(db, "scrape")
+    render_task_progress(db, "scrape_monitored")
+    render_task_progress(db, "score", {"profile_id": active_id})
+    render_task_progress(db, "extract")
 
 
 def _render_setup(db):
@@ -388,6 +224,8 @@ def render():
     db = get_db()
 
     st.title("⚙️ Settings")
+    _render_run_controls(db)
+    st.divider()
     _render_setup(db)
     st.divider()
     _render_profile_editor(db)
@@ -765,57 +603,6 @@ def _render_broad_scraping(db):
         st.caption("(discovery) = company-keyed ATS that also run in the broad sweep. "
                    "Their monitoring toggle is in the Company Monitoring section below.")
 
-
-def _render_stats_actions(db):
-    st.subheader("Database Stats")
-
-    # Total counts
-    stats = db.get_database_stats()
-    total_jobs = stats["total_jobs"]
-    total_scored = stats["total_scores"]
-    total_jobs_no_score = total_jobs - stats["distinct_scored"]
-    total_companies = stats["total_companies"]
-    total_contacts = stats["total_contacts"]
-    unverified = stats["unverified_contacts"]
-    total_interactions = stats["total_interactions"]
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Jobs", total_jobs, f"{total_scored} scored")
-    c2.metric("Companies", total_companies)
-    c3.metric("Contacts", total_contacts, f"{unverified} unverified")
-    c4.metric("Interactions", total_interactions)
-
-    # Contacts by role_family
-    by_role = db.get_contacts_by_role_family()
-    if by_role:
-        st.caption("Contacts by role: " + " · ".join(
-            f"**{r[0] or 'unknown'}**: {r[1]}" for r in by_role
-        ))
-
-    st.divider()
-
-    # Actions
-    st.subheader("Actions")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🔄 Clear Cache", use_container_width=True):
-            st.cache_data.clear()
-            st.success("Cache cleared.")
-            st.rerun()
-
-    with c2:
-        if st.button("🔍 Re-extract Job Fields", use_container_width=True):
-            with st.spinner("Running score.py --extract ..."):
-                try:
-                    result = subprocess.run(
-                        [sys.executable, "-m", "core.score", "--extract"],
-                        capture_output=True, text=True, timeout=600,
-                    )
-                    st.text_area("Output", result.stdout + "\n" + result.stderr, height=200)
-                    st.cache_data.clear()
-                except subprocess.TimeoutExpired:
-                    st.error("Re-extract timed out after 10 minutes — it may still be running in the background.")
 
 from tracker_views.shared import is_active_page
 if is_active_page(__file__):

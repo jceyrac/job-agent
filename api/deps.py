@@ -127,3 +127,9 @@ def require_scope(scope: str):
         return current_user
 
     return _dependency
+
+
+# Task-queue scopes (spec 043): `tasks:run` for user-space extract/score;
+# `tasks:pipeline` is an *additional* grant for catalogue-wide scrape work.
+tasks_run = require_scope("tasks:run")
+tasks_pipeline = require_scope("tasks:pipeline")

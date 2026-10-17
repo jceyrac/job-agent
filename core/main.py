@@ -12,6 +12,7 @@ load_dotenv()
 from core.paths import DB_PATH
 from core.profiles import DEFAULT_PROFILE_ID
 from core.storage import JobStorage
+from core.tasks import CRON_LOCK_WAIT_SECONDS, PipelineLockTimeout, pipeline_lock
 
 
 def _ts() -> str:
@@ -74,8 +75,13 @@ def main():
         # ── Step: Monitored-company scrape (conditional) ────────────────────
         if run_monitoring:
             print(f"\n[{_ts()}] === Step {step_num}: Monitored scrape ===")
-            subprocess.run([sys.executable, "-m", "core.scrape", "--monitored-only",
-                            "--no-score"], check=True)
+            try:
+                with pipeline_lock("cron", db=db, timeout=CRON_LOCK_WAIT_SECONDS):
+                    subprocess.run([sys.executable, "-m", "core.scrape", "--monitored-only",
+                                    "--no-score"], check=True)
+            except PipelineLockTimeout:
+                print(f"[{_ts()}] ⚠ Monitored scrape skipped — pipeline lock held"
+                      f" >{CRON_LOCK_WAIT_SECONDS}s (worker busy)")
             t_now = time.monotonic()
             print(f"[{_ts()}] Monitored scrape done"
                   f" — {t_now - t_prev:.0f}s elapsed"
@@ -86,7 +92,12 @@ def main():
         # ── Step: Broad scrape (conditional) ────────────────────────────────
         if run_broad:
             print(f"\n[{_ts()}] === Step {step_num}: Broad scrape ===")
-            subprocess.run([sys.executable, "-m", "core.scrape"], check=True)
+            try:
+                with pipeline_lock("cron", db=db, timeout=CRON_LOCK_WAIT_SECONDS):
+                    subprocess.run([sys.executable, "-m", "core.scrape"], check=True)
+            except PipelineLockTimeout:
+                print(f"[{_ts()}] ⚠ Broad scrape skipped — pipeline lock held"
+                      f" >{CRON_LOCK_WAIT_SECONDS}s (worker busy)")
             t_now = time.monotonic()
             print(f"[{_ts()}] Broad scrape done"
                   f" — {t_now - t_prev:.0f}s elapsed"
@@ -97,10 +108,14 @@ def main():
         # ── Step: Extraction ────────────────────────────────────────────────
         print(f"\n[{_ts()}] === Step {step_num}: Extraction ===")
         try:
-            subprocess.run([sys.executable, "-m", "core.score", "--extract"], check=True)
+            with pipeline_lock("cron", db=db, timeout=CRON_LOCK_WAIT_SECONDS):
+                subprocess.run([sys.executable, "-m", "core.score", "--extract"], check=True)
         except subprocess.CalledProcessError as e:
             print(f"[{_ts()}] ⚠ Extraction step failed (exit {e.returncode})"
                   f" — continuing to scoring anyway")
+        except PipelineLockTimeout:
+            print(f"[{_ts()}] ⚠ Extraction skipped — pipeline lock held"
+                  f" >{CRON_LOCK_WAIT_SECONDS}s (worker busy)")
         t_now = time.monotonic()
         print(f"[{_ts()}] Extraction done"
               f" — {t_now - t_prev:.0f}s elapsed, {t_now - t0:.0f}s total")
@@ -110,11 +125,15 @@ def main():
         # ── Step: Scoring ───────────────────────────────────────────────────
         print(f"\n[{_ts()}] === Step {step_num}: Scoring [{active_id}] ===")
         try:
-            subprocess.run([sys.executable, "-m", "core.score", "--profile", active_id],
-                           check=True)
+            with pipeline_lock("cron", db=db, timeout=CRON_LOCK_WAIT_SECONDS):
+                subprocess.run([sys.executable, "-m", "core.score", "--profile", active_id],
+                               check=True)
         except subprocess.CalledProcessError as e:
             print(f"[{_ts()}] ⚠ Scoring step failed (exit {e.returncode})"
                   f" — some jobs may remain unscored")
+        except PipelineLockTimeout:
+            print(f"[{_ts()}] ⚠ Scoring skipped — pipeline lock held"
+                  f" >{CRON_LOCK_WAIT_SECONDS}s (worker busy)")
         t_now = time.monotonic()
         total = t_now - t0
         print(f"[{_ts()}] Scoring done"

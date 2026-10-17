@@ -6,6 +6,8 @@ routing: `Content-Length` is honoured when present (reject without reading), and
 chunked or absent length is counted as the body is read and rejected the moment it
 passes the cap. Pure Starlette — no new dependency.
 """
+import asyncio
+
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 MAX_BODY_BYTES = 64 * 1024
@@ -49,8 +51,20 @@ class RequestSizeLimitMiddleware:
             await self._send_413(send)
             return
 
+        # Deliver the buffered body once, then block: the middleware has fully
+        # consumed the request, so there are no further messages. Blocking (rather
+        # than yielding `http.disconnect`) keeps `StreamingResponse`'s
+        # `listen_for_disconnect` parked until the response body finishes and the
+        # task group cancels it — spinning here would starve the event loop.
+        body_sent = False
+        _no_more_messages = asyncio.Event()
+
         async def _receive() -> Message:
-            return {"type": "http.request", "body": bytes(body), "more_body": False}
+            nonlocal body_sent
+            if not body_sent:
+                body_sent = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            await _no_more_messages.wait()
 
         await self.app(scope, _receive, send)
 
