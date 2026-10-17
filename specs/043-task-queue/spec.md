@@ -66,7 +66,7 @@ As the operator, I want the cron pipeline and the worker to share one lock, so t
 **Acceptance Scenarios**:
 
 1. **Given** a lock file in the data volume (`/app/data/.pipeline.lock`, `flock`), **Then** `core.main` (cron) and the worker take it around every pipeline command (Q2).
-2. **Given** the cron pipeline is running, **When** a task is queued, **Then** it stays `queued` (with a visible "waiting for the scheduled pipeline" note) and starts after the lock is released.
+2. **Given** the cron pipeline is running, **When** a task is queued, **Then** it stays `queued` and shows *"The scheduled pipeline (07:00, 11:00, 16:00) is running — your task starts when it finishes."* and starts after the lock is released.
 3. **Given** a task is running, **When** cron starts, **Then** cron waits for the lock (bounded wait, logged), and the run still records `success`/`error` as today.
 
 ---
@@ -97,6 +97,18 @@ As the user, I want the tracker's Fetch / Score / Extract / Scrape buttons to wo
 3. **Given** a task already queued or running, **When** I press the same button, **Then** the page shows the existing task instead of starting another.
 4. **Given** the change, **Then** `tracker_views/` contains no `subprocess` / `threading` launch (guard test), and the constitution's known violation "subprocess lancés par le tracker" is removed (PATCH).
 5. **Given** the Re-extract buttons, **Then** they no longer block the page for up to 10 minutes.
+
+### Approved tracker states (mockup approved by Jean Claude 2026-10-17)
+
+The progress renderer shows exactly these states, using the current task labels:
+
+- **Waiting for the scheduled pipeline** (`queued`, cron lock held): *"The scheduled pipeline (07:00, 11:00, 16:00) is running — your task starts when it finishes."*
+- **Waiting for the worker** (`queued`, worker heartbeat stale): *"waiting for worker"*.
+- **Waiting for another task** (`queued`, worker alive, a different task `running` ahead): *"queued · waiting for "<other task label>" to finish"*.
+- **Running**: *"⏳ <Task> — running · <elapsed>"* with the live output tail.
+- **Succeeded / failed**: ✅ / ❌ (unchanged labels).
+- **Cancelled from `queued`**: *"⏹ <Task> cancelled"*.
+- **Cancelled from `running`**: *"⏹ <Task> stopped — results saved before the stop are kept."*
 
 ---
 

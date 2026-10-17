@@ -259,5 +259,5 @@ the `tasks` table + worker + SSE progression; the tracker's launch buttons move 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/042-api-write/plan.md
+at specs/043-task-queue/plan.md
 <!-- SPECKIT END -->
