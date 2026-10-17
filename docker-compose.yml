@@ -29,6 +29,11 @@ services:
       - JOB_AGENT_DATA_DIR=/app/data
       - JOB_AGENT_REQUIRE_DB=1
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   agent:
     build: .
