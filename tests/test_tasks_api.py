@@ -218,6 +218,22 @@ def test_task_events_foreign_404(api_env):
     assert r.status_code == 404
 
 
+def test_task_events_sse_foreign_404(api_env):
+    """SSE mode enforces the same user-scoped ownership check as the JSON fallback."""
+    _seed_second_user(api_env.path)
+    foreign = api_env.make_token(["tasks:run"], user_id="user-b")
+    r = api_env.client.post(
+        "/v1/me/tasks", json={"type": "extract", "params": {}}, headers=_auth(foreign)
+    )
+    foreign_id = r.json()["id"]
+    tok = api_env.make_token(["read:me"])
+    r = api_env.client.get(
+        f"/v1/me/tasks/{foreign_id}/events",
+        headers={**_auth(tok), "Accept": "text/event-stream"},
+    )
+    assert r.status_code == 404
+
+
 # ── events: SSE stream ───────────────────────────────────────────────────────
 
 def test_sse_stream_lines_then_terminal_status(api_env):

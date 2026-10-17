@@ -23,6 +23,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from core.paths import DB_PATH
+from core.tasks import WORKER_HEARTBEAT_STALE_SECONDS
 
 DEFAULT_MAX_AGE_HOURS = 26
 # A "healthy" full run is a full scrape or a successful score run. "error" and
@@ -98,6 +99,36 @@ def latest_runs_by_type(path: str) -> dict[str, dict]:
     return latest
 
 
+def worker_heartbeat_age(path: str, now: datetime) -> float | None:
+    """Age (seconds) of the worker heartbeat, or ``None`` when absent/unreadable.
+
+    The worker writes ``config["worker.heartbeat"]`` every ~15 s (spec 043,
+    FR-005); a missing or stale beat reads as "worker down". Read-only diagnostic,
+    like :func:`latest_runs_by_type` — no migrations on the live DB.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT value FROM config WHERE key = 'worker.heartbeat'"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        ts = datetime.fromisoformat(row[0])
+        if ts.tzinfo is not None:
+            ts = ts.replace(tzinfo=None)
+        return (now - ts).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
 def gate_failures(runs_by_type: dict[str, dict], now: datetime,
                   max_age_hours: float) -> list[str]:
     """Failure labels for the latest **full** run (status + age threshold)."""
@@ -148,6 +179,16 @@ def main(argv: list[str] | None = None) -> int:
             age_h = run_age_hours(r["ran_at"], now)
             print(f"run[{rt}]: status={r['status']} age={age_h:.1f}h")
         failures.extend(gate_failures(runs, now, args.max_age_hours))
+
+    hb_age = worker_heartbeat_age(args.db, now)
+    if hb_age is None:
+        print("worker heartbeat: NONE (worker not running or never beat)", file=sys.stderr)
+        failures.append("worker heartbeat")
+    elif hb_age > WORKER_HEARTBEAT_STALE_SECONDS:
+        print(f"worker heartbeat: STALE (age={hb_age:.0f}s)", file=sys.stderr)
+        failures.append("worker heartbeat")
+    else:
+        print(f"worker heartbeat: OK (age={hb_age:.0f}s)")
 
     if failures:
         print("HEALTH CHECK FAILED: " + "; ".join(failures), file=sys.stderr)

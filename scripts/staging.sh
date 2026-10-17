@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Staging tracker + read-only API on verva (spec 033 FR-009/010/014; spec 041 FR-011).
+# Staging tracker + read-only API + worker on verva (spec 033 FR-009/010/014;
+# spec 041 FR-011; spec 043 US5).
 #
-# Runs a candidate commit as a disposable tracker on port 8502 and read-only API on
-# 8602/8443 against a copy of the latest backup, without touching production (its
-# container, images, the `job_data` volume, or `/opt/job-agent`'s working tree).
+# Runs a candidate commit as a disposable tracker on port 8502, a read-only API on
+# 8602/8443, and a task worker against a copy of the latest backup, without touching
+# production (its container, images, the `job_data` volume, or `/opt/job-agent`'s
+# working tree).
 #
 # Usage:
 #   scripts/staging.sh up <commit-sha | branch>
@@ -26,6 +28,7 @@ CONTAINER="job-agent-staging"
 PORT="8502"
 API_CONTAINER="job-agent-staging-api"
 API_PORT="8602"
+WORKER_CONTAINER="job-agent-staging-worker"
 ENV_FILE="/opt/job-agent/.env"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -126,6 +129,20 @@ up() {
   # 8. Expose the API on the tailnet under /api (TLS, path-stripped).
   tailscale serve --bg "--https=8443" --set-path /api "http://127.0.0.1:${API_PORT}"
 
+  # 9. Start the worker (task queue consumer) on the same image/volume/env. It
+  #    shares /app/data with the tracker and API, so it sees the same queue and
+  #    the same `.pipeline.lock` file (spec 043, FR-004).
+  docker run -d --name "$WORKER_CONTAINER" \
+    --env-file "$ENV_FILE" \
+    -e JOB_AGENT_DATA_DIR=/app/data \
+    -e JOB_AGENT_REQUIRE_DB=1 \
+    -e GMAIL_APP_PASSWORD= \
+    -e NOTIFY_TO= \
+    -e JOPLIN_TOKEN= \
+    -v "$VOLUME":/app/data \
+    "$IMAGE" \
+    python -m core.worker
+
   trap - EXIT  # success — keep the staging environment running
   local tip="${TAILSCALE_IP:-$(tailscale ip -4 2>/dev/null || true)}"
   local api_name
@@ -133,6 +150,7 @@ up() {
     | python3 -c 'import sys,json; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)"
   echo "Staging tracker up at http://${tip:-<tailnet-ip>}:${PORT}"
   echo "Staging API up at https://${api_name:-<verva>.<tailnet>.ts.net}:8443/api"
+  echo "Staging worker up (${WORKER_CONTAINER})"
 }
 
 run() {
@@ -158,6 +176,7 @@ run() {
 down() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker rm -f "$API_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -f "$WORKER_CONTAINER" >/dev/null 2>&1 || true
   tailscale serve --bg "--tcp=${PORT}" off >/dev/null 2>&1 || true
   tailscale serve --bg "--https=8443" off >/dev/null 2>&1 || true
   docker rmi "$IMAGE" >/dev/null 2>&1 || true
@@ -172,6 +191,9 @@ down() {
   fi
   if docker ps -a --format '{{.Names}}' | grep -qx "$API_CONTAINER"; then
     echo "leftover: container $API_CONTAINER" >&2; leftover=1
+  fi
+  if docker ps -a --format '{{.Names}}' | grep -qx "$WORKER_CONTAINER"; then
+    echo "leftover: container $WORKER_CONTAINER" >&2; leftover=1
   fi
   if docker images --format '{{.Repository}}:{{.Tag}}' | grep -qx "$IMAGE"; then
     echo "leftover: image $IMAGE" >&2; leftover=1

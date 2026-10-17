@@ -121,8 +121,8 @@ second press shows the existing task; `tracker_views/` imports no `subprocess`/`
 
 **Goal**: staging runs a worker; deploy ships the worker; SHA/parity/health/lock verified.
 
-- [ ] T024 [US5] Update `scripts/staging.sh`: start a staging worker container (`job-agent-staging-worker` on the staging volume) in `up`, and remove it in `down` (extend the leftover checks).
-- [ ] T025 [US5] Update `scripts/health_check.py` to report worker heartbeat age (read `config["worker.heartbeat"]`, gate on a threshold).
+- [X] T024 [US5] Update `scripts/staging.sh`: start a staging worker container (`job-agent-staging-worker` on the staging volume) in `up`, and remove it in `down` (extend the leftover checks).
+- [X] T025 [US5] Update `scripts/health_check.py` to report worker heartbeat age (read `config["worker.heartbeat"]`, gate on a threshold).
 - [ ] T026 [US5] Staging round-trip (`quickstart.md` §6) — **STOP before this step**:
   1. Stage the **exact SHA** (`scripts/staging.sh up <full-sha>`, never the branch name); confirm `/api/health` version == staged SHA and the staging worker is up.
   2. Parity vs the prod image byte-identical **before** any task runs.
