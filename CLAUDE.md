@@ -143,7 +143,7 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 
 - **Dev:** MacBook Pro M5 Pro, Python 3.11 venv at `.venv/`, repo at `/Users/jeanclaudevd/AI-Suite/job_agent/`. All development happens here.
 - **Prod (verva):** HPE ProLiant Ubuntu server, Docker Compose, repo at `/opt/job-agent`. Deploy-only — never develop or write specs there. SSH access is available for live diagnostics.
-- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `api` (always-on FastAPI read-only :8601, Tailscale HTTPS under `/api`), `agent` (cron scrape+score).
+- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `api` (always-on FastAPI :8601, Tailscale HTTPS under `/api`), `agent` (cron scrape+score).
 - **Network:** the production tracker is bound to loopback (`127.0.0.1:8501`) in compose and reached only over the tailnet via `tailscale serve`; the API is bound to `127.0.0.1:8601` and served as `https://<verva>.<tailnet>.ts.net/api` via `tailscale serve --bg --https=443 --set-path /api http://127.0.0.1:8601` (app sets `root_path="/api"`) — see `docs/infrastructure.md`. Clients read the API base URL from `JOB_AGENT_API_URL` (never hard-coded).
 - **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod. Live data lives on verva; the local Mac DB is typically empty.
 - **Locations:** `core/paths.py` is the single source of truth for every path (`PROJECT_ROOT`, `DATA_DIR`, `DB_PATH`, `OUTPUT_DIR`, `ENV_PATH`, `data_path()`). Env overrides: `JOB_AGENT_DATA_DIR` (data dir), `JOB_AGENT_OUTPUT_DIR` (outputs dir); `JOB_AGENT_REQUIRE_DB=1` makes `import core.paths` refuse startup (no dir/DB created) if the DB is missing. Rule: locations come from `core/paths.py` only — never derive `data`/`outputs`/`.env` from `__file__` or a CWD-relative `"data/…"` literal; scripts are launched as modules (`-m <module>`, e.g. `python -m core.scrape`), never by `.py` filename.
@@ -162,20 +162,36 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 
 ---
 
-## API (v1, read-only)
+## API (v1, read + write)
 
-- `api/` is a read-only FastAPI app over `core`, tailnet-only, auth with scoped
-  bearer tokens (`read:catalogue`, `read:me`) bound to a user. Tokens are managed
-  with `python -m scripts.api_token` (SHA-256 hashes only, raw token printed once).
+- `api/` is a FastAPI app over `core`, tailnet-only, auth with scoped bearer
+  tokens (`read:catalogue`, `read:me`, `write:me`, `write:catalogue`) bound to a
+  user. Tokens are managed with `python -m scripts.api_token` (SHA-256 hashes
+  only, raw token printed once).
 - Endpoints are versioned under `/v1` and grouped one router per domain
   (`api/routers/catalogue.py`, `api/routers/me.py`); `/health` is outside `/v1`
   and unauthenticated. Each payload equals its `JobStorage` source field-for-field
   (pydantic `extra="forbid"`).
+- **Writes (spec 042)** are synchronous, scoped, and mirror the tracker's
+  `JobStorage` calls with no new storage behaviour:
+  - `write:me` — job status + lifecycle events (`PUT /v1/me/jobs/{id}/status`,
+    `POST …/events`, `PATCH/DELETE …/events/{event_id}`); company relationship
+    (`PATCH /v1/me/companies/{id}`); contacts (`POST/PATCH /v1/me/contacts…`);
+    interactions; active-profile switch and profile criteria edit
+    (`PUT /v1/me/active-profile`, `PUT /v1/me/profiles/{id}` — no rescoring).
+  - `write:catalogue` — shared company facts only (`PATCH /v1/companies/{id}`),
+    fact fields (`name, website, company_country, industry_sector, company_size,
+    x_handle, careers_url, ats_provider, ats_identifier, scraping_method,
+    research_notes`); user-space `notes`/`status`/`monitored` are rejected.
+  - Writes are capped at 64 KB (`413`), validated by explicit models
+    (`extra="forbid"` → `422`), and emit one structured log line
+    (`api/write_log.py` — token id, user id, route, resource id, status; never
+    the body or token value).
 - **No SQL in `api/`** — all DB access goes through `JobStorage`; a guard test
-  fails on any non-allow-listed method, a `sqlite3` import, or an unbound
-  `JobStorage` outside `api/deps.py`'s auth path. One `JobStorage` per request
-  (unbound for auth, bound to the token's `user_id` for data). No LLM/long work
-  in a handler.
+  fails on any non-allow-listed method (read + write set), a `sqlite3` import,
+  or an unbound `JobStorage` outside `api/deps.py`'s auth path. One `JobStorage`
+  per request (unbound for auth, bound to the token's `user_id` for data). No
+  LLM/long work in a handler.
 - Scores are user-scoped in `JobStorage` (`get_user_scores_for_job`) — the API
   never calls the cross-user `get_scores_for_job` (spec 039 rule).
 - Future public exposure is a deliberate separate step: see `docs/api-exposure.md`.
@@ -244,5 +260,5 @@ after the first scoring run; FR-006 also drops the scoring pre-filter title clau
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/041-api-read/plan.md
+at specs/042-api-write/plan.md
 <!-- SPECKIT END -->

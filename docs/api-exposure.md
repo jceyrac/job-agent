@@ -18,8 +18,12 @@ separate step, not a config flip.
 - **Token rotation policy.** Expiry is already supported (FR-013); a public
   exposure needs a documented rotation cadence and a revocation workflow.
 - **Security headers and request-size limits.** HSTS, content-type guards,
-  `X-Content-Type-Options`, and bounded request bodies (v1 is GET-only, so
-  bodies are not accepted today).
+  `X-Content-Type-Options`. Write bodies are already capped at 64 KB
+  (spec 042); a public surface still needs the headers.
+- **CSRF protection.** Not needed while auth is bearer-only (no ambient cookie
+  credentials to ride along). It becomes mandatory the moment the future `web/`
+  front introduces HTTP-only session cookies (the "human login" item above) —
+  state-changing routes will need origin/Referer checks or CSRF tokens.
 - **Audit-log retention.** A retention window and access-control policy for the
   failed-auth and access logs.
 - **Dependency update policy.** FastAPI/uvicorn/pydantic are pinned ≥14 days old
@@ -39,8 +43,9 @@ separate step, not a config flip.
 
 ## What already exists (foundations, not exposure)
 
-- Scoped bearer tokens bound to a user (`read:catalogue`, `read:me`), SHA-256
-  hashes only, optional expiry (`create --expires-in <days>`).
+- Scoped bearer tokens bound to a user (`read:catalogue`, `read:me`,
+  `write:me`, `write:catalogue`), SHA-256 hashes only, optional expiry
+  (`create --expires-in <days>`).
 - Generic JSON errors with no stack traces or internal paths.
 - A configurable base URL (`JOB_AGENT_API_URL`) so moving off the tailnet name is
   a configuration change, not a rewrite.
