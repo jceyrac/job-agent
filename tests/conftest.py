@@ -7,12 +7,15 @@ storage. Each test file builds on `api_env`; none touches the live `data/jobs.db
 """
 from __future__ import annotations
 
+import io
+import logging
 import sqlite3
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from api.logging_config import configure_logging
 from api.main import create_app
 from core.storage import JobStorage
 
@@ -84,3 +87,25 @@ def api_env(tmp_path):
         return db.create_api_token("test", scopes, user_id=user_id, expires_at=expires_at)
 
     return SimpleNamespace(path=path, client=client, db=db, make_token=make_token)
+
+
+@pytest.fixture
+def api_log_stream():
+    """Capture the configured `api.*` stdout handler's stream (the "wiring").
+
+    Swaps the handler's stream for a StringIO, yields it, and restores the
+    original on teardown — so a test can assert a write / failed-auth line lands
+    on the configured handler, not just that the record was created.
+    """
+    configure_logging()
+    handler = next(
+        h for h in logging.getLogger("api").handlers
+        if isinstance(h, logging.StreamHandler)
+    )
+    buf = io.StringIO()
+    original = handler.stream
+    handler.stream = buf
+    try:
+        yield buf
+    finally:
+        handler.stream = original

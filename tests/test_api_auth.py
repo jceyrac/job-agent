@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import subprocess
 import sys
@@ -104,15 +103,16 @@ def test_last_used_at_throttled_to_once_per_minute(api_env):
 
 # ── FR-006 / FR-014: no token in logs, failed-auth counted ───────────────────
 
-def test_no_token_material_in_logs(api_env, caplog):
+def test_no_token_material_in_logs(api_env, api_log_stream):
     raw = api_env.make_token(["read:me"])
-    with caplog.at_level(logging.INFO, logger="api.auth"):
-        api_env.client.get("/v1/me", headers=_auth(raw))          # success: no auth log
-        api_env.client.get("/v1/me", headers=_auth("bogus-token"))  # failure: reason only
-    assert raw not in caplog.text
-    assert "bogus-token" not in caplog.text
-    assert "Authorization" not in caplog.text
-    assert "unknown" in caplog.text  # the failure was logged with a reason, not the token
+    api_env.client.get("/v1/me", headers=_auth(raw))           # success: no auth log
+    api_env.client.get("/v1/me", headers=_auth("bogus-token"))  # failure: reason only
+
+    text = api_log_stream.getvalue()
+    assert raw not in text
+    assert "bogus-token" not in text
+    assert "Authorization" not in text
+    assert "unknown" in text  # the failure was logged with a reason, not the token
 
 
 def test_failed_auth_counted_per_client(api_env):

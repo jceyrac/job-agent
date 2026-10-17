@@ -305,7 +305,6 @@ def test_catalogue_scope_rejected_for_me_token(api_env):
 # `changed_at`/`created_at` are wall-clock (`_now()`) and differ between the two
 # writes, so they are dropped from the comparison.
 
-import logging
 import shutil
 import sqlite3
 from datetime import date
@@ -809,22 +808,48 @@ def test_write_unknown_field_422(api_env):
     assert r.json() == {"error": "validation_error", "message": "Invalid request"}
 
 
-def test_write_log_emits_one_line_no_body_or_token(api_env, caplog):
+def test_write_log_emits_one_line_no_body_or_token(api_env, api_log_stream):
     raw = api_env.make_token(["write:me"])
     row = api_env.db.resolve_api_token(raw)
 
-    with caplog.at_level(logging.INFO, logger="api.write"):
-        r = api_env.client.put(
-            "/v1/me/jobs/job-1/status",
-            json={"status": "queued", "notes": "secret-body"},
-            headers=_auth(raw),
-        )
+    r = api_env.client.put(
+        "/v1/me/jobs/job-1/status",
+        json={"status": "queued", "notes": "secret-body"},
+        headers=_auth(raw),
+    )
     assert r.status_code == 200
 
-    lines = [ln for ln in caplog.text.splitlines() if "write_ok" in ln]
+    text = api_log_stream.getvalue()
+    lines = [ln for ln in text.splitlines() if "write_ok" in ln]
     assert len(lines) == 1
     assert f"token_id={row['id']}" in lines[0]
     assert "user_id=user-a" in lines[0]
     assert "status=200" in lines[0]
-    assert "secret-body" not in caplog.text
-    assert raw not in caplog.text
+    assert "secret-body" not in text
+    assert raw not in text
+    assert "Authorization" not in text
+
+
+def test_api_logging_wiring_emits_write_and_auth_lines(api_env, api_log_stream):
+    """FR-007 + FR-014 wiring: after app startup, a write and a failed auth each
+    land on the configured `api.*` handler (stdout in prod), and no line carries
+    the Authorization header, the token, or the request body."""
+    raw = api_env.make_token(["write:me"])
+
+    assert (
+        api_env.client.put(
+            "/v1/me/jobs/job-1/status",
+            json={"status": "queued", "notes": "secret-body"},
+            headers=_auth(raw),
+        ).status_code
+        == 200
+    )
+    assert api_env.client.get("/v1/me", headers=_auth("bogus-token")).status_code == 401
+
+    text = api_log_stream.getvalue()
+    assert "write_ok" in text
+    assert "auth_failed" in text
+    assert "Authorization" not in text
+    assert raw not in text
+    assert "bogus-token" not in text
+    assert "secret-body" not in text
