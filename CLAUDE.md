@@ -80,6 +80,8 @@ Migration is progressive: the app MUST stay operational after every step.
 - `core/scrape.py` — discovers and runs all enabled scrapers
 - `core/score.py` — CLI entry point for extraction and scoring
 - `core/job_actions.py` — per-job actions (`extract_one`, `score_one`, `prepare_one`)
+- `core/tasks.py` — task-type allow-list, command map, timeouts, `pipeline_lock` (flock shared by cron + worker)
+- `core/worker.py` — single-consumer loop: claims one task, streams output to `task_events`, heartbeat
 - `core/cv_agent/` — LangGraph CV/letter agent (`graph.py`, `nodes.py`, `state.py`, `cli.py`); HITL via `interrupt()` + `SqliteSaver` checkpointer
 - `core/company_researcher.py` — company enrichment / ATS detection
 - `scripts/ingestion_scope.py` — view/edit the platform ingestion scope (`config.ingestion_scope`; the prose path, no deploy)
@@ -143,7 +145,7 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 
 - **Dev:** MacBook Pro M5 Pro, Python 3.11 venv at `.venv/`, repo at `/Users/jeanclaudevd/AI-Suite/job_agent/`. All development happens here.
 - **Prod (verva):** HPE ProLiant Ubuntu server, Docker Compose, repo at `/opt/job-agent`. Deploy-only — never develop or write specs there. SSH access is available for live diagnostics.
-- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `api` (always-on FastAPI :8601, Tailscale HTTPS under `/api`), `agent` (cron scrape+score).
+- **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `api` (always-on FastAPI :8601, Tailscale HTTPS under `/api`), `worker` (task-queue consumer, `python -m core.worker`, no network exposure), `agent` (cron scrape+score).
 - **Network:** the production tracker is bound to loopback (`127.0.0.1:8501`) in compose and reached only over the tailnet via `tailscale serve`; the API is bound to `127.0.0.1:8601` and served as `https://<verva>.<tailnet>.ts.net/api` via `tailscale serve --bg --https=443 --set-path /api http://127.0.0.1:8601` (app sets `root_path="/api"`) — see `docs/infrastructure.md`. Clients read the API base URL from `JOB_AGENT_API_URL` (never hard-coded).
 - **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod. Live data lives on verva; the local Mac DB is typically empty.
 - **Locations:** `core/paths.py` is the single source of truth for every path (`PROJECT_ROOT`, `DATA_DIR`, `DB_PATH`, `OUTPUT_DIR`, `ENV_PATH`, `data_path()`). Env overrides: `JOB_AGENT_DATA_DIR` (data dir), `JOB_AGENT_OUTPUT_DIR` (outputs dir); `JOB_AGENT_REQUIRE_DB=1` makes `import core.paths` refuse startup (no dir/DB created) if the DB is missing. Rule: locations come from `core/paths.py` only — never derive `data`/`outputs`/`.env` from `__file__` or a CWD-relative `"data/…"` literal; scripts are launched as modules (`-m <module>`, e.g. `python -m core.scrape`), never by `.py` filename.
@@ -259,15 +261,16 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-17)
+## Current focus (as of 2026-10-21)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Steps 3–5 shipped (039 user-space
-separation → 040 platform ingestion scope → 041 read API) and step 6-partie-1 (042 write
-API) shipped to prod (2026-10-17). Next: **step 6-partie-2 — spec 043** (`specs/043-task-queue/`),
-the `tasks` table + worker + SSE progression; the tracker's launch buttons move onto the queue.
+**API migration roadmap** — `docs/roadmap-api.md`. Steps 3–6 shipped (039 user-space
+separation → 040 platform ingestion scope → 041 read API → 042 write API → 043 task
+queue + worker + SSE), all in prod. Next: **step 6b — Agents via l'API**
+(`specs/044-agents-via-api/`), where the cv_agent reads the job and writes its
+application documents through the API (token à scopes) instead of importing `core`.
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/043-task-queue/plan.md
+at specs/044-agents-via-api/plan.md
 <!-- SPECKIT END -->

@@ -123,7 +123,7 @@ second press shows the existing task; `tracker_views/` imports no `subprocess`/`
 
 - [X] T024 [US5] Update `scripts/staging.sh`: start a staging worker container (`job-agent-staging-worker` on the staging volume) in `up`, and remove it in `down` (extend the leftover checks).
 - [X] T025 [US5] Update `scripts/health_check.py` to report worker heartbeat age (read `config["worker.heartbeat"]`, gate on a threshold).
-- [ ] T026 [US5] Staging round-trip (`quickstart.md` §6) — **STOP before this step**:
+- [X] T026 [US5] Staging round-trip (`quickstart.md` §6) — **STOP before this step**:
   1. Stage the **exact SHA** (`scripts/staging.sh up <full-sha>`, never the branch name); confirm `/api/health` version == staged SHA and the staging worker is up.
   2. Parity vs the prod image byte-identical **before** any task runs.
   3. Each tracker button → a task completing with the same effect as today (score run → same new scores as a direct `core.score` on another copy).
@@ -131,8 +131,8 @@ second press shows the existing task; `tracker_views/` imports no `subprocess`/`
   5. Cancel on a **queued** and on a **running** task.
   6. Lock exercised: run `core.main` in staging while a task is queued → the task waits, then runs.
   7. `scripts/staging.sh down` removes tracker, API **and worker**.
-- [ ] T027 [US5] ff-only merge onto `main` — **STOP before this step** (`git merge --ff-only <full-sha>`; refuse non-ff).
-- [ ] T028 [US5] Deploy — **STOP before this step; deploy outside 07:00/11:00/16:00**:
+- [X] T027 [US5] ff-only merge onto `main` — **STOP before this step** (`git merge --ff-only <full-sha>`; refuse non-ff).
+- [X] T028 [US5] Deploy — **STOP before this step; deploy outside 07:00/11:00/16:00**:
   `./scripts/deploy.sh` → `worker` container up; `/api/health` version == staged SHA; a cheap prod task (small `score`/`extract`) completes; the next cron run `success` with no overlapping pipeline run.
 
 ---

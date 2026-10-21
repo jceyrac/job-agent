@@ -118,3 +118,19 @@ The `api` container binds `127.0.0.1:8601`, so the app does **not** enable
 ```bash
 tailscale serve --bg --https=443 off
 ```
+
+---
+
+# Worker — task queue consumer (spec 043)
+
+The `worker` container runs `python -m core.worker` and consumes the `tasks`
+table. It is **not a network service** — it has no published port and nothing in
+`tailscale serve` references it — so it is reachable only from the host and the
+other containers on the compose network, never over the tailnet.
+
+- Shares the `job_data` volume (reads/writes `jobs.db` directly) and is serialized
+  with the cron pipeline (`core.main`) through a shared `flock` (`pipeline_lock`),
+  so the worker and cron never run at once.
+- `restart: unless-stopped`, json-file log rotation (same as `agent`).
+- Writes `config["worker.heartbeat"]` every ~15 s; `scripts/health_check.py`
+  reports its age and gates on a stale threshold (spec 043, FR-005).
