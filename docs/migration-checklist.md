@@ -130,6 +130,31 @@ implementation phase). From spec 032 `quickstart.md` §7:
 
 ---
 
+## Spec 043 — Task queue, worker and SSE (step 6-part-2 release + rollback)
+
+Step 6-part-2 ships through the standard flow above. Its schema change is
+**additive only** — new `tasks` + `task_events` tables and a few `config` keys
+(`pipeline.lock_holder`, `worker.heartbeat`) — so the previous image reads and
+writes the DB normally and simply ignores the new tables. No shared or
+user-space column is rebuilt or rekeyed (unlike step 3, spec 039).
+
+### Rollback
+
+If 043 must be reverted after deploy:
+
+1. **Revert the commits** on `main` (no force-push): `git revert` the 043
+   commits, commit, push.
+2. **Stop and remove the worker container** on verva (the previous image has no
+   `worker` service, so `deploy.sh` alone would leave it orphaned):
+   `docker compose stop worker && docker compose rm -f worker`.
+3. **Redeploy the previous image**: `./scripts/deploy.sh`.
+
+The `tasks`/`task_events` tables and their `config` keys are left in place —
+additive and harmless to the previous image. The pre-rebuild backup taken by
+`deploy.sh` remains the restore point if a full DB rollback is ever needed.
+
+---
+
 ## Notes
 
 - A schema-touching step also follows **expand / contract**: add + backfill, keep the
