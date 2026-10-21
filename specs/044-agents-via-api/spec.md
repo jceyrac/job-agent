@@ -49,6 +49,26 @@ API v1 read/write (specs 041–042), scoped tokens, task queue + worker + SSE (s
 
 Spec 036: "application records written by the cv_agent on the Mac stay in the local DEV DB and are not visible in the live tracker (status still updated manually in prod); resolved by roadmap step 6b."
 
+### Known limitation (accepted — no fix)
+
+`comp_flag`'s `job.salary` term is dead code. `JobPosting.salary` is a vestigial
+dataclass field that is **never persisted** — the `jobs` table has no `salary`
+column, only the Phase-1e extraction columns `salary_text` and `comp_annual_eur`.
+Consequently:
+
+- `POST /v1/jobs` (`JobCreate`) has no `salary` field and `extra="forbid"`, so a
+  client sending `salary` is rejected (`422`); the router constructs `JobPosting`
+  without `salary` anyway.
+- `core.models.posting_from_dict` hardcodes `salary=None`, but since nothing ever
+  persists `salary`, this loses nothing real: the actual salary signals
+  (`salary_text`, `comp_annual_eur`) **do** round-trip through
+  `posting_from_dict`.
+- `core.scorer` sets `comp_flag = 1` when
+  `not (job.salary_text or job.comp_annual_eur or job.salary)`; the `job.salary`
+  term is always `None`, and both the agent's `--job` path and the local paste
+  path reconstruct the job via `posting_from_dict`, so `comp_flag` is computed
+  identically on both. No divergence, no fix required.
+
 ---
 
 ## User Scenarios & Testing *(mandatory)*

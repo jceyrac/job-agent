@@ -39,7 +39,14 @@ python -m core.score --extract
 python -m core.cv_agent.cli <job_id | url>      # --paste reads a posting from stdin
 python -m core.cv_agent.cli --paste --auto --title <t> --company <c>  # --resume/--approve/--reject
 #   Agent env: JOB_AGENT_API_URL (API base), JOB_AGENT_API_TOKEN (scoped bearer;
-#   else ~/.config/job_agent/agent_token, mode 0600), CV_OUTPUT_DIR (render root).
+#   else ~/.config/job_agent/agent_token, mode 0600), CV_OUTPUT_DIR (render root),
+#   CV_AGENT_CHECKPOINT_DB (checkpointer sqlite), CV_PUBLISH=off / CV_PUBLISH_DIR (Nextcloud).
+#   Staging run (isolates the agent from prod output/checkpointer/Nextcloud):
+#     export JOB_AGENT_API_URL=https://<verva>.<tailnet>.ts.net/api   # or the staging host
+#     export JOB_AGENT_API_TOKEN=<staging-token>                      # read:me,write:me,tasks:run,ingest
+#     export CV_OUTPUT_DIR=/tmp/cv_staging_outputs
+#     export CV_AGENT_CHECKPOINT_DB=/tmp/cv_staging_checkpoints.sqlite
+#     export CV_PUBLISH=off           # or CV_PUBLISH_DIR=Documents/00 Staging to a scratch folder
 
 # Serve the read-only API locally (FastAPI, loopback)
 uvicorn api.main:app --host 127.0.0.1 --port 8601

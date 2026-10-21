@@ -8,8 +8,9 @@ render itself stays 100% local (see ``renderer.py``).
 
 ⚠️ No ``llm`` import (factual firewall). Uses only ``httpx`` (already a
 dependency). Secrets come from ``CV_NC_*`` env vars — never hardcoded, never
-logged. Publication is a no-op (returns ``None``) when ``CV_NC_*`` is unset, so a
-pure-local dev run is unaffected.
+logged. Publication is a no-op (returns ``None``) when ``CV_NC_*`` is unset or
+``CV_PUBLISH=off``, so a pure-local or staging run is unaffected; ``CV_PUBLISH_DIR``
+redirects the remote folder (staging isolation, spec 044).
 """
 
 import os
@@ -30,14 +31,39 @@ _APP_FOLDER = "Documents/01 Job/Job applications"
 _EXTENSIONS = (".json", ".docx", ".pdf")
 
 
+def _publish_disabled() -> bool:
+    """``CV_PUBLISH=off|0|false|no`` disables publication even when ``CV_NC_*`` is set.
+
+    This is the staging escape hatch (spec 044): a run against the staging API must
+    not write into the real "Job applications" folder, so it sets ``CV_PUBLISH=off``
+    (or ``CV_PUBLISH_DIR`` to a scratch folder) rather than relying on the
+    presence/absence of the ``CV_NC_*`` credentials.
+    """
+    return (os.environ.get("CV_PUBLISH") or "").strip().lower() in ("off", "0", "false", "no")
+
+
+def _app_folder() -> str:
+    """The remote folder root under the user's Nextcloud files.
+
+    ``CV_PUBLISH_DIR`` redirects publication to a scratch subtree so a staging run
+    never writes into the real "Job applications" folder.
+    """
+    return os.environ.get("CV_PUBLISH_DIR") or _APP_FOLDER
+
+
 def publish_application(local_dir: str, company: str, title: str) -> dict | None:
     """PUT the rendered files from ``local_dir`` into Nextcloud via WebDAV.
 
-    Returns ``None`` when the three ``CV_NC_*`` env vars are all absent (publish
-    disabled — local dev mode); raises ``RuntimeError`` on a partial set
-    (misconfiguration); otherwise returns
+    Returns ``None`` when publication is disabled (``CV_PUBLISH=off``) or the
+    three ``CV_NC_*`` env vars are all absent (local dev mode); raises
+    ``RuntimeError`` on a partial set (misconfiguration); otherwise returns
     ``{nextcloud_dir_url, web_url, pdf_url, files}``.
     """
+    if _publish_disabled():
+        print("cv_agent:   Nextcloud publish disabled (CV_PUBLISH=off)",
+              file=sys.stderr, flush=True)
+        return None
+
     base = os.environ.get("CV_NC_BASE_URL")
     user = os.environ.get("CV_NC_USER")
     app_password = os.environ.get("CV_NC_APP_PASSWORD")
@@ -61,7 +87,7 @@ def publish_application(local_dir: str, company: str, title: str) -> dict | None
     dav_root = f"{base}/remote.php/dav/files/{quote(user, safe='')}"
 
     # Remote folder URL: encode each segment (spaces → %20), keep the '/' separators.
-    remote_rel = f"{_APP_FOLDER}/{folder}"
+    remote_rel = f"{_app_folder()}/{folder}"
     encoded_rel = quote(remote_rel, safe="/")
     dav_dir = f"{dav_root}/{encoded_rel}"
 

@@ -18,6 +18,12 @@ so it needs:
   ingest``); else ``~/.config/job_agent/agent_token`` (mode 0600), else the env var.
 - ``CV_OUTPUT_DIR`` — optional render output root (else the default under the repo's
   output dir).
+- ``CV_AGENT_CHECKPOINT_DB`` — optional checkpointer SQLite path (else
+  ``<data>/cv_agent_checkpoints.sqlite``). A staging run must set this to an
+  isolated file — thread id == job id, and staging job ids equal prod ids.
+- ``CV_PUBLISH`` — set ``off`` (or ``0``/``false``/``no``) to disable Nextcloud
+  publication even when ``CV_NC_*`` is set; ``CV_PUBLISH_DIR`` redirects the remote
+  folder (see ``nextcloud_publish.py``).
 
 The CLI seeds the state, runs the graph, and — because the two gates pause the
 graph via ``interrupt()`` — drives the resume loop: it reads the pending interrupt
@@ -110,6 +116,19 @@ def _paste_thread_id(title: str, company: str) -> str:
     """
     key = f"{title}::{company}::paste"
     return hashlib.sha256(key.encode()).hexdigest()[:20]
+
+
+def _checkpoint_db_path() -> str:
+    """The LangGraph checkpointer SQLite file (spec 044, staging isolation).
+
+    ``CV_AGENT_CHECKPOINT_DB`` overrides it so a staging run of the agent uses an
+    isolated checkpointer. This is required because the thread id *is* the job id
+    (``_paste_thread_id`` / id entries), and a staging job id equals its prod id —
+    so a staging approve would otherwise reuse/append the prod checkpoint history.
+    """
+    return os.environ.get("CV_AGENT_CHECKPOINT_DB") or paths.data_path(
+        "cv_agent_checkpoints.sqlite"
+    )
 
 
 def _interrupt_payload(snapshot):
@@ -303,9 +322,7 @@ def _run_fresh(args) -> int:
     }
 
     try:
-        with SqliteSaver.from_conn_string(
-            paths.data_path("cv_agent_checkpoints.sqlite")
-        ) as saver:
+        with SqliteSaver.from_conn_string(_checkpoint_db_path()) as saver:
             app = compile_graph(checkpointer=saver)
             config = {"configurable": {"thread_id": thread_id}}
 
@@ -359,9 +376,7 @@ def _run_fresh(args) -> int:
 def _run_resume(args) -> int:
     thread_id = args.resume
     try:
-        with SqliteSaver.from_conn_string(
-            paths.data_path("cv_agent_checkpoints.sqlite")
-        ) as saver:
+        with SqliteSaver.from_conn_string(_checkpoint_db_path()) as saver:
             app = compile_graph(checkpointer=saver)
             config = {"configurable": {"thread_id": thread_id}}
 
