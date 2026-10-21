@@ -499,6 +499,67 @@ def test_write_event_unknown_event_404(api_env):
     assert r.json() == {"error": "not_found", "message": "Event not found"}
 
 
+# ── spec 044 write contract — application (PUT /v1/me/jobs/{id}/application) ──
+
+def _application_snapshot(path):
+    """`job_applications` + the `ready` status `save_application` sets."""
+    conn = sqlite3.connect(path)
+    snap = {
+        "job_applications": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, job_id, analysis, cover_letter "
+                "FROM job_applications ORDER BY user_id, job_id"
+            )
+        ],
+        "job_tracking": [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT user_id, job_id, status FROM job_tracking ORDER BY user_id, job_id"
+            )
+        ],
+    }
+    conn.close()
+    return snap
+
+
+def test_write_application_contract(api_env, tmp_path):
+    tok = api_env.make_token(["write:me"])
+    direct_path = _copy_db(api_env.path, tmp_path, "direct.db")
+    direct = JobStorage(direct_path, user_id="user-a")
+
+    body = {"analysis": "strong fit", "cover_letter": "Dear Acme,\n\n…"}
+    r = api_env.client.put("/v1/me/jobs/job-2/application", json=body, headers=_auth(tok))
+    assert r.status_code == 200
+    assert r.json()["analysis"] == "strong fit"
+    assert r.json()["cover_letter"] == "Dear Acme,\n\n…"
+    assert r.json()["job_id"] == "job-2"
+
+    direct.save_application("job-2", "strong fit", "Dear Acme,\n\n…")
+
+    assert _application_snapshot(api_env.path) == _application_snapshot(direct_path)
+
+
+def test_write_application_unknown_job_404(api_env):
+    tok = api_env.make_token(["write:me"])
+    r = api_env.client.put(
+        "/v1/me/jobs/nope/application",
+        json={"analysis": "a", "cover_letter": "c"}, headers=_auth(tok),
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not_found", "message": "Job not found"}
+
+
+def test_write_application_requires_write_me(api_env):
+    tok = api_env.make_token(["read:me"])
+    r = api_env.client.put(
+        "/v1/me/jobs/job-2/application",
+        json={"analysis": "a", "cover_letter": "c"}, headers=_auth(tok),
+    )
+    assert r.status_code == 403
+    assert r.json() == {"error": "forbidden", "message": "Insufficient scope"}
+
+
 # ── spec 042 write contracts (US2 — companies, contacts, interactions) ───────
 
 def _us2_snapshot(path):

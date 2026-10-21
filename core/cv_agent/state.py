@@ -1,9 +1,9 @@
 """CVAgentState — the LangGraph state schema for the CV agent (spec 029).
 
 This is the agent's *own* data model (see ``specs/029-.../data-model.md`` §1);
-it does **not** change the SQLite schema — every persistent write reuses the
-existing tables via ``JobStorage`` (``jobs``, ``job_scores``,
-``job_applications``, ``job_tracking``).
+it does **not** change the SQLite schema — every persistent write goes through the
+FastAPI v1 API (`api_client`), which writes the same tables server-side
+(``jobs``, ``job_scores``, ``job_applications``, ``job_tracking``).
 
 One field uses a reducer: ``revision_count`` is ``Annotated[int, operator.add]``
 so each re-entry into ``tailor_cv`` *accumulates* the count (the node returns

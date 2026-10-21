@@ -285,6 +285,31 @@ class JobListEnvelope(ApiModel):
     offset: int
 
 
+# ── ingest (spec 044) — submit a posting to the shared catalogue ─────────────
+
+class JobCreate(ApiModel):
+    title: str = ""
+    company: str = ""
+    url: str | None = None
+    location: str | None = None
+    description: str | None = None
+    # `source` is part of `JobPosting.id` for URL-less postings
+    # (title::company::source), so the agent passes it to reproduce the same id
+    # the local paste path computed. Default "manual" (the URL/manual source).
+    source: str = "manual"
+
+    @model_validator(mode="after")
+    def _require_title_and_company_without_url(self):
+        if not self.url and (not self.title or not self.company):
+            raise ValueError("title and company are required when url is empty")
+        return self
+
+
+class JobCreated(ApiModel):
+    job_id: str
+    created: bool
+
+
 # ── read:me — identity / feed ────────────────────────────────────────────────
 
 class Profile(ApiModel):
@@ -429,6 +454,12 @@ class Application(ApiModel):
     prepared_by: Any
     prepared_at: Any
     created_at: Any
+
+
+class ApplicationUpdate(ApiModel):
+    """Request body for `PUT /v1/me/jobs/{id}/application` (spec 044)."""
+    analysis: str
+    cover_letter: str
 
 
 class JobDetailResponse(ApiModel):
@@ -642,6 +673,13 @@ class TaskType(str, Enum):
     scrape_monitored = "scrape_monitored"
     extract = "extract"
     score = "score"
+    score_job = "score_job"
+
+
+class ScoreJobParams(ApiModel):
+    """Params for the `score_job` task (spec 044)."""
+    job_id: str
+    profile_id: str
 
 
 class TaskCreate(ApiModel):

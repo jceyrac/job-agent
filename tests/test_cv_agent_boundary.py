@@ -1,15 +1,19 @@
-"""Agent ↔ domain import-boundary guard (spec 036, US6).
+"""Agent ↔ domain import-boundary guard (spec 036, US6; tightened spec 044, US4).
 
-Three AST rules pin the boundary between ``core/cv_agent/`` (the LangGraph agent)
+Four AST rules pin the boundary between ``core/cv_agent/`` (the LangGraph agent)
 and the rest of ``core/`` (the domain):
 
 - **(A)** the agent may import only an allow-listed set of domain modules
-  (``models``/``llm``/``paths``/``profiles``/``scorer``/``storage``) — its own
+  (``models``/``llm``/``paths``/``profiles``/``geo_ch``) — its own
   ``core.cv_agent.*`` imports are skipped;
 - **(B)** the agent imports no ``_``-prefixed name from any ``core`` module
   (this is what removed the old ``from core.job_actions import _dict_to_posting``);
 - **(C)** no domain ``core`` module imports ``core.cv_agent`` — the agent is
-  launched only via ``python -m core.cv_agent.cli``, never imported by the domain.
+  launched only via ``python -m core.cv_agent.cli``, never imported by the domain;
+- **(D)** even *within* allowed modules the agent must not reference forbidden
+  names — ``core.paths.DB_PATH``, ``core.profiles.load_active_profile`` — and no
+  ``core/cv_agent/`` file may ``import sqlite3`` (Q2: no DB access; the LangGraph
+  checkpointer is ``langgraph.checkpoint.sqlite``, not a raw ``sqlite3`` import).
 
 Mirrors ``tests/test_installable_project.py``: enumeration is ``git ls-files``
 (tracked files only), and the rule functions are pure over source text so each
@@ -23,14 +27,21 @@ import subprocess
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # (A) The only domain modules the agent may import (Constitution X / US6).
+# `core.scorer` and `core.storage` are gone (spec 044 Q2: the agent scores and
+# persists only through the API); `core.profiles` stays allowed for `SearchProfile`.
 ALLOWED_CORE_MODULES = {
     "core.models",    # JobPosting, posting_from_dict (the public round-trip helper)
     "core.llm",       # the sole LLM client
-    "core.paths",     # data/output/env paths
-    "core.profiles",  # ALL_PROFILES, SearchProfile, load_active_profile
-    "core.scorer",    # extract_job_fields, evaluate_for_profile (sole fit judge)
-    "core.storage",   # JobStorage
+    "core.paths",     # data/output/env paths (but NOT DB_PATH — see rule D)
+    "core.profiles",  # SearchProfile (but NOT load_active_profile — see rule D)
     "core.geo_ch",    # deterministic contact-profile classifier (spec 038)
+}
+
+# (D) Names the agent may not reference even from an allowed module, mapped by
+# module. A leaf under ``sqlite3`` is forbidden regardless of the base module.
+FORBIDDEN_NAMES = {
+    "core.paths": {"DB_PATH"},
+    "core.profiles": {"load_active_profile"},
 }
 
 # (C) Empty: no domain module may import the agent (launch is ``-m core.cv_agent.cli``).
@@ -121,6 +132,38 @@ def _cv_agent_import_violations(src: str) -> list:
     ]
 
 
+def _name_violations(src: str) -> list:
+    """(D) forbidden names referenced from an allowed module, or a raw sqlite3 import.
+
+    Catches ``from core.paths import DB_PATH`` / ``from core.profiles import
+    load_active_profile`` (and their dotted ``import …`` spellings) and any
+    ``import sqlite3`` / ``from sqlite3 import …``.
+    """
+    tree = ast.parse(src)
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "sqlite3" or alias.name.startswith("sqlite3."):
+                    out.append((node.lineno, "import sqlite3"))
+                    continue
+                for mod, names in FORBIDDEN_NAMES.items():
+                    if alias.name.startswith(mod + "."):
+                        leaf = alias.name[len(mod) + 1:]
+                        if leaf in names:
+                            out.append((node.lineno, alias.name))
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            if node.module == "sqlite3" or node.module.startswith("sqlite3."):
+                out.append((node.lineno, "import sqlite3"))
+                continue
+            names = FORBIDDEN_NAMES.get(node.module)
+            if names:
+                for alias in node.names:
+                    if alias.name in names:
+                        out.append((node.lineno, f"{node.module}.{alias.name}"))
+    return out
+
+
 # ── (A) agent imports only allow-listed domain modules ──────────────────────
 
 def test_cv_agent_imports_only_allowed_core_modules():
@@ -163,6 +206,20 @@ def test_domain_never_imports_cv_agent():
     assert not offenders, "domain module imports core.cv_agent:\n" + "\n".join(offenders)
 
 
+# ── (D) no forbidden names / sqlite3 in the agent (spec 044, Q2) ────────────
+
+def test_cv_agent_references_no_forbidden_names():
+    offenders = []
+    for path in _tracked_py_files():
+        if not _is_in_cv_agent(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            src = f.read()
+        for lineno, ref in _name_violations(src):
+            offenders.append(f"{_rel(path)}:{lineno}: {ref}")
+    assert not offenders, "agent references a forbidden name:\n" + "\n".join(offenders)
+
+
 # ── negative fixtures (plant a violating import, assert the guard flags it) ──
 
 def test_rule_a_flags_import_outside_allowlist(tmp_path):
@@ -182,3 +239,21 @@ def test_rule_c_flags_cv_agent_import(tmp_path):
     planted = tmp_path / "planted_c.py"
     planted.write_text("from core.cv_agent.cli import run\n", encoding="utf-8")
     assert _cv_agent_import_violations(planted.read_text(encoding="utf-8"))
+
+
+def test_rule_d_flags_db_path_import(tmp_path):
+    planted = tmp_path / "planted_d.py"
+    planted.write_text("from core.paths import DB_PATH\n", encoding="utf-8")
+    assert _name_violations(planted.read_text(encoding="utf-8"))
+
+
+def test_rule_d_flags_load_active_profile(tmp_path):
+    planted = tmp_path / "planted_e.py"
+    planted.write_text("from core.profiles import load_active_profile\n", encoding="utf-8")
+    assert _name_violations(planted.read_text(encoding="utf-8"))
+
+
+def test_rule_d_flags_sqlite3(tmp_path):
+    planted = tmp_path / "planted_f.py"
+    planted.write_text("import sqlite3\n", encoding="utf-8")
+    assert _name_violations(planted.read_text(encoding="utf-8"))

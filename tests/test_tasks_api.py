@@ -120,6 +120,85 @@ def test_create_task_unknown_type_422(api_env):
     assert r.status_code == 422
 
 
+# ── score_job (spec 044) ──────────────────────────────────────────────────────
+
+def test_create_score_job_202_and_command(api_env):
+    import sys
+
+    from core.tasks import command_for
+
+    tok = api_env.make_token(["tasks:run"])
+    r = api_env.client.post(
+        "/v1/me/tasks",
+        json={"type": "score_job", "params": {"job_id": "job-1", "profile_id": "prof-a"}},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 202
+    body = r.json()
+    assert body["type"] == "score_job"
+    assert body["status"] == "queued"
+    assert body["params"] == {"job_id": "job-1", "profile_id": "prof-a"}
+
+    # The worker command is the single-job entry point, no `tasks:pipeline`.
+    assert command_for("score_job", {"job_id": "job-1", "profile_id": "prof-a"}) == [
+        sys.executable, "-u", "-m", "core.score", "--job", "job-1", "--profile", "prof-a",
+    ]
+
+
+def test_create_score_job_dedup_returns_existing(api_env):
+    tok = api_env.make_token(["tasks:run"])
+    body = {"type": "score_job", "params": {"job_id": "job-1", "profile_id": "prof-a"}}
+    r1 = api_env.client.post("/v1/me/tasks", json=body, headers=_auth(tok))
+    r2 = api_env.client.post("/v1/me/tasks", json=body, headers=_auth(tok))
+    assert r1.status_code == 202
+    assert r2.status_code == 202
+    assert r2.json()["id"] == r1.json()["id"]
+    assert len(api_env.db.list_tasks()[0]) == 1
+
+
+def test_create_score_job_requires_run_scope(api_env):
+    tok = api_env.make_token(["read:me"])  # no tasks:run
+    r = api_env.client.post(
+        "/v1/me/tasks",
+        json={"type": "score_job", "params": {"job_id": "job-1", "profile_id": "prof-a"}},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 403
+    assert r.json() == {"error": "forbidden", "message": "Insufficient scope"}
+
+
+def test_create_score_job_foreign_profile_404(api_env):
+    _seed_second_user(api_env.path)
+    tok = api_env.make_token(["tasks:run"])
+    r = api_env.client.post(
+        "/v1/me/tasks",
+        json={"type": "score_job", "params": {"job_id": "job-1", "profile_id": "prof-x"}},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not_found", "message": "Profile not found"}
+
+
+def test_create_score_job_unknown_job_404(api_env):
+    tok = api_env.make_token(["tasks:run"])
+    r = api_env.client.post(
+        "/v1/me/tasks",
+        json={"type": "score_job", "params": {"job_id": "nope", "profile_id": "prof-a"}},
+        headers=_auth(tok),
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not_found", "message": "Job not found"}
+
+
+def test_create_score_job_missing_params_422(api_env):
+    tok = api_env.make_token(["tasks:run"])
+    for params in ({}, {"job_id": "job-1"}):
+        r = api_env.client.post(
+            "/v1/me/tasks", json={"type": "score_job", "params": params}, headers=_auth(tok)
+        )
+        assert r.status_code == 422
+
+
 # ── read:me follow ───────────────────────────────────────────────────────────
 
 def test_get_task(api_env):

@@ -2,7 +2,7 @@
 
 The **only** creator/revoker of API tokens in v1 — the API itself never mints
 or revokes tokens. Tokens carry a subset of `API_TOKEN_SCOPES` (`read:catalogue`,
-`read:me`, `write:me`, `write:catalogue`, `tasks:run`, `tasks:pipeline`) and are
+`read:me`, `write:me`, `write:catalogue`, `tasks:run`, `tasks:pipeline`, `ingest`) and are
 hashed at rest (only a SHA-256 digest is stored); the raw token is printed
 exactly once by `create` and never persisted.
 
@@ -101,7 +101,7 @@ def main(argv: list[str]) -> int:
     p_create = sub.add_parser("create", help="mint a new token (prints it once)")
     p_create.add_argument("--name", required=True, help="operator label")
     p_create.add_argument("--scopes", required=True,
-                          help="comma-separated subset of read:catalogue,read:me,write:me,write:catalogue,tasks:run,tasks:pipeline")
+                          help="comma-separated subset of read:catalogue,read:me,write:me,write:catalogue,tasks:run,tasks:pipeline,ingest")
     p_create.add_argument("--user", default=None, help="token owner (default: default user)")
     p_create.add_argument("--expires-in", type=int, default=None, metavar="DAYS",
                           help="expire after N days (default: no expiry)")

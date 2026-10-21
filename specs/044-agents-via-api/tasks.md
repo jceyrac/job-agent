@@ -24,7 +24,7 @@ with a mocked LLM.
 
 **Purpose**: confirm the runtime assumption from the plan (no new dependency).
 
-- [ ] T001 Confirm `httpx>=0.27.0` is present in `requirements.txt` and importable in `.venv` (used by the new `core/cv_agent/api_client.py`); no new dependency to add.
+- [X] T001 Confirm `httpx>=0.27.0` is present in `requirements.txt` and importable in `.venv` (used by the new `core/cv_agent/api_client.py`); no new dependency to add.
 
 ---
 
@@ -33,13 +33,13 @@ with a mocked LLM.
 **Purpose**: server-side shared building blocks that US1 and US2 both depend on.
 **⚠️ No user-story route work until this phase is complete.**
 
-- [ ] T002 [P] Add `ingest` to `API_TOKEN_SCOPES` in `core/storage.py`
-- [ ] T003 [P] Add `ingest` to the `--scopes` choices/help in `scripts/api_token.py`
-- [ ] T004 [P] Add `ingest = require_scope("ingest")` in `api/deps.py`
-- [ ] T005 [P] Add `score_job` to `core/tasks.py` (`TASK_TYPES`, `TASK_TIMEOUTS` → 600 s, `command_for` → `--job <id> --profile <id>`)
-- [ ] T006 [P] Add API models `JobCreate`, `JobCreated`, `ApplicationUpdate`, `ScoreJobParams` in `api/schemas.py` (`extra="forbid"`)
-- [ ] T007 Add single-job `--job <id>` mode to `core/score.py`, reusing `extract_one` + `score_one` from `core/job_actions.py` (no new scoring logic)
-- [ ] T008 [P] Update the API guard allow-list in `tests/test_api_guard.py`: move `save_unscored` and add `save_application` to `ALLOW_LIST`; keep `save_scored` in `FORBIDDEN_METHODS`
+- [X] T002 [P] Add `ingest` to `API_TOKEN_SCOPES` in `core/storage.py`
+- [X] T003 [P] Add `ingest` to the `--scopes` choices/help in `scripts/api_token.py`
+- [X] T004 [P] Add `ingest = require_scope("ingest")` in `api/deps.py`
+- [X] T005 [P] Add `score_job` to `core/tasks.py` (`TASK_TYPES`, `TASK_TIMEOUTS` → 600 s, `command_for` → `--job <id> --profile <id>`)
+- [X] T006 [P] Add API models `JobCreate`, `JobCreated`, `ApplicationUpdate`, `ScoreJobParams` in `api/schemas.py` (`extra="forbid"`)
+- [X] T007 Add single-job `--job <id>` mode to `core/score.py`, reusing `extract_one` + `score_one` from `core/job_actions.py` (no new scoring logic)
+- [X] T008 [P] Update the API guard allow-list in `tests/test_api_guard.py`: move `save_unscored` and add `save_application` to `ALLOW_LIST`; keep `save_scored` in `FORBIDDEN_METHODS`
 
 **Checkpoint**: `ingest` scope + `score_job` type + `--job` mode + models + guard
 allow-list are in place and unit tests pass.
@@ -55,13 +55,13 @@ and scores a submitted posting and no client writes a score.
 
 ### Tests for User Story 1 (write FIRST, ensure they FAIL)
 
-- [ ] T009 [P] [US1] Contract test for `POST /v1/jobs` in `tests/test_api_ingest.py` — new job → `{job_id, created:true}` (id == `JobPosting.id`), existing job → `created:false` (unchanged), `422` without title/company when no URL, `403` without `ingest`, no LLM/`save_scored` call
-- [ ] T010 [P] [US1] Test for `score_job` enqueue in `tests/test_tasks_api.py` — `202`, worker command `--job <id> --profile <id>`, dedup returns the existing active task, `404` for a foreign profile or unknown job, `403` without `tasks:run`
+- [X] T009 [P] [US1] Contract test for `POST /v1/jobs` in `tests/test_api_ingest.py` — new job → `{job_id, created:true}` (id == `JobPosting.id`), existing job → `created:false` (unchanged), `422` without title/company when no URL, `403` without `ingest`, no LLM/`save_scored` call
+- [X] T010 [P] [US1] Test for `score_job` enqueue in `tests/test_tasks_api.py` — `202`, worker command `--job <id> --profile <id>`, dedup returns the existing active task, `404` for a foreign profile or unknown job, `403` without `tasks:run`
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] Implement `POST /v1/jobs` in `api/routers/catalogue.py` (compute `JobPosting.id`, `get_catalogue_job` for existence, `save_unscored` if new)
-- [ ] T012 [US1] Implement `score_job` enqueue validation in `core/storage.py` `enqueue_task` (require `job_id` + `profile_id`, `_require_profile` ownership, job existence → `404`)
+- [X] T011 [US1] Implement `POST /v1/jobs` in `api/routers/catalogue.py` (compute `JobPosting.id`, `get_catalogue_job` for existence, `save_unscored` if new)
+- [X] T012 [US1] Implement `score_job` enqueue validation in `core/storage.py` `enqueue_task` (require `job_id` + `profile_id`, `_require_profile` ownership, job existence → `404`)
 
 **Checkpoint**: US1 independently functional — a posting can be submitted and scored
 via the task queue.
@@ -77,11 +77,11 @@ via the task queue.
 
 ### Tests for User Story 2 (write FIRST)
 
-- [ ] T013 [P] [US2] Contract test for `PUT /v1/me/jobs/{id}/application` in `tests/test_api_contract.py` — response is the stored application; row equals what `save_application` writes on a copy of the same DB; `404` for a job not visible to the user
+- [X] T013 [P] [US2] Contract test for `PUT /v1/me/jobs/{id}/application` in `tests/test_api_contract.py` — response is the stored application; row equals what `save_application` writes on a copy of the same DB; `404` for a job not visible to the user
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Implement `PUT /v1/me/jobs/{job_id}/application` in `api/routers/me.py` (`get_job_for_prepare` 404 guard, then `save_application`, return `get_application`)
+- [X] T014 [US2] Implement `PUT /v1/me/jobs/{job_id}/application` in `api/routers/me.py` (`get_job_for_prepare` 404 guard, then `save_application`, return `get_application`)
 
 **Checkpoint**: US2 independently functional — the application is recorded via the API.
 
@@ -96,10 +96,10 @@ the API (`api_client.py`), and its output lands in production.
 
 ### Implementation for User Story 3
 
-- [ ] T015 [US3] Create `core/cv_agent/api_client.py` — httpx client: base URL from `JOB_AGENT_API_URL`, token from `JOB_AGENT_API_TOKEN` or a local credentials file (mode `0600`), explicit timeouts, error mapping (401/403/404/5xx/network), token never logged
-- [ ] T016 [US3] Replace every `JobStorage` use in `core/cv_agent/cli.py` — active profile via `GET /v1/me`, drop `upsert_profile`/seeding, clear error when no active profile exists
-- [ ] T017 [US3] Replace every `JobStorage` use in `core/cv_agent/nodes.py` — job/score read via `GET /v1/me/jobs/{id}`, paste/URL → `POST /v1/jobs` + `score_job` with bounded wait, skip → `PUT …/status` `archived`, approve → `PUT …/application` + `PUT …/status` `ready`, output folder from `CV_OUTPUT_DIR`
-- [ ] T018 [P] [US3] Re-point the agent tests in `tests/test_cv_agent_gate.py` / `tests/test_cv_agent_paste.py` at a FastAPI `TestClient` (in-memory DB) with a mocked LLM; cover US3 scenarios 2–9 (job read, submit+score, skip, approve, missing profile, unreachable API/bad scope, `--auto`/`--resume`)
+- [X] T015 [US3] Create `core/cv_agent/api_client.py` — httpx client: base URL from `JOB_AGENT_API_URL`, token from `JOB_AGENT_API_TOKEN` or a local credentials file (mode `0600`), explicit timeouts, error mapping (401/403/404/5xx/network), token never logged
+- [X] T016 [US3] Replace every `JobStorage` use in `core/cv_agent/cli.py` — active profile via `GET /v1/me`, drop `upsert_profile`/seeding, clear error when no active profile exists
+- [X] T017 [US3] Replace every `JobStorage` use in `core/cv_agent/nodes.py` — job/score read via `GET /v1/me/jobs/{id}`, paste/URL → `POST /v1/jobs` + `score_job` with bounded wait, skip → `PUT …/status` `archived`, approve → `PUT …/application` + `PUT …/status` `ready`, output folder from `CV_OUTPUT_DIR`
+- [X] T018 [P] [US3] Re-point the agent tests in `tests/test_cv_agent_gate.py` / `tests/test_cv_agent_paste.py` at a FastAPI `TestClient` (in-memory DB) with a mocked LLM; cover US3 scenarios 2–9 (job read, submit+score, skip, approve, missing profile, unreachable API/bad scope, `--auto`/`--resume`)
 
 **Checkpoint**: the agent is a pure API client; its guard suite and agent tests are green.
 
@@ -113,7 +113,7 @@ the API (`api_client.py`), and its output lands in production.
 
 ### Implementation for User Story 4
 
-- [ ] T019 [US4] Tighten `tests/test_cv_agent_boundary.py` — drop `core.scorer` and `core.storage` from the module allow-list; add name-level forbids (`core.paths.DB_PATH`, `core.profiles.load_active_profile`, `import sqlite3`) with a negative fixture per forbidden form (SC-001)
+- [X] T019 [US4] Tighten `tests/test_cv_agent_boundary.py` — drop `core.scorer` and `core.storage` from the module allow-list; add name-level forbids (`core.paths.DB_PATH`, `core.profiles.load_active_profile`, `import sqlite3`) with a negative fixture per forbidden form (SC-001)
 
 **Checkpoint**: `core/cv_agent/` has no DB access and the API allow-list permits exactly
 the new writes (`save_unscored`, `save_application`) — not scoring.
@@ -145,10 +145,10 @@ the new writes (`save_unscored`, `save_application`) — not scoring.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T027 [P] Regenerate the OpenAPI snapshot in `tests/test_api_openapi.py` (and its snapshot file) for the two new routes + `ingest` scope + `score_job`
-- [ ] T028 [P] Fix the in-container health check to reach the API by service name — set `JOB_AGENT_API_URL=http://api:8601` in the compose environment of the containers that run `health_check`, document the host-side alternative, and add a test asserting the in-container default is the service name (ships with 044; not a 043 regression)
-- [ ] T029 [P] Docs — `CLAUDE.md` (cv_agent commands + `JOB_AGENT_API_URL`/`JOB_AGENT_API_TOKEN`/`CV_OUTPUT_DIR`), the cv_agent usage notes, `docs/roadmap-api.md` step 6b wording per Q2, and mark the spec-036 DEV-DB limitation resolved
-- [ ] T030 Run `python -m pytest tests/ -q` and the `quickstart.md` §1–§5 validation; confirm the parity/guard suites stay green
+- [X] T027 [P] Regenerate the OpenAPI snapshot in `tests/test_api_openapi.py` (and its snapshot file) for the two new routes + `ingest` scope + `score_job`
+- [X] T028 [P] Fix the in-container health check to reach the API by service name — set `JOB_AGENT_API_URL=http://api:8601` in the compose environment of the containers that run `health_check`, document the host-side alternative, and add a test asserting the in-container default is the service name (ships with 044; not a 043 regression)
+- [X] T029 [P] Docs — `CLAUDE.md` (cv_agent commands + `JOB_AGENT_API_URL`/`JOB_AGENT_API_TOKEN`/`CV_OUTPUT_DIR`), the cv_agent usage notes, `docs/roadmap-api.md` step 6b wording per Q2, and mark the spec-036 DEV-DB limitation resolved
+- [X] T030 Run `python -m pytest tests/ -q` and the `quickstart.md` §1–§5 validation; confirm the parity/guard suites stay green
 
 ---
 

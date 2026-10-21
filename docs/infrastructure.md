@@ -102,10 +102,15 @@ Clients and scripts read the API base URL from `JOB_AGENT_API_URL` (no host is
 hard-coded — FR-016):
 
 - from the tailnet: `https://<verva>.<tailnet>.ts.net/api`
-- on the host / in-container: `http://127.0.0.1:8601`
+- on the host: `http://127.0.0.1:8601` (the compose publish is loopback-only)
+- in-container: `http://api:8601` (the compose service name — the host's
+  `127.0.0.1` is **not** the `api` container's loopback)
 
 `scripts/health_check.py --api-url` defaults to `$JOB_AGENT_API_URL`, falling back
-to `http://127.0.0.1:8601`.
+to `http://127.0.0.1:8601` for a host-side run. The `tracker` service sets
+`JOB_AGENT_API_URL=http://api:8601` in compose, so the post-deploy check (run via
+`docker exec job-tracker …`) reaches the API by service name without an explicit
+`--api-url`.
 
 ## Forwarded headers
 

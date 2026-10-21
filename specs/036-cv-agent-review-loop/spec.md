@@ -70,7 +70,7 @@ at catching its own factual drift. Hard rules are therefore moved into a
 - Q: Lint config location → A: split. Generic style rules (banned phrases, punctuation) live in `core/cv_agent/` (tracked). Personal data (allowed numbers, employers, claims) MUST NOT be in the repo (public on GitHub) — derive it from `cv_data_master.json` at runtime, or keep it next to the master in `.cv_pipeline/`.
 - Q: Em-dashes in master role titles → A: fix the master once (`—` → `–`). Verified neither `render_cv.js` nor `core/cv_agent/` splits role titles on `" — "` (titles render verbatim), so the fix is safe.
 - Q: job-agent project numbers → A: add the job-agent project to the master with current, verified figures (23 enabled scrapers today, not "11 sources") and a reference date.
-- Q: DEV DB on the Mac → A: yes, acceptable — application records written by the CV agent on the Mac stay in the local DEV DB and are not visible in the live tracker (status still updated manually in prod); resolved by roadmap step 6b (agents write through the API).
+- Q: DEV DB on the Mac → A: yes, acceptable — application records written by the CV agent on the Mac stay in the local DEV DB and are not visible in the live tracker (status still updated manually in prod); **resolved by roadmap step 6b** ✅ (agents write through the API, shipped 2026-10-21 — spec 044).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -205,7 +205,7 @@ be moved to its own repo at no cost if that ever becomes worth it.
 ## Non-goals
 
 - Anything API / `web/` / chat / tracker UI (roadmap steps 2–9).
-- DB schema changes; recording to the Live DB — application records written by the CV agent on the Mac stay in the local DEV DB and are not visible in the live tracker (status still updated manually in prod); resolved by roadmap step 6b (agents write through the API).
+- DB schema changes; recording to the Live DB — application records written by the CV agent on the Mac stay in the local DEV DB and are not visible in the live tracker (status still updated manually in prod); **resolved by roadmap step 6b** ✅ (agents write through the API, shipped 2026-10-21 — spec 044).
 - An LLM-as-judge inside the agent; the reviewer (Claude in chat) stays outside the agent.
 - A golden-set regression runner (next spec, once this one is validated).
 - Changes to Nextcloud publication or to the scorer.

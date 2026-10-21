@@ -130,6 +130,50 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "Submit Job",
+        "operationId": "submit_job_v1_jobs_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/jobs/{job_id}": {
@@ -1013,6 +1057,63 @@
         }
       }
     },
+    "/v1/me/jobs/{job_id}/application": {
+      "put": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Set Application",
+        "operationId": "set_application_v1_me_jobs__job_id__application_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Application"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/me/jobs/{job_id}/events": {
       "post": {
         "tags": [
@@ -1813,6 +1914,26 @@
           "offset"
         ],
         "title": "ApplicationEnvelope"
+      },
+      "ApplicationUpdate": {
+        "properties": {
+          "analysis": {
+            "type": "string",
+            "title": "Analysis"
+          },
+          "cover_letter": {
+            "type": "string",
+            "title": "Cover Letter"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis",
+          "cover_letter"
+        ],
+        "title": "ApplicationUpdate",
+        "description": "Request body for `PUT /v1/me/jobs/{id}/application` (spec 044)."
       },
       "CatalogueJob": {
         "properties": {
@@ -3428,6 +3549,80 @@
         ],
         "title": "InteractionType"
       },
+      "JobCreate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "company": {
+            "type": "string",
+            "title": "Company",
+            "default": ""
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "manual"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "JobCreate"
+      },
+      "JobCreated": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "created"
+        ],
+        "title": "JobCreated"
+      },
       "JobDetailResponse": {
         "properties": {
           "job": {
@@ -4124,7 +4319,8 @@
           "scrape",
           "scrape_monitored",
           "extract",
-          "score"
+          "score",
+          "score_job"
         ],
         "title": "TaskType"
       },

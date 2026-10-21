@@ -67,6 +67,15 @@ def test_compose_api_loopback_only_and_binds_all_interfaces():
     assert _flag_value(svc["command"], "--host") == "0.0.0.0"
 
 
+def test_compose_tracker_health_check_reaches_api_by_service_name():
+    # The post-deploy health check runs `docker exec job-tracker …`, so it sees
+    # the tracker container's environment: the API must be addressed by the
+    # compose service name (http://api:8601), never the host loopback.
+    svc = _compose()["services"]["tracker"]
+    env = dict(e.split("=", 1) for e in svc["environment"])
+    assert env["JOB_AGENT_API_URL"] == "http://api:8601"
+
+
 # ── Staging (scripts/staging.sh) ──────────────────────────────────────────────
 
 def test_staging_sh_loopback_only_and_binds_all_interfaces():

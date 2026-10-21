@@ -86,7 +86,7 @@ def api_env(tmp_path):
     def make_token(scopes, *, user_id=USER_A, expires_at=None):
         return db.create_api_token("test", scopes, user_id=user_id, expires_at=expires_at)
 
-    return SimpleNamespace(path=path, client=client, db=db, make_token=make_token)
+    return SimpleNamespace(path=path, client=client, db=db, make_token=make_token, app=app)
 
 
 @pytest.fixture

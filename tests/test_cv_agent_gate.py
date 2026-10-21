@@ -224,7 +224,6 @@ def _run_fake(app, argv):
     with patch("core.cv_agent.cli.SqliteSaver"), \
          patch("core.cv_agent.cli.compile_graph", return_value=app), \
          patch("core.cv_agent.cli.llm.is_configured", return_value=True), \
-         patch("core.cv_agent.cli.JobStorage"), \
          patch("core.cv_agent.cli._resolve_profile_id", return_value="unified_jc"), \
          patch("sys.stdout", out), \
          patch("sys.stderr", err):

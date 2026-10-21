@@ -71,7 +71,7 @@ INTERACTION_OUTCOMES = frozenset({"positive", "negative"})
 # user, plus the task queue (tasks:run / tasks:pipeline).
 API_TOKEN_SCOPES = frozenset({
     "read:catalogue", "read:me", "write:me", "write:catalogue",
-    "tasks:run", "tasks:pipeline",
+    "tasks:run", "tasks:pipeline", "ingest",
 })
 
 _LEGAL_SUFFIXES = {
@@ -466,6 +466,14 @@ class ProfileNotFoundError(Exception):
     (or writing) another user's data. The API maps it to 404. A profile id with
     no row at all is *not* this error — those return empty results, so the app
     still works on a fresh install before any profile is seeded (Constitution IX).
+    """
+
+
+class JobNotFoundError(Exception):
+    """A ``job_id`` has no row in the shared catalogue (spec 044 ``score_job``).
+
+    Raised by ``enqueue_task`` when a ``score_job`` names a job that does not
+    exist, so the API maps it to 404 before enqueuing a doomed task.
     """
 
 
@@ -1622,11 +1630,17 @@ class JobStorage:
         params = params or {}
         if type == "score" and not params.get("profile_id"):
             raise ValueError("score requires a profile_id")
+        if type == "score_job" and (not params.get("job_id") or not params.get("profile_id")):
+            raise ValueError("score_job requires job_id and profile_id")
         params_canonical = self._canonical_params(params)
         task_id = uuid.uuid4().hex
         with self._conn() as conn:
-            if type == "score":
+            if type in ("score", "score_job"):
                 self._require_profile(conn, params["profile_id"])
+            if type == "score_job" and conn.execute(
+                "SELECT 1 FROM jobs WHERE id = ?", (params["job_id"],)
+            ).fetchone() is None:
+                raise JobNotFoundError(params["job_id"])
             try:
                 conn.execute(
                     "INSERT INTO tasks (id, user_id, type, params, status, requested_by, created_at) "

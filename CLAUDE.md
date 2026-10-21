@@ -35,13 +35,17 @@ python -m core.score --profile <profile_id> --rescore
 # Field extraction only (profile-independent)
 python -m core.score --extract
 
-# CV + cover letter agent (LangGraph, human-in-the-loop)
-python -m core.cv_agent.cli <job_id | url>
+# CV + cover letter agent (LangGraph, human-in-the-loop) — reads/writes via the API
+python -m core.cv_agent.cli <job_id | url>      # --paste reads a posting from stdin
+python -m core.cv_agent.cli --paste --auto --title <t> --company <c>  # --resume/--approve/--reject
+#   Agent env: JOB_AGENT_API_URL (API base), JOB_AGENT_API_TOKEN (scoped bearer;
+#   else ~/.config/job_agent/agent_token, mode 0600), CV_OUTPUT_DIR (render root).
 
 # Serve the read-only API locally (FastAPI, loopback)
 uvicorn api.main:app --host 127.0.0.1 --port 8601
 
-# API tokens (create / list / revoke) — scopes: read:catalogue, read:me
+# API tokens (create / list / revoke) — scopes: read:catalogue, read:me,
+# write:me, write:catalogue, tasks:run, tasks:pipeline, ingest
 python -m scripts.api_token create --name <client> --scopes read:me [--expires-in <days>]
 python -m scripts.api_token list [--user <id>] [--json]
 python -m scripts.api_token revoke <token-id>

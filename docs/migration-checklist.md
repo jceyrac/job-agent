@@ -46,12 +46,14 @@ Before `deploy.sh`, validate the candidate commit on the staging tracker (`:8502
   docker exec job-tracker cat /app/data/backups/manifest_<STEM>.json
   ```
 
-- [ ] **Health check OK** (tracker responds; latest **full** run succeeded and is < 26 h)
+- [ ] **Health check OK** (tracker + API respond; latest **full** run succeeded and is < 26 h)
   ```bash
   docker exec job-tracker python -m scripts.health_check --url http://localhost:8501 --db /app/data/jobs.db
   ```
   (`health_check.py` is baked into the rebuilt image at `/app/scripts/`, so it is
-  available right after `deploy.sh` finishes.)
+  available right after `deploy.sh` finishes. Its API probe reaches `http://api:8601`
+  by service name — the `tracker` service sets `JOB_AGENT_API_URL=http://api:8601`;
+  on the host, `--api-url http://127.0.0.1:8601` is the equivalent.)
 
 - [ ] **Nightly cron OK** — next morning, the latest `runs` row with
   `run_type = 'full'` has `status = success` (or `scraped`) and `ran_at` from last night:

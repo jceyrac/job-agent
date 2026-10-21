@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.storage import ProfileNotFoundError
+from core.storage import ProfileNotFoundError, JobNotFoundError
 from api.deps import get_user_db, require_scope
 from api.logging_config import configure_logging
 from api.middleware import RequestSizeLimitMiddleware
@@ -89,6 +89,14 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=404,
             content={"error": "not_found", "message": "Profile not found"},
+        )
+
+    @app.exception_handler(JobNotFoundError)
+    async def _job_not_found_handler(request: Request, exc: JobNotFoundError):
+        # A score_job for an unknown job is rejected at enqueue (spec 044).
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "Job not found"},
         )
 
     return app

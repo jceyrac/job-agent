@@ -17,7 +17,7 @@ from core.paths import data_path
 
 # Allow-listed task types (spec R2). ``core.main`` is deliberately NOT a task
 # type: its subprocess steps are cron's, not the queue's.
-TASK_TYPES = ("scrape", "scrape_monitored", "extract", "score")
+TASK_TYPES = ("scrape", "scrape_monitored", "extract", "score", "score_job")
 
 # Per-type maximum duration in seconds (spec FR-002 / R2).
 TASK_TIMEOUTS = {
@@ -25,6 +25,7 @@ TASK_TIMEOUTS = {
     "scrape_monitored": 45 * 60,
     "extract": 45 * 60,
     "score": 60 * 60,
+    "score_job": 600,
 }
 
 # Bounded event storage + retention (spec R6): keep the last N events per
@@ -63,6 +64,10 @@ def command_for(task_type: str, params: dict | None = None) -> list[str]:
     if task_type == "score":
         profile_id = (params or {}).get("profile_id")
         return [sys.executable, "-u", "-m", "core.score", "--profile", profile_id]
+    if task_type == "score_job":
+        job_id = (params or {}).get("job_id")
+        profile_id = (params or {}).get("profile_id")
+        return [sys.executable, "-u", "-m", "core.score", "--job", job_id, "--profile", profile_id]
     raise ValueError(f"unknown task type: {task_type}")
 
 

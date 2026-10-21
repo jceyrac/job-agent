@@ -5,9 +5,10 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from core.models import JobPosting
 from core.storage import JobStorage
 
-from api.deps import AuthContext, get_user_db, require_scope
+from api.deps import AuthContext, get_user_db, require_scope, ingest
 from api.serializers import to_model, to_model_list
 from api.write_log import log_write
 from api import schemas
@@ -49,6 +50,32 @@ def get_job(
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return to_model(schemas.CatalogueJob, row)
+
+
+@router.post("/jobs", response_model=schemas.JobCreated)
+def submit_job(
+    body: schemas.JobCreate,
+    request: Request,
+    db: JobStorage = Depends(get_user_db),
+    auth: AuthContext = Depends(ingest),
+) -> schemas.JobCreated:
+    # Compute the id exactly as `JobPosting.id` (URL when present, else
+    # title::company::source) so a submitted posting round-trips to the same id
+    # the local path produced. Existing → unchanged; new → raw row only (no
+    # extraction, no LLM, no score).
+    job = JobPosting(
+        source=body.source,
+        title=body.title,
+        company=body.company,
+        location=body.location or "",
+        url=body.url or "",
+        description=body.description,
+    )
+    if db.get_catalogue_job(job.id) is not None:
+        return schemas.JobCreated(job_id=job.id, created=False)
+    db.save_unscored(job)
+    log_write(request, auth, resource_id=job.id, status=200)
+    return schemas.JobCreated(job_id=job.id, created=True)
 
 
 @router.get("/companies/{company_id}", response_model=schemas.CompanyFacts)

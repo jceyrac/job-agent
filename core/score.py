@@ -318,6 +318,8 @@ def main():
     parser = argparse.ArgumentParser(description="score.py — score jobs for a profile / extract job fields")
     parser.add_argument("--profile", default=None,
                         help="Profile ID to score for (optional; defaults to the active profile)")
+    parser.add_argument("--job", default=None, metavar="ID",
+                        help="Score a single job for --profile (extract-if-needed, then evaluate)")
     parser.add_argument("--extract", action="store_true",
                         help="Run profile-independent field extraction (no evaluation)")
     parser.add_argument("--rescore", action="store_true",
@@ -340,6 +342,10 @@ def main():
 
     if args.mock and args.rescore:
         print("--mock and --rescore are mutually exclusive.")
+        sys.exit(1)
+
+    if args.job and (args.extract or args.mock or args.rescore):
+        print("--job is incompatible with --extract/--mock/--rescore.")
         sys.exit(1)
 
     if not os.path.exists(DB_PATH):
@@ -369,6 +375,23 @@ def main():
 
     if args.extract:
         _run_extraction(args.limit)
+        return
+
+    if args.job:
+        # Single-job path (spec 044 `score_job`): resolve + seed the profile
+        # exactly as the batch path does — `score_one` needs the profile in the
+        # DB (`_require_profile`) — then extract-if-needed + evaluate.
+        profile = _resolve_profile(args.profile)
+        db.upsert_profile(profile)
+        result = score_one(args.job, profile.id)
+        if result is None:
+            print(f"Job '{args.job}' not found.")
+            sys.exit(1)
+        if result.get("status") == "error":
+            print(f"Scoring failed: {result.get('error')}")
+            sys.exit(1)
+        print(f"Job {args.job} scored {result['score']}/10 ({result['scored_by']})")
+        print(f"  Reason: {result['reason']}")
         return
 
     profile = _resolve_profile(args.profile)

@@ -21,6 +21,7 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -31,11 +32,10 @@ from langgraph.types import interrupt
 
 from core import llm
 from core.models import JobPosting, posting_from_dict
-from core.paths import CV_PIPELINE_DIR, DB_PATH
-from core.scorer import extract_job_fields, evaluate_for_profile
-from core.storage import JobStorage
+from core.paths import CV_PIPELINE_DIR
 from core.geo_ch import compute_contact_profile
 
+from core.cv_agent import api_client as api
 from core.cv_agent.prompts import (
     ANALYZE_AND_PLAN_PROMPT,
     DRAFT_COVER_LETTER_PROMPT,
@@ -105,29 +105,6 @@ def _job_context_str(job: dict, description_text: str) -> str:
     return "\n".join(parts)
 
 
-def _load_profile(db, profile_id: str):
-    """Reconstruct a SearchProfile for profile_id, mirroring job_actions.score_one.
-
-    Reads from the DB first (onboarding-saved profiles), then the code seed, then
-    falls back to the active profile. ``load_active_profile`` seeds the active
-    profile on first run; here we only need the object, never to mutate it.
-    """
-    from core.profiles import ALL_PROFILES, SearchProfile, load_active_profile
-
-    row = db.get_profile(profile_id)
-    if row:
-        return SearchProfile.from_criteria(row["id"], row["name"], row["criteria"])
-    if profile_id in ALL_PROFILES:
-        # Seed the code profile into search_profiles BEFORE scoring: job_scores has a
-        # FK (profile_id → search_profiles.id), and save_scored will fail on a fresh
-        # DB unless the profile row exists. load_active_profile does the same seeding
-        # for the active profile; we only upsert here (never flip active_profile_id).
-        seed = ALL_PROFILES[profile_id]
-        db.upsert_profile(seed)
-        return seed
-    return load_active_profile(db)
-
-
 def _detect_entry_kind(reference: str) -> str:
     """Classify the CLI's ``reference`` as an id / url / paste entry.
 
@@ -190,34 +167,79 @@ def _fetch_url_job(url: str) -> JobPosting:
     )
 
 
-def _persist_and_populate(job: JobPosting, db, profile_id: str, kind: str) -> dict:
-    """Run extraction + scoring **through the scorer** (the sole fit judge) and
-    persist the deduped job, exactly like ``job_actions.score_one`` — no scoring
-    logic is duplicated here (FR-002 / FR-003, Constitution §I).
+def _persist_and_populate(job: JobPosting, profile_id: str, kind: str) -> dict:
+    """Submit + score a fresh posting **through the server**, then read it back.
+
+    The agent never scores (FR-002/FR-003, Constitution §I): it submits the raw
+    posting, enqueues a ``score_job`` task, waits for the server to finish, and
+    reads the extracted job + score from ``GET /v1/me/jobs/{id}`` — the same
+    ``extract_one``/``score_one`` path the batch pipeline runs.
     """
-    _progress("Fetching & scoring the posting via the scorer…")
-    profile = _load_profile(db, profile_id)
+    _progress("Submitting the posting and requesting a server-side score…")
+    created = api.submit_job({
+        "title": job.title or "",
+        "company": job.company or "",
+        "url": job.url or None,
+        "location": job.location or None,
+        "description": job.description or None,
+        "source": job.source or "manual",
+    })
+    job_id = created["job_id"]
+    task = api.enqueue_score_job(job_id, profile_id)
+    _wait_for_task(task["id"])
 
-    extracted = extract_job_fields(job)   # LLM; mutates + returns the job (or None)
-    if extracted is not None:
-        job = extracted
-    result = evaluate_for_profile(job, profile)  # LLM; dict | None
-
-    if result is not None:
-        db.save_scored(job, result, profile.id)
-        score, score_reason = result.get("score"), result.get("reason")
-    else:
-        db.save_unscored(job)
-        score, score_reason = None, None
-
+    detail = api.get_job(job_id)
+    row = detail["job"]
+    score = _score_for_profile(detail.get("scores") or [], profile_id)
+    out_job = posting_from_dict(row).to_json()
     return {
         "entry_kind": kind,
-        "job": job.to_json(),
-        "job_id": job.id,
-        "description_text": job.description or "",
-        "score": score,
-        "score_reason": score_reason,
+        "job": out_job,
+        "job_id": job_id,
+        "description_text": (row.get("description") or "") or (row.get("summary") or ""),
+        "score": score["score"] if score else None,
+        "score_reason": score["reason"] if score else None,
     }
+
+
+# ── bounded wait on the score_job task ──────────────────────────────────────
+
+_SCORE_POLL_INTERVAL = 2.0   # seconds between polls
+_SCORE_MAX_WAIT = 660.0      # > the 10-min score_job timeout, so we don't race it
+_TERMINAL_TASK_STATUSES = {"succeeded", "failed", "cancelled"}
+
+
+def _score_for_profile(scores: list, profile_id: str) -> dict | None:
+    """Pick the user-scoped score for ``profile_id`` out of a ``Score`` list."""
+    for s in scores or []:
+        if s.get("profile_id") == profile_id:
+            return s
+    return None
+
+
+def _wait_for_task(task_id: str) -> dict:
+    """Poll the ``score_job`` task until terminal; raise on failure or timeout.
+
+    The server runs the task in its worker container; the agent only *follows* it
+    (spec 043). A non-succeeded terminal status or an over-long wait raises an
+    ``ApiError`` that the CLI turns into a clean non-zero exit.
+    """
+    deadline = time.monotonic() + _SCORE_MAX_WAIT
+    while True:
+        task = api.get_task(task_id)
+        status = task.get("status")
+        if status in _TERMINAL_TASK_STATUSES:
+            if status != "succeeded":
+                err = task.get("error") or status
+                raise api.ApiError(
+                    f"score_job task {task_id} finished with status {status}: {err}"
+                )
+            return task
+        if time.monotonic() >= deadline:
+            raise api.ApiError(
+                f"score_job task {task_id} did not finish within {_SCORE_MAX_WAIT:.0f}s"
+            )
+        time.sleep(_SCORE_POLL_INTERVAL)
 
 
 # ── node 1: resolve_reference ──────────────────────────────────────────────
@@ -235,29 +257,23 @@ def resolve_reference(state: dict) -> dict:
     """
     reference = state["reference"]
     profile_id = state.get("profile_id")
-    db = JobStorage(DB_PATH)
     kind = _detect_entry_kind(reference)
 
     if kind == "id":
-        row = db.get_job_for_prepare(reference)
-        if row is None:
-            raise ValueError(
-                f"job_id {reference!r} not found in the local DB ({DB_PATH}). "
-                "If this job only exists on the Live server, pass its URL or "
-                "use --paste instead."
-            )
+        detail = api.get_job(reference)
+        row = detail["job"]
         job = posting_from_dict(row)
-        score_result = db.get_score_result(job.id, profile_id)
+        score = _score_for_profile(detail.get("scores") or [], profile_id)
         out = {
             "entry_kind": "id",
             "job": job.to_json(),
             "job_id": job.id,
             "description_text": (row.get("description") or "") or (row.get("summary") or ""),
-            "score": score_result["score"] if score_result else None,
-            "score_reason": score_result["reason"] if score_result else None,
+            "score": score["score"] if score else None,
+            "score_reason": score["reason"] if score else None,
         }
     elif kind == "url":
-        out = _persist_and_populate(_fetch_url_job(reference), db, profile_id, "url")
+        out = _persist_and_populate(_fetch_url_job(reference), profile_id, "url")
     else:
         # paste: the reference *is* the posting text (from stdin). Title/company are
         # seeded by the CLI (--title/--company, or an up-front prompt) because they
@@ -268,7 +284,7 @@ def resolve_reference(state: dict) -> dict:
             company=(state.get("job_company") or "").strip(),
             location="", url="", description=reference[:3000],
         )
-        out = _persist_and_populate(job, db, profile_id, "paste")
+        out = _persist_and_populate(job, profile_id, "paste")
 
     # Deterministic contact profile (Constitution §IV / spec 038): --contact →
     # --country → jobs.country_code (id) → location detector → french.
@@ -433,8 +449,7 @@ def analysis_gate(state: dict) -> dict:
 
 def mark_skipped(state: dict) -> dict:
     """Abort at analysis_gate → archive the job (FR-007, research §7)."""
-    db = JobStorage(DB_PATH)
-    db.set_status(state["job_id"], "archived", notes="cv_agent: skipped at analysis_gate")
+    api.set_status(state["job_id"], "archived", notes="cv_agent: skipped at analysis_gate")
     return {}
 
 
@@ -576,13 +591,9 @@ def render(state: dict) -> dict:
     """Delegate to the deterministic renderer (FR-011)."""
     _progress("Rendering documents (.docx + .pdf)…")
     # Neutral local working dir, overridable per host: CV_OUTPUT_DIR env →
-    # config "cv.output_dir" → default. Publication to Nextcloud is the next node.
-    db = JobStorage(DB_PATH)
-    output_root = (
-        os.environ.get("CV_OUTPUT_DIR")
-        or db.get_config("cv.output_dir")
-        or default_output_root()
-    )
+    # default. (The DB-backed `cv.output_dir` is gone with the API migration —
+    # this is a Mac-side rendering setting, not shared data, spec 044 R7.)
+    output_root = os.environ.get("CV_OUTPUT_DIR") or default_output_root()
     return {
         "output_paths": render_documents(
             state.get("cv_content") or {},
@@ -704,9 +715,9 @@ def file_and_record(state: dict) -> dict:
 
     The rendered files live in the local working folder (written by ``render``,
     optionally published by ``publish``); this node only records the application
-    — including the Nextcloud URLs when published — and flips the job status.
+    — including the Nextcloud URLs when published — and flips the job status,
+    both through the API (``write:me``).
     """
-    db = JobStorage(DB_PATH)
     job_id = state["job_id"]
     output_paths = state.get("output_paths") or {}
 
@@ -721,9 +732,9 @@ def file_and_record(state: dict) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }, ensure_ascii=False)
 
-    db.save_application(job_id, analysis, state.get("cover_letter") or "")
+    api.set_application(job_id, analysis, state.get("cover_letter") or "")
     pdf_name = os.path.basename(output_paths.get("pdf") or "")
-    db.set_status(job_id, "ready", notes=f"cv_agent: {pdf_name}")
+    api.set_status(job_id, "ready", notes=f"cv_agent: {pdf_name}")
     return {}
 
 

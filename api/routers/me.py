@@ -225,6 +225,21 @@ def set_job_status(
     return to_model(schemas.JobPrepare, db.get_job_for_prepare(job_id))
 
 
+@router.put("/jobs/{job_id}/application", response_model=schemas.Application)
+def set_application(
+    job_id: str,
+    body: schemas.ApplicationUpdate,
+    request: Request,
+    db: JobStorage = Depends(get_user_db),
+    auth: AuthContext = Depends(write_me),
+) -> schemas.Application:
+    if db.get_job_for_prepare(job_id) is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    db.save_application(job_id, body.analysis, body.cover_letter)
+    log_write(request, auth, resource_id=job_id, status=200)
+    return to_model(schemas.Application, db.get_application(job_id))
+
+
 @router.post("/jobs/{job_id}/events", response_model=list[schemas.LifecycleEvent])
 def add_lifecycle_event(
     job_id: str,

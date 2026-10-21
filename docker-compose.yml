@@ -13,6 +13,9 @@ services:
     environment:
       - JOB_AGENT_DATA_DIR=/app/data
       - JOB_AGENT_REQUIRE_DB=1
+      # In-container the API is reached by compose service name; the host-side
+      # loopback (127.0.0.1:8601) is NOT the api container's loopback.
+      - JOB_AGENT_API_URL=http://api:8601
     restart: unless-stopped
 
   api:

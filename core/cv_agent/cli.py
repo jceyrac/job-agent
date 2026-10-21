@@ -2,12 +2,22 @@
 
 Run::
 
-    python -m cv_agent.cli <job_id>            # existing scored job
-    python -m cv_agent.cli <url>               # live careers/ATS URL
-    python -m cv_agent.cli --paste --letter    # pasted posting text from stdin
-    python -m cv_agent.cli <job_id> --profile unified_jc
-    python -m cv_agent.cli --paste --auto --contact swiss < posting.txt   # zero-prompt → review.json
-    python -m cv_agent.cli --resume <thread_id> --approve                  # finish a paused run
+    python -m core.cv_agent.cli <job_id>          # existing scored job
+    python -m core.cv_agent.cli <url>             # live careers/ATS URL
+    python -m core.cv_agent.cli --paste --letter  # pasted posting text from stdin
+    python -m core.cv_agent.cli <job_id> --profile unified_jc
+    python -m core.cv_agent.cli --paste --auto --contact swiss < posting.txt   # zero-prompt → review.json
+    python -m core.cv_agent.cli --resume <thread_id> --approve                 # finish a paused run
+
+The agent reads and writes **only** through the FastAPI v1 API (spec 044, step 6b),
+so it needs:
+
+- ``JOB_AGENT_API_URL``  — API base URL (tailnet ``https://<verva>.<tailnet>.ts.net/api``
+  or a staging/host URL); default ``http://127.0.0.1:8601``.
+- ``JOB_AGENT_API_TOKEN`` — a scoped bearer token (``read:me, write:me, tasks:run,
+  ingest``); else ``~/.config/job_agent/agent_token`` (mode 0600), else the env var.
+- ``CV_OUTPUT_DIR`` — optional render output root (else the default under the repo's
+  output dir).
 
 The CLI seeds the state, runs the graph, and — because the two gates pause the
 graph via ``interrupt()`` — drives the resume loop: it reads the pending interrupt
@@ -26,9 +36,8 @@ from langgraph.types import Command
 
 from core import llm
 from core import paths
+from core.cv_agent import api_client as api
 from core.cv_agent.graph import compile_graph
-from core.profiles import ALL_PROFILES, DEFAULT_PROFILE_ID, load_active_profile
-from core.storage import JobStorage
 
 
 def parse_args(argv):
@@ -59,12 +68,27 @@ def parse_args(argv):
     return p.parse_args(argv)
 
 
-def _resolve_profile_id(db, override):
+def _resolve_profile_id(override):
+    """Resolve the profile to score against, via ``GET /v1/me``.
+
+    The agent no longer seeds a default profile (spec 044, R6): the active
+    profile must already exist on the server. An explicit ``--profile`` that the
+    server doesn't own falls back to the active profile (with a warning); a
+    missing active profile raises ``ApiError`` so the CLI stops before any LLM.
+    """
+    me = api.get_me()
+    profile_ids = {p.get("id") for p in (me.get("profiles") or [])}
+    active = me.get("active_profile_id")
     if override:
-        if db.get_profile(override) or override in ALL_PROFILES:
+        if override in profile_ids:
             return override
         print(f"warning: unknown profile {override!r}, using active profile", file=sys.stderr)
-    return load_active_profile(db).id or DEFAULT_PROFILE_ID
+    if not active:
+        raise api.ApiError(
+            "no active profile on the server — set one before running the agent "
+            "(the agent no longer seeds a default profile)"
+        )
+    return active
 
 
 def _thread_id(reference: str) -> str:
@@ -251,8 +275,14 @@ def _run_fresh(args) -> int:
               file=sys.stderr)
         return 3
 
-    db = JobStorage(paths.DB_PATH)
-    profile_id = _resolve_profile_id(db, args.profile)
+    # Resolve the profile *before* the graph runs — this is the agent's first
+    # API call, so an unreachable API / missing token / missing active profile
+    # stops here with a clear message, ahead of any LLM spend (FR-005).
+    try:
+        profile_id = _resolve_profile_id(args.profile)
+    except api.ApiError as e:
+        print(f"CV_AGENT_RESULT error  {e}", file=sys.stderr)
+        return 1
 
     # The checkpoint thread key is the job's own id for a paste (derived from
     # --title/--company), else the id-entry/URL rule. Computed once so the

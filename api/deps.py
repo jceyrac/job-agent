@@ -131,5 +131,7 @@ def require_scope(scope: str):
 
 # Task-queue scopes (spec 043): `tasks:run` for user-space extract/score;
 # `tasks:pipeline` is an *additional* grant for catalogue-wide scrape work.
+# `ingest` (spec 044) submits postings to the shared catalogue.
 tasks_run = require_scope("tasks:run")
 tasks_pipeline = require_scope("tasks:pipeline")
+ingest = require_scope("ingest")
