@@ -38,11 +38,12 @@ python -m core.score --extract
 # CV + cover letter agent (LangGraph, human-in-the-loop) — reads/writes via the API
 python -m core.cv_agent.cli <job_id | url>      # --paste reads a posting from stdin
 python -m core.cv_agent.cli --paste --auto --title <t> --company <c>  # --resume/--approve/--reject
-#   Agent env: JOB_AGENT_API_URL (API base), JOB_AGENT_API_TOKEN (scoped bearer;
-#   else ~/.config/job_agent/agent_token, mode 0600), CV_OUTPUT_DIR (render root),
-#   CV_AGENT_CHECKPOINT_DB (checkpointer sqlite), CV_PUBLISH=off / CV_PUBLISH_DIR (Nextcloud).
+#   Agent env: JOB_AGENT_API_URL (API base; default https://verva.taild1340b.ts.net:8443/api),
+#   JOB_AGENT_API_TOKEN (scoped bearer; else ~/.config/job_agent/agent_token, mode 0600),
+#   CV_OUTPUT_DIR (render root), CV_AGENT_CHECKPOINT_DB (checkpointer sqlite),
+#   CV_PUBLISH=off / CV_PUBLISH_DIR (Nextcloud).
 #   Staging run (isolates the agent from prod output/checkpointer/Nextcloud):
-#     export JOB_AGENT_API_URL=https://<verva>.<tailnet>.ts.net/api   # or the staging host
+#     export JOB_AGENT_API_URL=https://verva.taild1340b.ts.net:10000/api   # staging API
 #     export JOB_AGENT_API_TOKEN=<staging-token>                      # read:me,write:me,tasks:run,ingest
 #     export CV_OUTPUT_DIR=/tmp/cv_staging_outputs
 #     export CV_AGENT_CHECKPOINT_DB=/tmp/cv_staging_checkpoints.sqlite
@@ -157,12 +158,12 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 - **Dev:** MacBook Pro M5 Pro, Python 3.11 venv at `.venv/`, repo at `/Users/jeanclaudevd/AI-Suite/job_agent/`. All development happens here.
 - **Prod (verva):** HPE ProLiant Ubuntu server, Docker Compose, repo at `/opt/job-agent`. Deploy-only — never develop or write specs there. SSH access is available for live diagnostics.
 - **Services:** `tracker` (always-on Streamlit :8501, Tailscale), `api` (always-on FastAPI :8601, Tailscale HTTPS under `/api`), `worker` (task-queue consumer, `python -m core.worker`, no network exposure), `agent` (cron scrape+score).
-- **Network:** the production tracker is bound to loopback (`127.0.0.1:8501`) in compose and reached only over the tailnet via `tailscale serve`; the API is bound to `127.0.0.1:8601` and served as `https://<verva>.<tailnet>.ts.net/api` via `tailscale serve --bg --https=443 --set-path /api http://127.0.0.1:8601` (app sets `root_path="/api"`) — see `docs/infrastructure.md`. Clients read the API base URL from `JOB_AGENT_API_URL` (never hard-coded).
+- **Network:** the production tracker is bound to loopback (`127.0.0.1:8501`) in compose and reached only over the tailnet via `tailscale serve`; the API is bound to `127.0.0.1:8601` and served as `https://<verva>.<tailnet>.ts.net:8443/api` via `tailscale serve --bg --https=8443 --set-path /api http://127.0.0.1:8601` (app sets `root_path="/api"`) — see `docs/infrastructure.md`. **Port 443 belongs to nginx (Nextcloud); `tailscale serve` must never use it.** Staging uses `:10000/api`. Clients read the API base URL from `JOB_AGENT_API_URL` (the cv_agent defaults to the prod `:8443/api` URL).
 - **DB:** `data/jobs.db` — SQLite WAL, gitignored, 160+ MB. Docker named volume `job_data` in prod. Live data lives on verva; the local Mac DB is typically empty.
 - **Locations:** `core/paths.py` is the single source of truth for every path (`PROJECT_ROOT`, `DATA_DIR`, `DB_PATH`, `OUTPUT_DIR`, `ENV_PATH`, `data_path()`). Env overrides: `JOB_AGENT_DATA_DIR` (data dir), `JOB_AGENT_OUTPUT_DIR` (outputs dir); `JOB_AGENT_REQUIRE_DB=1` makes `import core.paths` refuse startup (no dir/DB created) if the DB is missing. Rule: locations come from `core/paths.py` only — never derive `data`/`outputs`/`.env` from `__file__` or a CWD-relative `"data/…"` literal; scripts are launched as modules (`-m <module>`, e.g. `python -m core.scrape`), never by `.py` filename.
 - **LLM:** DeepSeek only (`deepseek-chat`), configured in `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) and called exclusively through `llm.call()`.
 - **Deploy:** `git push` on Mac → `scripts/deploy.sh` on server (git pull, rebuild all images, restart).
-- **Release process** (every step — branch → staging → ff-only merge → deploy → SHA check): work on a spec branch; validate the **exact SHA** on staging (`scripts/staging.sh up <full-sha>`, never the branch name); `git merge --ff-only <full-sha>` onto `main` (refuse non-ff); `./scripts/deploy.sh` on verva; verify `tailscale serve status` still lists `tcp 8501` and `https 443 /api` (persistent config — no re-run needed); confirm `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA. See `docs/migration-checklist.md`.
+- **Release process** (every step — branch → staging → ff-only merge → deploy → SHA check): work on a spec branch; validate the **exact SHA** on staging (`scripts/staging.sh up <full-sha>`, never the branch name); `git merge --ff-only <full-sha>` onto `main` (refuse non-ff); `./scripts/deploy.sh` on verva; verify `tailscale serve status` still lists `tcp 8501` and `https 8443 /api` (persistent config — no re-run needed); confirm `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA. See `docs/migration-checklist.md`.
 
 ---
 

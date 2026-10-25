@@ -17,8 +17,10 @@ validated on staging.
    `git checkout main && git pull --ff-only && git merge --ff-only <full-sha> && git push origin main`.
    Refuse anything that is not fast-forward.
 4. **Deploy** — on verva: `./scripts/deploy.sh` (git pull + pre-rebuild backup + rebuild +
-   restart); verify `tailscale serve status` still lists `tcp 8501` and `https 443 /api`
-   (the config is persistent — no re-run needed).
+   restart); verify `tailscale serve status` still lists `tcp 8501` and `https 8443 /api`
+   (the config is persistent — no re-run needed). **Port 443 belongs to nginx (Nextcloud) —
+   `tailscale serve` must never use it; `scripts/staging.sh` refuses a serve port already
+   bound by another process (`ss -ltn`).**
 5. **SHA check** — `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA; health check
    OK; parity green.
 

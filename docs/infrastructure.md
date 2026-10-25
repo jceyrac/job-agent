@@ -5,6 +5,16 @@ the Tailscale network**, never from the LAN or any other interface. The compose
 publish binds to loopback; `tailscale serve` forwards the tailnet port to that
 loopback port.
 
+## Port map (verva)
+
+| Port | Owner | Type | Notes |
+|---|---|---|---|
+| 443 | **nginx (Nextcloud)** | HTTPS | `tailscale serve` must **never** use it |
+| 8501 | tracker (prod) | TCP | `tailscale serve --tcp=8501` |
+| 8443 | API (prod) | HTTPS under `/api` | `tailscale serve --https=8443 --set-path /api` |
+| 8502 | tracker (staging) | TCP | `scripts/staging.sh` |
+| 10000 | API (staging) | HTTPS under `/api` | `scripts/staging.sh` |
+
 ## How it works
 
 - `docker-compose.yml` publishes the tracker loopback-only:
@@ -65,9 +75,14 @@ throughout.
 The read-only API (`api/` service) listens on `127.0.0.1:8601` only, and is
 served over the tailnet with **TLS under a path** (not a raw TCP forward like
 the tracker). Tailscale terminates TLS and proxies
-`https://<verva>.<tailnet>.ts.net/api/…` → `http://127.0.0.1:8601/…`, stripping
+`https://<verva>.<tailnet>.ts.net:8443/api/…` → `http://127.0.0.1:8601/…`, stripping
 the `/api` prefix before forwarding. The app sets `root_path="/api"` so generated
 URLs (OpenAPI, `/docs`) carry the prefix.
+
+> **Decision amendment (2026-10-24).** The original spec-041 decision used
+> `--https=443`. Port 443 belongs to **nginx** on verva (Nextcloud), so the API
+> moved to **8443** and staging to **10000** — `tailscale serve` must never use
+> 443 (see the port map above).
 
 ## Prerequisite (one-time, Tailscale admin console)
 
@@ -79,7 +94,7 @@ tailscale set --operator=$(whoami)` step above still applies.)
 ## Enable (run once on verva)
 
 ```bash
-tailscale serve --bg --https=443 --set-path /api http://127.0.0.1:8601
+tailscale serve --bg --https=8443 --set-path /api http://127.0.0.1:8601
 ```
 
 The tracker keeps its existing `tcp 8501` exposure unchanged.
@@ -88,20 +103,20 @@ The tracker keeps its existing `tcp 8501` exposure unchanged.
 
 ```bash
 tailscale serve status
-# expect an HTTPS forward for /api → http://127.0.0.1:8601 on 443
+# expect an HTTPS forward for /api → http://127.0.0.1:8601 on 8443
 ```
 
-From a tailnet device, `https://<verva>.<tailnet>.ts.net/api/health` returns
+From a tailnet device, `https://<verva>.<tailnet>.ts.net:8443/api/health` returns
 `200 {"status":"ok","version":"<sha>"}` with a valid certificate (no `-k`).
 From a non-tailnet LAN device, `http://<verva LAN IP>:8601` is refused (the
 compose publish is loopback-only).
 
 ## Configuration
 
-Clients and scripts read the API base URL from `JOB_AGENT_API_URL` (no host is
-hard-coded — FR-016):
+Clients and scripts read the API base URL from `JOB_AGENT_API_URL` (the cv_agent
+defaults to the prod URL — FR-016):
 
-- from the tailnet: `https://<verva>.<tailnet>.ts.net/api`
+- from the tailnet: `https://<verva>.<tailnet>.ts.net:8443/api`
 - on the host: `http://127.0.0.1:8601` (the compose publish is loopback-only)
 - in-container: `http://api:8601` (the compose service name — the host's
   `127.0.0.1` is **not** the `api` container's loopback)
@@ -121,7 +136,7 @@ The `api` container binds `127.0.0.1:8601`, so the app does **not** enable
 ## Undo
 
 ```bash
-tailscale serve --bg --https=443 off
+tailscale serve --bg --https=8443 off
 ```
 
 ---

@@ -12,8 +12,9 @@ Run::
 The agent reads and writes **only** through the FastAPI v1 API (spec 044, step 6b),
 so it needs:
 
-- ``JOB_AGENT_API_URL``  — API base URL (tailnet ``https://<verva>.<tailnet>.ts.net/api``
-  or a staging/host URL); default ``http://127.0.0.1:8601``.
+- ``JOB_AGENT_API_URL``  — API base URL; defaults to the production API
+  (``https://verva.taild1340b.ts.net:8443/api``), or point it at staging
+  (``…:10000/api``).
 - ``JOB_AGENT_API_TOKEN`` — a scoped bearer token (``read:me, write:me, tasks:run,
   ingest``); else ``~/.config/job_agent/agent_token`` (mode 0600), else the env var.
 - ``CV_OUTPUT_DIR`` — optional render output root (else the default under the repo's

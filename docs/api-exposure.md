@@ -2,10 +2,15 @@
 
 The v1 API is **tailnet-only** (Constitution VII): it listens on
 `127.0.0.1:8601`, is served over the tailnet under
-`https://<verva>.<tailnet>.ts.net/api`, and authenticates with scoped bearer
+`https://<verva>.<tailnet>.ts.net:8443/api`, and authenticates with scoped bearer
 tokens. This document records what must exist **before** any public exposure —
 **nothing here is implemented.** Opening the API publicly is a deliberate,
 separate step, not a config flip.
+
+The future `web/` front is served from the **same 8443 origin**, at the root path
+next to `/api` (`tailscale serve --https=8443` with the front at `/` and the API
+under `/api`), so the browser never needs CORS. Port 443 stays with nginx
+(Nextcloud); staging uses `:10000`.
 
 ## Prerequisites (all required before any public exposure)
 

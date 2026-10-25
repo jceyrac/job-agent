@@ -3,7 +3,7 @@
 # spec 041 FR-011; spec 043 US5).
 #
 # Runs a candidate commit as a disposable tracker on port 8502, a read-only API on
-# 8602/8443, and a task worker against a copy of the latest backup, without touching
+# 8602/10000, and a task worker against a copy of the latest backup, without touching
 # production (its container, images, the `job_data` volume, or `/opt/job-agent`'s
 # working tree).
 #
@@ -28,11 +28,31 @@ CONTAINER="job-agent-staging"
 PORT="8502"
 API_CONTAINER="job-agent-staging-api"
 API_PORT="8602"
+# Tailscale HTTPS port for the staging API. Must never collide with prod
+# (8443) or nginx (443 — Nextcloud): staging uses 10000.
+API_HTTPS_PORT="10000"
 WORKER_CONTAINER="job-agent-staging-worker"
 ENV_FILE="/opt/job-agent/.env"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*" >&2; }
+
+# Refuse to configure a `tailscale serve` entry on port 443 (owned by nginx —
+# Nextcloud) or on a port another process already binds. `ss -ltn` lists every
+# LISTEN socket; our own staging containers bind loopback only (127.0.0.1 /
+# [::1]) and are ignored, so a non-loopback listener is a genuine collision
+# (prod, nginx, or a leftover) (Nextcloud incident, 2026-10-24).
+assert_serve_port_free() {
+  local port="$1"
+  [ "$port" != "443" ] || die "port 443 belongs to nginx — tailscale serve must never use 443"
+  local listeners
+  listeners="$(ss -ltn 2>/dev/null | awk -v p="$port" '
+    $4 ~ ("[.:]" p "$") && $4 !~ /^127\.0\.0\.1:/ && $4 !~ /^\[::1\]:/ { print $4 }
+  ' || true)"
+  if [ -n "$listeners" ]; then
+    die "port $port is already bound by another process (ss -ltn: $(echo "$listeners" | tr '\n' ' ')) — refusing to configure a tailscale serve entry on it"
+  fi
+}
 
 # `run` may hit real sources / spend LLM credits; warn for main/scrape/score.
 is_live_command() {
@@ -109,6 +129,7 @@ up() {
     streamlit run tracker.py --server.port 8501 --server.address 0.0.0.0 --server.fileWatcherType none
 
   # 6. Expose it on the tailnet only.
+  assert_serve_port_free "$PORT"
   tailscale serve --bg "--tcp=${PORT}" "tcp://127.0.0.1:${PORT}"
 
   # 7. Start the read-only API on the same image/volume/env (spec 041, FR-011).
@@ -127,7 +148,8 @@ up() {
     uvicorn api.main:app --host 0.0.0.0 --port 8601
 
   # 8. Expose the API on the tailnet under /api (TLS, path-stripped).
-  tailscale serve --bg "--https=8443" --set-path /api "http://127.0.0.1:${API_PORT}"
+  assert_serve_port_free "$API_HTTPS_PORT"
+  tailscale serve --bg "--https=${API_HTTPS_PORT}" --set-path /api "http://127.0.0.1:${API_PORT}"
 
   # 9. Start the worker (task queue consumer) on the same image/volume/env. It
   #    shares /app/data with the tracker and API, so it sees the same queue and
@@ -149,7 +171,7 @@ up() {
   api_name="$(tailscale status --self --peers=false --json 2>/dev/null \
     | python3 -c 'import sys,json; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)"
   echo "Staging tracker up at http://${tip:-<tailnet-ip>}:${PORT}"
-  echo "Staging API up at https://${api_name:-<verva>.<tailnet>.ts.net}:8443/api"
+  echo "Staging API up at https://${api_name:-<verva>.<tailnet>.ts.net}:${API_HTTPS_PORT}/api"
   echo "Staging worker up (${WORKER_CONTAINER})"
 }
 
@@ -178,7 +200,7 @@ down() {
   docker rm -f "$API_CONTAINER" >/dev/null 2>&1 || true
   docker rm -f "$WORKER_CONTAINER" >/dev/null 2>&1 || true
   tailscale serve --bg "--tcp=${PORT}" off >/dev/null 2>&1 || true
-  tailscale serve --bg "--https=8443" off >/dev/null 2>&1 || true
+  tailscale serve --bg "--https=${API_HTTPS_PORT}" off >/dev/null 2>&1 || true
   docker rmi "$IMAGE" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
   git -C "$REPO" worktree remove "$WORKTREE" --force >/dev/null 2>&1 || true
@@ -207,12 +229,12 @@ down() {
   if tailscale serve status 2>/dev/null | grep -q "$PORT"; then
     echo "leftover: tailscale serve entry on $PORT" >&2; leftover=1
   fi
-  if tailscale serve status 2>/dev/null | grep -q "8443"; then
-    echo "leftover: tailscale serve entry on 8443" >&2; leftover=1
+  if tailscale serve status 2>/dev/null | grep -q "$API_HTTPS_PORT"; then
+    echo "leftover: tailscale serve entry on $API_HTTPS_PORT" >&2; leftover=1
   fi
 
   if [ "$leftover" -eq 0 ]; then
-    echo "Staging cleaned up — no container, image, volume, worktree or tailscale serve entry on $PORT/8443 remains."
+    echo "Staging cleaned up — no container, image, volume, worktree or tailscale serve entry on $PORT/$API_HTTPS_PORT remains."
   else
     echo "ERROR: staging artifacts remain (see above)." >&2
     return 1

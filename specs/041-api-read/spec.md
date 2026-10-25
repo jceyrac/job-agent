@@ -10,6 +10,25 @@
 
 ---
 
+## Decision amendment (2026-10-24) — 443 conflict with nginx
+
+The Q1 decision used `tailscale serve --https=443` for the production API. On
+verva, port **443 belongs to nginx** (Nextcloud), which collides with a
+`tailscale serve` HTTPS entry on 443. Amended (shipped on the 044 branch, before
+the 044 staging run):
+
+- **Production API** moves from `:443` to **`:8443`**:
+  `tailscale serve --bg --https=8443 --set-path /api http://127.0.0.1:8601`.
+- **Staging API** moves from `:8443` to **`:10000`** (so staging never collides
+  with prod): `scripts/staging.sh` now uses `--https=10000`.
+- **Rule**: `tailscale serve` must never use 443, and `scripts/staging.sh`
+  refuses a serve port already bound by another process (`ss -ltn`).
+
+The rest of this spec is historical: read every `443` (prod) as the original
+decision, superseded by `8443`; read the staging `8443` as superseded by `10000`.
+
+---
+
 ## Clarifications
 
 ### Session 2026-10-15

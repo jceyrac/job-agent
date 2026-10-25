@@ -8,7 +8,10 @@ the error mapping, and a module-level singleton with proxy functions so
 
 Environment contract (spec 044, ``contracts/agents-api.md`` §5):
 
-- ``JOB_AGENT_API_URL``   — base URL (tailnet ``https://<verva>…/api``).
+- ``JOB_AGENT_API_URL``   — base URL; defaults to the production API
+  (``https://verva.taild1340b.ts.net:8443/api``) when unset, so a normal run
+  needs no env. A staging run points it at the staging API
+  (``…:10000/api``).
 - ``JOB_AGENT_API_TOKEN`` — bearer token, or a local credentials file (mode 0600)
   at ``JOB_AGENT_API_TOKEN_FILE`` (default ``~/.config/job_agent/agent_token``).
 - The token is **never** logged, never echoed into an error message, never
@@ -23,6 +26,10 @@ import os
 import stat
 
 import httpx
+
+# Default API base URL (the production API on the tailnet; port 8443 — 443 is
+# nginx/Nextcloud, 10000 is staging). Overridable with ``JOB_AGENT_API_URL``.
+_DEFAULT_BASE_URL = "https://verva.taild1340b.ts.net:8443/api"
 
 # Default location of the local credentials file (owner-only, mode 0600).
 _DEFAULT_TOKEN_FILE = os.path.join(
@@ -78,7 +85,7 @@ class AgentClient:
 
     def __init__(self, base_url: str | None = None, token: str | None = None,
                  timeout: float = 30.0, transport=None):
-        self.base_url = (base_url or os.environ.get("JOB_AGENT_API_URL") or "").rstrip("/")
+        self.base_url = (base_url or os.environ.get("JOB_AGENT_API_URL") or _DEFAULT_BASE_URL).rstrip("/")
         if not self.base_url:
             raise ApiError("no API base URL — set JOB_AGENT_API_URL")
         self.token = token if token is not None else _load_token()
