@@ -198,6 +198,26 @@ def test_idle_worker_releases_lock(tmp_path):
     assert db.get_pipeline_lock_holder() is None    # lock released between polls
 
 
+def test_idle_poll_writes_nothing(tmp_path, monkeypatch):
+    """An idle poll (no queued task) must not claim or write the holder — the only
+    periodic write is the heartbeat (FR-003, peek-first idle poll)."""
+    db = JobStorage(str(tmp_path / "db.sqlite"))
+    calls = {"claim": 0, "holder": 0}
+
+    def _claim():
+        calls["claim"] += 1
+        return None
+
+    def _set_holder(label):
+        calls["holder"] += 1
+
+    monkeypatch.setattr(db, "claim_next_task", _claim)
+    monkeypatch.setattr(db, "set_pipeline_lock_holder", _set_holder)
+
+    assert _poll_once(db, _WorkerState()) is None
+    assert calls == {"claim": 0, "holder": 0}
+
+
 # ── heartbeat liveness (FR-005) ───────────────────────────────────────────────
 
 def test_heartbeat_stays_fresh_during_silent_task(tmp_path):

@@ -26,6 +26,8 @@ from scripts.fingerprint import (
 from scripts.health_check import (
     DEFAULT_MAX_AGE_HOURS,
     gate_failures,
+    purge_last_success_age,
+    purge_staleness_warning,
     run_age_hours,
 )
 from core.storage import JobStorage
@@ -281,3 +283,34 @@ def test_gate_failures_missing_full_run():
     now = datetime(2026, 10, 3, 12, 0, 0)
     runs = {"monitored_only": {"ran_at": "2026-10-03 06:00:00", "status": "success"}}
     assert gate_failures(runs, now, DEFAULT_MAX_AGE_HOURS) == ["last full run missing"]
+
+
+def test_purge_staleness_warning_missing():
+    assert purge_staleness_warning(None) == "no successful purge recorded"
+
+
+def test_purge_staleness_warning_stale():
+    assert ">3d ago" in purge_staleness_warning(4 * 86400)
+
+
+def test_purge_staleness_warning_recent_ok():
+    assert purge_staleness_warning(1 * 86400) is None
+
+
+def test_purge_last_success_age(tmp_path):
+    path = str(tmp_path / "hc.sqlite")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO config VALUES ('purge.last_success', ?)",
+                 ("2026-10-01T00:00:00+00:00",))
+    conn.commit()
+    conn.close()
+
+    now = datetime(2026, 10, 5, 0, 0, 0)
+    assert purge_last_success_age(path, now) == 4 * 86400
+
+
+def test_purge_last_success_age_missing(tmp_path):
+    path = str(tmp_path / "hc.sqlite")
+    sqlite3.connect(path).close()  # empty DB — no config table / key
+    assert purge_last_success_age(path, datetime(2026, 10, 5)) is None

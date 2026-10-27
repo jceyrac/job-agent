@@ -7,14 +7,20 @@ The app runs with `root_path="/api"` (Tailscale strips `/api` before forwarding
 to `127.0.0.1:8601`), so generated URLs (OpenAPI, docs) carry the prefix.
 """
 import os
+from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.storage import ProfileNotFoundError, JobNotFoundError
-from api.deps import get_user_db, require_scope
+from core.storage import (
+    PURGE_STALE_DAYS,
+    JobStorage,
+    ProfileNotFoundError,
+    JobNotFoundError,
+)
+from api.deps import get_db, get_user_db, require_scope
 from api.logging_config import configure_logging
 from api.middleware import RequestSizeLimitMiddleware
 from api.routers import catalogue, me, tasks
@@ -32,6 +38,25 @@ _ERROR_CODES = {
 class HealthResponse(ApiModel):
     status: str
     version: str
+    purge_last_success: str | None = None
+    warnings: list[str] = []
+
+
+def _purge_warning(last_success: str | None, *, now=None,
+                   stale_days: int = PURGE_STALE_DAYS) -> str | None:
+    """Return a warning string when the last purge is missing or stale."""
+    if not last_success:
+        return "no successful purge recorded"
+    try:
+        last = datetime.fromisoformat(last_success)
+    except ValueError:
+        return "purge.last_success is unparseable"
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)  # assume UTC, like the writer
+    now = now or datetime.now(timezone.utc)
+    if now - last > timedelta(days=stale_days):
+        return f"last successful purge >{stale_days}d ago"
+    return None
 
 
 def _git_sha() -> str:
@@ -57,8 +82,17 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestSizeLimitMiddleware)
 
     @app.get("/health", response_model=HealthResponse)
-    def health() -> HealthResponse:
-        return HealthResponse(status="ok", version=_git_sha())
+    def health(db: JobStorage = Depends(get_db)) -> HealthResponse:
+        try:
+            last_success = db.get_purge_last_success()
+        except Exception:
+            # DB unavailable → still 200/ok, but surface it as a warning.
+            return HealthResponse(status="ok", version=_git_sha(),
+                                  warnings=["purge status unavailable"])
+        warning = _purge_warning(last_success)
+        return HealthResponse(status="ok", version=_git_sha(),
+                              purge_last_success=last_success,
+                              warnings=[warning] if warning else [])
 
     # One router per domain (Constitution: "monolithe modulaire").
     app.include_router(catalogue.router, prefix="/v1", tags=["catalogue"])

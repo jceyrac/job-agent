@@ -3337,6 +3337,25 @@
           "version": {
             "type": "string",
             "title": "Version"
+          },
+          "purge_last_success": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge Last Success"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
           }
         },
         "additionalProperties": false,

@@ -295,6 +295,7 @@ CREATE TABLE IF NOT EXISTS job_applications (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen  ON jobs (last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company_id ON jobs (company_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs (first_seen);
 -- idx_jobs_title_company created in migration below (depends on norm_company/norm_title columns)
 CREATE INDEX IF NOT EXISTS idx_scores_profile  ON job_scores (profile_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_job      ON job_scores (job_id, score DESC);
@@ -475,6 +476,11 @@ class JobNotFoundError(Exception):
     Raised by ``enqueue_task`` when a ``score_job`` names a job that does not
     exist, so the API maps it to 404 before enqueuing a doomed task.
     """
+
+
+# A purge older than this triggers a health-check warning. Kept here so both
+# `/api/health` and `scripts/health_check.py` share the same threshold.
+PURGE_STALE_DAYS = 3
 
 
 class JobStorage:
@@ -1698,6 +1704,18 @@ class JobStorage:
             ).fetchone()
         return self._task_row(row)
 
+    def has_queued_task(self) -> bool:
+        """Cheap read for the worker's idle poll — True when a task is waiting.
+
+        Lets an idle worker skip the flock and the holder write entirely, so it
+        writes only its heartbeat between tasks.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM tasks WHERE status = 'queued' LIMIT 1"
+            ).fetchone()
+        return row is not None
+
     def claim_next_task(self) -> dict | None:
         """Atomically claim the oldest queued task (spec FR-003).
 
@@ -1799,6 +1817,8 @@ class JobStorage:
         return self.get_config("pipeline.lock_holder")
 
     def set_pipeline_lock_holder(self, label: str | None) -> None:
+        if self.get_pipeline_lock_holder() == label:
+            return
         if label is None:
             with self._conn() as conn:
                 conn.execute("DELETE FROM config WHERE key = 'pipeline.lock_holder'")
@@ -3667,7 +3687,7 @@ class JobStorage:
             count = conn.execute(
                 """SELECT COUNT(*) FROM jobs j
                    LEFT JOIN job_tracking jt ON j.id = jt.job_id
-                   WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                   WHERE j.first_seen < date('now', '-' || ? || ' days')
                      AND (
                          jt.job_id IS NULL
                          OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
@@ -3691,14 +3711,14 @@ class JobStorage:
           - Any prepared application (cover letter, CV selection, etc.)
         """
         with self._conn() as conn:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             try:
                 # Compute purgeable job IDs once so the filter is defined in one place.
                 conn.execute(
                     """CREATE TEMP TABLE _purgeable AS
                        SELECT j.id FROM jobs j
                        LEFT JOIN job_tracking jt ON j.id = jt.job_id
-                       WHERE date(j.first_seen) < date('now', '-' || ? || ' days')
+                       WHERE j.first_seen < date('now', '-' || ? || ' days')
                          AND (
                              jt.job_id IS NULL
                              OR (jt.status = 'new' AND (jt.notes IS NULL OR trim(jt.notes) = ''))
@@ -3718,11 +3738,25 @@ class JobStorage:
                 )
                 count = cursor.rowcount
                 conn.execute("DROP TABLE _purgeable")
+                # Record a successful purge so /health can warn on a stale one.
+                conn.execute(
+                    "INSERT INTO config (key, value) VALUES ('purge.last_success', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (_now(),),
+                )
                 conn.execute("COMMIT")
                 return count
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
+
+    def get_purge_last_success(self) -> str | None:
+        """ISO timestamp of the last successful purge, or None if never purged.
+
+        Set atomically inside ``purge_stale_jobs`` (same transaction) so a skipped
+        purge leaves the value stale and ``/api/health`` can warn on it.
+        """
+        return self.get_config("purge.last_success")
 
     # ------------------------------------------------------------------
     # Config key-value store

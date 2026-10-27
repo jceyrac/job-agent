@@ -149,10 +149,13 @@ def _run_task(db: JobStorage, task: dict, state: _WorkerState,
 def _poll_once(db: JobStorage, state: _WorkerState,
                argv: list[str] | None = None, timeout: float | None = None,
                heartbeat_interval: float = HEARTBEAT_INTERVAL):
-    """One worker iteration: lock → claim → run. Idle iterations release the lock
-    immediately (an idle worker never holds it between polls). While waiting for
-    the lock (behind cron) or running a task, the heartbeat is refreshed so the
-    worker always looks alive (FR-005)."""
+    """One worker iteration: peek → lock → claim → run. The idle poll is a cheap
+    read (no flock, no holder write), so an idle worker writes only its heartbeat.
+    A task is still claimed under the lock, so it is never claimed while the cron
+    holds the pipeline. While waiting for the lock (behind cron) or running a
+    task, the heartbeat is refreshed so the worker always looks alive (FR-005)."""
+    if not db.has_queued_task():
+        return None
     with pipeline_lock("worker", db,
                        heartbeat=lambda: db.set_worker_heartbeat(_now()),
                        heartbeat_interval=heartbeat_interval):

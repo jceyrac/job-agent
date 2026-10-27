@@ -38,6 +38,8 @@ ALLOW_LIST = frozenset({
     "get_profile",
     # auth accessors (deps.py only)
     "resolve_api_token", "touch_api_token",
+    # /health — purge liveness (deps.py only)
+    "get_purge_last_success",
     # ── spec 042 writes ──
     # US1 — jobs & lifecycle
     "set_status", "record_lifecycle_event", "update_lifecycle_event",

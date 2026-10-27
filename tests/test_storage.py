@@ -3269,6 +3269,174 @@ def test_count_purgeable_jobs_matches_purge_count():
     assert purged == expected, f"count={expected} but purged={purged}"
 
 
+def test_purge_uses_begin_immediate():
+    """purge_stale_jobs opens its transaction with BEGIN IMMEDIATE, not a deferred
+    BEGIN — the fix for the nightly 'database is locked' (read→write upgrade)."""
+    import tempfile
+    from core import storage as _storage_mod
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+    try:
+        db = JobStorage(db_path)
+        db.upsert_profile(_FakeProfile())
+
+        statements = []
+        real_connect = _storage_mod.sqlite3.connect
+
+        def traced_connect(path, *args, **kwargs):
+            conn = real_connect(path, *args, **kwargs)
+            conn.set_trace_callback(statements.append)
+            return conn
+
+        _storage_mod.sqlite3.connect = traced_connect
+        try:
+            db.purge_stale_jobs(retention_days=30)
+        finally:
+            _storage_mod.sqlite3.connect = real_connect
+
+        begins = [s.strip().upper() for s in statements
+                  if s.strip().upper().startswith("BEGIN")]
+        assert begins == ["BEGIN IMMEDIATE"], f"expected BEGIN IMMEDIATE, traced: {begins}"
+    finally:
+        os.unlink(db_path)
+
+
+def test_purge_records_last_success():
+    """A successful purge records purge.last_success (a parseable ISO timestamp)."""
+    from datetime import datetime
+
+    db = JobStorage(":memory:")
+    db.upsert_profile(_FakeProfile())
+    assert db.get_purge_last_success() is None
+
+    jid = _old_job(db, "https://example.com/old", first_seen_days_ago=40)
+    db.set_status(jid, "new")
+    db.purge_stale_jobs(retention_days=30)
+
+    ts = db.get_purge_last_success()
+    assert ts is not None, "purge should record purge.last_success"
+    datetime.fromisoformat(ts)  # must parse (ISO, tz-aware)
+
+
+def test_purge_begin_immediate_survives_concurrent_writer():
+    """Regression for the nightly cron crash: a writer committing between the purge's
+    read and its first write must not raise 'database is locked'.
+
+    Reproduces the exact interleaving (deferred BEGIN read→write upgrade) on two raw
+    WAL connections and shows it fails, then shows BEGIN IMMEDIATE survives it.
+    """
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+    try:
+        db = JobStorage(db_path)
+        db.upsert_profile(_FakeProfile())
+        jid = _old_job(db, "https://example.com/stale", first_seen_days_ago=40)
+        db.set_status(jid, "new")
+
+        reader = sqlite3.connect(db_path)
+        reader.execute("PRAGMA journal_mode=WAL")
+        writer = sqlite3.connect(db_path)
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA busy_timeout=50")
+
+        # OLD behaviour: deferred BEGIN → read snapshot → concurrent commit → upgrade
+        # fails with SQLITE_BUSY (reported as "database is locked").
+        reader.execute("BEGIN")
+        reader.execute("CREATE TEMP TABLE _t AS SELECT id FROM jobs")
+        writer.execute("UPDATE jobs SET last_seen = '2099-01-01'")
+        writer.commit()
+        try:
+            reader.execute("DELETE FROM jobs WHERE id IN (SELECT id FROM _t)")
+        except sqlite3.OperationalError:
+            pass
+        else:
+            raise AssertionError("deferred BEGIN should fail with a concurrent commit")
+        reader.execute("ROLLBACK")
+
+        # NEW behaviour: BEGIN IMMEDIATE holds the write lock up front, so the
+        # concurrent writer cannot commit mid-transaction and the purge's write wins.
+        reader.execute("BEGIN IMMEDIATE")
+        reader.execute("CREATE TEMP TABLE _t2 AS SELECT id FROM jobs")
+        try:
+            writer.execute("UPDATE jobs SET last_seen = '2099-01-01'")
+        except sqlite3.OperationalError:
+            pass  # writer blocked (busy_timeout) — expected while reader holds the lock
+        else:
+            writer.commit()
+            raise AssertionError("writer should have been blocked by BEGIN IMMEDIATE")
+        reader.execute("DELETE FROM jobs WHERE id IN (SELECT id FROM _t2)")
+        reader.execute("COMMIT")
+        reader.close()
+        writer.close()
+    finally:
+        os.unlink(db_path)
+
+
+def test_first_seen_predicate_sargable_matches_date_wrap():
+    """j.first_seen < cutoff classifies rows identically to date(j.first_seen) < cutoff,
+    across ISO-datetime and date-only storage (regression for the sargable rewrite)."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE jobs (url TEXT PRIMARY KEY, first_seen TEXT NOT NULL)")
+    cutoff = "2026-09-27"  # 30 days before 2026-10-27
+    rows = [
+        ("https://x/just-before",      "2026-09-26T23:59:59+00:00", True),
+        ("https://x/on-cutoff-midnight", "2026-09-27T00:00:00+00:00", False),
+        ("https://x/on-cutoff-late",   "2026-09-27T23:59:59+00:00", False),
+        ("https://x/date-before",      "2026-09-26", True),
+        ("https://x/date-on-cutoff",   "2026-09-27", False),
+        ("https://x/date-after",       "2026-09-28", False),
+        ("https://x/far-past",         "2026-08-01", True),
+    ]
+    for url, fs, _ in rows:
+        conn.execute("INSERT INTO jobs (url, first_seen) VALUES (?, ?)", (url, fs))
+
+    sargable = {r[0] for r in conn.execute(
+        "SELECT url FROM jobs WHERE first_seen < ?", (cutoff,))}
+    wrapped = {r[0] for r in conn.execute(
+        "SELECT url FROM jobs WHERE date(first_seen) < date(?)", (cutoff,))}
+    expected = {url for url, _, before in rows if before}
+
+    assert sargable == wrapped, f"sargable {sargable} != wrapped {wrapped}"
+    assert sargable == expected, f"sargable {sargable} != expected {expected}"
+
+
+def test_set_pipeline_lock_holder_noop_when_unchanged():
+    """Setting the holder to its current value must not write (idle-worker cadence)."""
+    import tempfile
+    from core import storage as _storage_mod
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+    try:
+        db = JobStorage(db_path)
+        db.set_pipeline_lock_holder("cron")
+        assert db.get_pipeline_lock_holder() == "cron"
+
+        statements = []
+        real_connect = _storage_mod.sqlite3.connect
+
+        def traced_connect(path, *args, **kwargs):
+            conn = real_connect(path, *args, **kwargs)
+            conn.set_trace_callback(statements.append)
+            return conn
+
+        _storage_mod.sqlite3.connect = traced_connect
+        try:
+            db.set_pipeline_lock_holder("cron")  # unchanged → no-op, no write
+        finally:
+            _storage_mod.sqlite3.connect = real_connect
+
+        writes = [s for s in statements if any(
+            kw in s.upper() for kw in ("INSERT", "UPDATE", "DELETE", "REPLACE")
+        )]
+        assert writes == [], f"expected no writes on no-op, traced: {writes}"
+    finally:
+        os.unlink(db_path)
+
+
 # ---------------------------------------------------------------------------
 # Spec 037 — single DB access path (new JobStorage methods)
 # ---------------------------------------------------------------------------

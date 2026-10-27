@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 
 from core.paths import DB_PATH
 from core.tasks import WORKER_HEARTBEAT_STALE_SECONDS
+from core.storage import PURGE_STALE_DAYS
 
 DEFAULT_MAX_AGE_HOURS = 26
 # A "healthy" full run is a full scrape or a successful score run. "error" and
@@ -129,6 +130,46 @@ def worker_heartbeat_age(path: str, now: datetime) -> float | None:
         return None
 
 
+def purge_last_success_age(path: str, now: datetime) -> float | None:
+    """Age (seconds) of the last successful purge, or ``None`` when absent/unreadable.
+
+    ``purge_stale_jobs`` writes ``config["purge.last_success"]`` on success (the
+    hotfix for the nightly "database is locked"); a missing or stale value reads
+    as "purge broken". Read-only diagnostic, like :func:`worker_heartbeat_age`.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT value FROM config WHERE key = 'purge.last_success'"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        ts = datetime.fromisoformat(row[0])
+        if ts.tzinfo is not None:
+            ts = ts.replace(tzinfo=None)
+        return (now - ts).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
+def purge_staleness_warning(age_seconds: float | None,
+                            stale_days: float = PURGE_STALE_DAYS) -> str | None:
+    """Warning string when the last purge is missing or older than ``stale_days``."""
+    if age_seconds is None:
+        return "no successful purge recorded"
+    if age_seconds > stale_days * 86400:
+        return f"last successful purge >{stale_days:.0f}d ago"
+    return None
+
+
 def gate_failures(runs_by_type: dict[str, dict], now: datetime,
                   max_age_hours: float) -> list[str]:
     """Failure labels for the latest **full** run (status + age threshold)."""
@@ -155,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     failures: list[str] = []
+    warnings: list[str] = []
 
     if check_health(args.url):
         print(f"tracker health: OK ({args.url})")
@@ -190,9 +232,20 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"worker heartbeat: OK (age={hb_age:.0f}s)")
 
+    purge_age = purge_last_success_age(args.db, now)
+    purge_warn = purge_staleness_warning(purge_age)
+    if purge_warn:
+        print(f"purge last success: WARN ({purge_warn})", file=sys.stderr)
+        warnings.append(purge_warn)
+    else:
+        print(f"purge last success: OK (age={purge_age / 86400:.1f}d)")
+
     if failures:
         print("HEALTH CHECK FAILED: " + "; ".join(failures), file=sys.stderr)
         return 1
+    if warnings:
+        print("HEALTH CHECK OK (warnings: " + "; ".join(warnings) + ")")
+        return 0
     print("HEALTH CHECK OK")
     return 0
 

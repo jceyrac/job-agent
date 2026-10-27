@@ -37,7 +37,12 @@ def main():
 
     # ── Purge stale jobs (untouched, >N days old) ────────────────────────────
     retention_days = int(db.get_config("purge_retention_days", default="30"))
-    purged = db.purge_stale_jobs(retention_days)
+    try:
+        purged = db.purge_stale_jobs(retention_days)
+    except Exception as e:
+        # Housekeeping must never block ingestion: log the failure and continue.
+        print(f"[purge] ⚠ purge skipped — {e} (continuing)")
+        purged = 0
     if purged > 0:
         print(f"[purge] {purged} stale jobs removed (>{retention_days}d, untouched)")
     else:

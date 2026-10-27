@@ -49,9 +49,31 @@ def test_health(api_env):
     r = api_env.client.get("/health")
     assert r.status_code == 200
     body = r.json()
-    assert set(body.keys()) == {"status", "version"}
+    assert set(body.keys()) == {"status", "version", "purge_last_success", "warnings"}
     assert body["status"] == "ok"
     assert isinstance(body["version"], str)
+    assert body["purge_last_success"] is None          # seeded DB has no purge history
+    assert body["warnings"] == ["no successful purge recorded"]
+
+
+def test_health_warns_when_purge_stale(api_env):
+    from datetime import datetime, timedelta, timezone
+    stale = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+    api_env.db.set_config("purge.last_success", stale)
+    r = api_env.client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["purge_last_success"] == stale
+    assert "last successful purge >3d ago" in body["warnings"]
+
+
+def test_health_no_warning_when_purge_recent(api_env):
+    from datetime import datetime, timezone
+    api_env.db.set_config("purge.last_success", datetime.now(timezone.utc).isoformat())
+    r = api_env.client.get("/health")
+    body = r.json()
+    assert body["purge_last_success"] is not None
+    assert body["warnings"] == []
 
 
 def test_health_version_from_env(api_env, monkeypatch):
