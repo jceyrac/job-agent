@@ -134,11 +134,11 @@ the new writes (`save_unscored`, `save_application`) — not scoring.
 
 ### Release (each gate requires the user's explicit "go")
 
-- [ ] T021 [US5] **STOP before merge** — report staging results to the user; no merge without an explicit "go"
-- [ ] T022 [US5] `git merge --ff-only <full-sha>` onto `main` (refuse non-ff); push
-- [ ] T023 [US5] **STOP before deploy** — no deploy without an explicit "go"; deploy only outside 07:00/11:00/16:00 UTC
-- [ ] T024 [US5] `./scripts/deploy.sh` on verva; confirm `git -C /opt/job-agent rev-parse HEAD` == merged SHA; `tailscale serve status` still lists `tcp 8501` and `https 8443 /api`
-- [ ] T025 [US5] Post-deploy checks: `/api/health` reports the SHA, worker heartbeat fresh, tracker reachable, next cron run OK, and the health_check (T028) reaches the API via `http://api:8601` from inside the containers
+- [X] T021 [US5] **STOP before merge** — report staging results to the user; no merge without an explicit "go"
+- [X] T022 [US5] `git merge --ff-only <full-sha>` onto `main` (refuse non-ff); push
+- [X] T023 [US5] **STOP before deploy** — no deploy without an explicit "go"; deploy only outside 07:00/11:00/16:00 UTC
+- [X] T024 [US5] `./scripts/deploy.sh` on verva; confirm `git -C /opt/job-agent rev-parse HEAD` == merged SHA; `tailscale serve status` still lists `tcp 8501` and `https 8443 /api`
+- [X] T025 [US5] Post-deploy checks: `/api/health` reports the SHA, worker heartbeat fresh, tracker reachable, next cron run OK, and the health_check (T028) reaches the API via `http://api:8601` from inside the containers — "next cron run OK" deferred to a separate fix (pre-existing cron "database is locked" in `purge_stale_jobs`, unrelated to 044)
 - [ ] T026 [US5] First real agent run against **production** by the user — application visible in the prod tracker with status `ready`, no manual update
 
 ---

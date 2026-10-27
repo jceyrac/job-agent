@@ -273,13 +273,13 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-21)
+## Current focus (as of 2026-10-27)
 
-**API migration roadmap** — `docs/roadmap-api.md`. Steps 3–6 shipped (039 user-space
+**API migration roadmap** — `docs/roadmap-api.md`. Steps 3–6b shipped (039 user-space
 separation → 040 platform ingestion scope → 041 read API → 042 write API → 043 task
-queue + worker + SSE), all in prod. Next: **step 6b — Agents via l'API**
-(`specs/044-agents-via-api/`), where the cv_agent reads the job and writes its
-application documents through the API (token à scopes) instead of importing `core`.
+queue + worker + SSE → 044 agents via API), all in prod. Next: **step 7 — Ingestion
+via API** (`core/scrape.py` → `/ingest/batch`). Deferred: a fix for the nightly cron
+"database is locked" in `purge_stale_jobs` (pre-existing, unrelated to 044).
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
