@@ -79,7 +79,7 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 | 5 | API lecture ✅ (fait 2026-10-17) | Service `api` (Tailscale, port 8601), tokens à scopes stockés hachés, `/v1/jobs`, `/v1/me/feed`, `/v1/me/jobs/{id}`, `/v1/me/companies`, `/v1/me/contacts`, `/v1/me/applications` — **spec 041** | 4–6 |
 | 6 | API écriture + tâches ✅ (fait 2026-10-21) | Découpée en deux (décision 2026-10-17) : **partie 1 — spec 042** ✅ (fait 2026-10-17), routes d'écriture synchrones de l'espace utilisateur (statut, cycle de vie, relation entreprise, contacts, interactions, profil) + faits entreprise sous `write:catalogue`, mêmes effets que le tracker ; **partie 2 — spec 043** ✅ (fait 2026-10-21), file de tâches + worker + progression SSE, les boutons du tracker passent par la file (ancienne étape 2b). L'étape 6b suit la partie 2 | 5–8 |
 | 6b | Agents via l'API ✅ (fait 2026-10-27) | Le cv_agent (puis les autres agents) lit le job et écrit ses documents de candidature par l'API (token à scopes), **sans aucun accès DB côté agent** (Q2) : interdits `core.storage`/`JobStorage`, `sqlite3`, `core.paths.DB_PATH` et `core.scorer` (le score est côté serveur) ; autorisés `core.llm`, `core.paths` (CV/outputs seulement), `core.models`, `core.geo_ch`, et le parsing de profil via `core.profiles` (jamais `load_active_profile(db)`). La garde de frontière (spec 036) est resserrée en conséquence. Prérequis de l'étape 9 | 2–4 |
-| 7 | Ingestion via API | `core/scrape.py` → `/ingest/batch` derrière `INGEST_VIA_API` ; `BaseScraper` sans `JobStorage` ; une nuit en double pour comparer | 4–6 |
+| 7 | Ingestion via API **← courant** | `core/scrape.py` → `/ingest/batch` derrière `INGEST_VIA_API` ; `BaseScraper` sans `JobStorage` ; une nuit en double pour comparer | 4–6 |
 
 ### Phase D — Front et chat
 
@@ -97,3 +97,6 @@ Découpler le backend du tracker Streamlit derrière une API, pour :
 - Emplacement du checkpointer `cv_agent_checkpoints.sqlite` sur le volume `job_data` + inclusion dans les backups (avant étape 9).
 - ~~Amendements constitution~~ — faits (v2.0.0 le 2026-10-03, v2.0.1 le 2026-10-08).
 - La règle constitutionnelle « UI Streamlit-native » devra être amendée avant l'étape 8 (stack de `web/`).
+- Règle de lint candidate (si récidive) : chaque compétence émise par le self-critique doit être ancrée dans un rôle ou marquée « concept » — des compétences non ancrées passent à tort (ex. « market-maker engagement », « incident playbooks »).
+- Nettoyage du prompt ANALYZE : retirer « Swiss-employer certainty » (wording pré-spec-038).
+- Alerte d'échec des runs planifiés (cron) — différée par Jean Claude.

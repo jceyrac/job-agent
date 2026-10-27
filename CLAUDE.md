@@ -147,6 +147,8 @@ Any spec touching the tracker UI (or the future `web/` front) requires a mockup 
 - Python 3.11: use `X | Y` union types, f-strings, dataclasses with defaults.
 - No type annotations required unless the function is new and complex.
 - DB access always goes through `JobStorage` methods — never raw `sqlite3` outside `core/storage.py`.
+- Any read-then-write transaction must use `BEGIN IMMEDIATE` (write lock up front). A deferred `BEGIN` that upgrades to a write after reads fails with `SQLITE_BUSY` in WAL under the always-on worker's commits; `busy_timeout` cannot resolve a stale-snapshot upgrade.
+- Housekeeping must never block ingestion — in `core.main`, a failed purge/cleanup is logged and skipped (the pipeline continues to scrape/score), never raised.
 - No file other than `core/llm.py` names an LLM provider. Never put LLM calls or long-running work inside an HTTP request handler (use the `tasks` table + worker, or a streamed session).
 - No user-dependent data on catalogue entities (`jobs`, `companies`); no user-independent logic keyed by profile (Constitution X).
 - Session state keys follow the pattern `jobs_<name>`, `bg_<name>` etc. — don't add generic keys that could collide across pages.
@@ -277,9 +279,10 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 **API migration roadmap** — `docs/roadmap-api.md`. Steps 3–6b shipped (039 user-space
 separation → 040 platform ingestion scope → 041 read API → 042 write API → 043 task
-queue + worker + SSE → 044 agents via API), all in prod. Next: **step 7 — Ingestion
-via API** (`core/scrape.py` → `/ingest/batch`). Deferred: a fix for the nightly cron
-"database is locked" in `purge_stale_jobs` (pre-existing, unrelated to 044).
+queue + worker + SSE → 044 agents via API), all in prod. Current focus: **step 7 —
+Ingestion via API** (`core/scrape.py` → `/ingest/batch`). The nightly cron
+"database is locked" hotfix (purge `BEGIN IMMEDIATE`, housekeeping continues on
+failure) shipped 2026-10-27 (`cd5c107`).
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
