@@ -149,6 +149,59 @@ def normalize_company(company: str) -> str:
     return " ".join(company.lower().split())
 
 
+def _normalize_key(title: str, company: str) -> str:
+    """Normalize (title, company) into a dedup key (relocated from scrape.py, spec 045).
+
+    Shared by the direct path's `dedupe_against_db` and `JobStorage.ingest_batch`
+    so both apply identical engaged-job dedup semantics.
+    """
+    if not title or not company:
+        return ""
+    # Strip parenthetical qualifiers: " (m/w/d)", " (Remote)", " (f/m/x)", etc.
+    title = re.sub(r"\s*\([^)]*\)", "", title)
+    company = re.sub(r"\s*\([^)]*\)", "", company)
+    title = title.lower().strip()
+    company = company.lower().strip()
+    # Normalize common abbreviations so "Senior PM" ≈ "Senior Product Manager"
+    title = re.sub(r"\bproduct manager\b", "pm", title)
+    title = re.sub(r"\bproduct owner\b", "po", title)
+    title = re.sub(r"\bsenior\b", "sr", title)
+    title = re.sub(r"\bhead of\b", "head", title)
+    title = re.sub(r"\bmanager\b", "mgr", title)
+    combined = f"{title} {company}"
+    cleaned = re.sub(r"[^a-z0-9 ]", "", combined)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _posting_to_job(posting: dict):
+    """Reconstruct a `JobPosting` from a batch posting dict (spec 045).
+
+    Lazy import: `core.models` imports `core.storage`, so a module-level import
+    of `JobPosting` here would be circular. `monitored_company_id` is carried
+    explicitly (the DB-row reconstruction `posting_from_dict` drops it).
+    """
+    from core.models import JobPosting
+
+    posted_date = posting.get("posted_date")
+    if posted_date:
+        try:
+            posted_date = datetime.strptime(str(posted_date)[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            posted_date = None
+    job = JobPosting(
+        source=(posting.get("source") or "") or "manual",
+        title=posting.get("title") or "",
+        company=posting.get("company") or "",
+        location=posting.get("location") or "",
+        url=posting.get("url") or "",
+        description=posting.get("description"),
+        base_location=posting.get("base_location"),
+        posted_date=posted_date,
+    )
+    job.monitored_company_id = posting.get("monitored_company_id")
+    return job
+
+
 # ---------------------------------------------------------------------------
 # Schéma
 # ---------------------------------------------------------------------------
@@ -2037,41 +2090,55 @@ class JobStorage:
             raise ValueError(f"Company name normalizes to empty: {name!r}")
         now = _now()
         with self._conn() as conn:
-            existing = conn.execute(
-                "SELECT id, website, careers_url FROM companies WHERE name_normalized = ?",
-                (name_norm,)).fetchone()
-            if existing:
-                # Update last_seen_at, optionally fill website/careers_url if currently NULL
-                updates = []
-                params = []
-                if website and not existing["website"]:
-                    updates.append("website = ?")
-                    params.append(website)
-                if careers_url and not existing["careers_url"]:
-                    updates.append("careers_url = ?")
-                    params.append(careers_url)
-                if updates:
-                    updates.append("last_seen_at = ?")
-                    params.append(now)
-                    params.append(existing["id"])
-                    conn.execute(
-                        f"UPDATE companies SET {', '.join(updates)} WHERE id = ?",
-                        params)
-                else:
-                    conn.execute(
-                        "UPDATE companies SET last_seen_at = ? WHERE id = ?",
-                        (now, existing["id"]))
-                return existing["id"]
+            return self._upsert_company_conn(name, conn, now,
+                                             website=website, careers_url=careers_url)
+
+    def _upsert_company_conn(self, name: str, conn, now: str, *,
+                             website: str | None = None,
+                             careers_url: str | None = None) -> int:
+        """Insert/update a company on an already-open connection (spec 045).
+
+        Runs inside the caller's `BEGIN IMMEDIATE` transaction so `ingest_batch`
+        can upsert companies and jobs in one sub-chunk without a read→write upgrade.
+        """
+        name_norm = _normalize_company_name(name)
+        if not name_norm:
+            raise ValueError(f"Company name normalizes to empty: {name!r}")
+        existing = conn.execute(
+            "SELECT id, website, careers_url FROM companies WHERE name_normalized = ?",
+            (name_norm,)).fetchone()
+        if existing:
+            # Update last_seen_at, optionally fill website/careers_url if currently NULL
+            updates = []
+            params = []
+            if website and not existing["website"]:
+                updates.append("website = ?")
+                params.append(website)
+            if careers_url and not existing["careers_url"]:
+                updates.append("careers_url = ?")
+                params.append(careers_url)
+            if updates:
+                updates.append("last_seen_at = ?")
+                params.append(now)
+                params.append(existing["id"])
+                conn.execute(
+                    f"UPDATE companies SET {', '.join(updates)} WHERE id = ?",
+                    params)
             else:
                 conn.execute(
-                    """INSERT INTO companies
-                       (name, name_normalized, website, careers_url,
-                        first_seen_at, last_seen_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (name, name_norm, website, careers_url, now, now, now))
-                return conn.execute(
-                    "SELECT id FROM companies WHERE name_normalized = ?",
-                    (name_norm,)).fetchone()["id"]
+                    "UPDATE companies SET last_seen_at = ? WHERE id = ?",
+                    (now, existing["id"]))
+            return existing["id"]
+        else:
+            conn.execute(
+                """INSERT INTO companies
+                   (name, name_normalized, website, careers_url,
+                    first_seen_at, last_seen_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (name, name_norm, website, careers_url, now, now, now))
+            return conn.execute(
+                "SELECT id FROM companies WHERE name_normalized = ?",
+                (name_norm,)).fetchone()["id"]
 
     def update_company_metadata(self, company_id: int, *,
                                 summary: str | None = None,
@@ -2123,9 +2190,8 @@ class JobStorage:
                 (self.user_id, company_id, status, note, now),
             )
 
-    def _upsert_job_raw(self, job, conn, now: str, company_id: int | None = None,
-                         monitored_company_id: int | None = None) -> str:
-        """Insère ou met à jour la table jobs (données brutes uniquement).
+    def _effective_job_id(self, conn, job) -> str:
+        """Resolve the dedup'd id for a job on an open connection (spec 045).
 
         Uses canonical_url for dedup: if an existing row has the same
         canonical_url (but a different id — legacy rows from before URL
@@ -2135,9 +2201,6 @@ class JobStorage:
         Also checks (source, norm_company, norm_title) as a fallback — catches
         duplicates where the same job gets different URLs (LinkedIn issues new
         numeric IDs on every scrape; Indeed issues different jk per country).
-
-        Returns the effective job id used for the upsert (may differ from
-        job.id when dedup maps to an existing row).
         """
         effective_id = job.id
         canonical = getattr(job, "canonical_url", None)
@@ -2161,6 +2224,20 @@ class JobStorage:
             ).fetchone()
             if existing:
                 effective_id = existing["id"]
+        return effective_id
+
+    def _upsert_job_raw(self, job, conn, now: str, company_id: int | None = None,
+                         monitored_company_id: int | None = None) -> str:
+        """Insère ou met à jour la table jobs (données brutes uniquement).
+
+        Returns the effective job id used for the upsert (may differ from
+        job.id when dedup maps to an existing row).
+        """
+        effective_id = self._effective_job_id(conn, job)
+        canonical = getattr(job, "canonical_url", None)
+        source = getattr(job, "source", None)
+        norm_title = getattr(job, "norm_title", None)
+        norm_company = getattr(job, "norm_company", None)
 
         conn.execute(
             """INSERT INTO jobs (
@@ -2479,6 +2556,94 @@ class JobStorage:
                 "UPDATE jobs SET last_seen = ? WHERE id = ?",
                 [(now, jid) for jid in job_ids],
             )
+
+    def ingest_batch(self, postings: list[dict]) -> dict:
+        """Server-side ingestion writer (spec 045, FR-004) — one set of rules.
+
+        Loads the engaged-key union once (`get_engaged_job_keys`, the union across
+        all users), then commits in ~50-posting `BEGIN IMMEDIATE` sub-chunks. Per
+        posting, in order: id computation (`JobPosting.id`), engaged-job dedup with
+        a `last_seen` touch, company upsert, then `_upsert_job_raw` (new insert or
+        existing refresh — the same fields the direct path updates). A posting that
+        fails (e.g. no id) is reported without failing the batch.
+
+        Returns `{new, existing, dropped_engaged, outcomes}` where `outcomes` is a
+        per-posting list of `{job_id, result}` with result in
+        `new | existing | dropped_engaged | error`.
+        """
+        engaged = self.get_engaged_job_keys()
+        engaged_keys: dict[str, str] = {}
+        for row in engaged:
+            key = _normalize_key(row["title"], row["company"])
+            if key:
+                engaged_keys[key] = row["id"]
+
+        new = existing = dropped_engaged = 0
+        outcomes: list[dict] = []
+        touched_engaged_ids: set[str] = set()
+
+        CHUNK = 50
+        for i in range(0, len(postings), CHUNK):
+            chunk = postings[i:i + CHUNK]
+            now = _now()
+            with self._conn() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                for posting in chunk:
+                    job = _posting_to_job(posting)
+
+                    key = _normalize_key(job.title, job.company)
+                    if key and key in engaged_keys:
+                        dropped_engaged += 1
+                        touched_engaged_ids.add(engaged_keys[key])
+                        outcomes.append({"job_id": engaged_keys[key],
+                                         "result": "dropped_engaged"})
+                        continue
+
+                    # id computation (raises ValueError for a posting with no URL
+                    # and an empty title/company — reported, batch continues).
+                    try:
+                        effective_id = self._effective_job_id(conn, job)
+                    except ValueError:
+                        outcomes.append({"job_id": None, "result": "error"})
+                        continue
+
+                    company_id = None
+                    if job.company and job.company.strip():
+                        try:
+                            company_id = self._upsert_company_conn(
+                                job.company.strip(), conn, now)
+                        except ValueError:
+                            pass  # unnormalizable name → no company link, still save
+
+                    existed = conn.execute(
+                        "SELECT 1 FROM jobs WHERE id = ?", (effective_id,),
+                    ).fetchone() is not None
+
+                    if existed:
+                        existing += 1
+                        outcomes.append({"job_id": effective_id, "result": "existing"})
+                    else:
+                        new += 1
+                        outcomes.append({"job_id": effective_id, "result": "new"})
+
+                    # Mirror the direct path exactly (save_unscored → _upsert_job_raw):
+                    # on an existing row its ON CONFLICT update refreshes `last_seen`
+                    # and `base_location` (overwrite) and backfills norm_title/
+                    # norm_company/canonical_url/company_id/monitored_company_id
+                    # (COALESCE). FR-004 "no new rules", day-one identical.
+                    self._upsert_job_raw(
+                        job, conn, now, company_id=company_id,
+                        monitored_company_id=job.monitored_company_id)
+
+        if touched_engaged_ids:
+            self.touch_many(list(touched_engaged_ids))
+
+        return {
+            "new": new,
+            "existing": existing,
+            "dropped_engaged": dropped_engaged,
+            "outcomes": outcomes,
+        }
 
     # ------------------------------------------------------------------
     # Tracker — mise à jour de statut

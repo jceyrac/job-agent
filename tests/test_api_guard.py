@@ -56,15 +56,22 @@ ALLOW_LIST = frozenset({
     "mark_cancelled", "request_cancel",
     # ── spec 044 ingest + application ──
     "save_unscored", "save_application",
+    # ── spec 045 ingest plan (read) ──
+    "get_ingestion_scope", "get_freshness_days", "get_config",
+    "get_monitored_companies", "get_watching_companies_by_method",
+    # ── spec 045 ingest writer (batch + events) ──
+    "ingest_batch", "set_config", "log_run",
 })
 
 # Platform/pipeline writes the API must never call (spec 042, FR-005). Named so
 # a forbidden call fails loudly and self-documents the boundary. `save_unscored`
 # and `save_application` moved to ALLOW_LIST in spec 044 (ingest + application);
-# `save_scored` stays forbidden — no client writes a score.
+# `log_run` and `set_config` moved in spec 045 (the API is the single ingestion
+# writer — source auto-disables and scrape-only run records). `save_scored` stays
+# forbidden — no client writes a score.
 FORBIDDEN_METHODS = frozenset({
-    "save_scored", "update_job_extraction", "log_run",
-    "set_ingestion_scope", "set_config", "upsert_company", "upsert_company_from_seed",
+    "save_scored", "update_job_extraction",
+    "set_ingestion_scope", "upsert_company", "upsert_company_from_seed",
     "create_api_token", "list_api_tokens", "revoke_api_token",
     "purge_stale_jobs", "import_companies_from_csv",
     # worker/cron-only task methods (spec 043): the API requests and follows, the

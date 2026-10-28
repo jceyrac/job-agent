@@ -1808,6 +1808,143 @@
           }
         }
       }
+    },
+    "/v1/ingest/plan": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Get Plan",
+        "operationId": "get_plan_v1_ingest_plan_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestPlan"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/ingest/batch": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Submit Batch",
+        "operationId": "submit_batch_v1_ingest_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/BatchPosting"
+                },
+                "type": "array",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestBatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/ingest/events": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Submit Events",
+        "operationId": "submit_events_v1_ingest_events_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SourceDisabledEvent"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RunEvent"
+                  }
+                ],
+                "title": "Body",
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "source_disabled": "#/components/schemas/SourceDisabledEvent",
+                    "run": "#/components/schemas/RunEvent"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestEventResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -1934,6 +2071,145 @@
         ],
         "title": "ApplicationUpdate",
         "description": "Request body for `PUT /v1/me/jobs/{id}/application` (spec 044)."
+      },
+      "BatchOutcome": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id"
+          },
+          "result": {
+            "title": "Result"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "result"
+        ],
+        "title": "BatchOutcome"
+      },
+      "BatchPosting": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "manual"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "company": {
+            "type": "string",
+            "title": "Company",
+            "default": ""
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "base_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Location"
+          },
+          "posted_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted Date"
+          },
+          "monitored_company_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monitored Company Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BatchPosting",
+        "description": "One posting in a batch — the `JobPosting` field set the orchestrator\ncollected, minus the computed/dedup fields (id/canonical/norm). Unlike the\nsingle `JobCreate`, a posting with no URL and an empty title/company is NOT\nrejected here: `ingest_batch` reports it per-posting and keeps going."
+      },
+      "BoardSlugs": {
+        "properties": {
+          "lever": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lever"
+          },
+          "workable": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Workable"
+          },
+          "greenhouse_watching": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Greenhouse Watching"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lever",
+          "workable",
+          "greenhouse_watching"
+        ],
+        "title": "BoardSlugs"
       },
       "CatalogueJob": {
         "properties": {
@@ -3366,6 +3642,131 @@
         ],
         "title": "HealthResponse"
       },
+      "IngestBatchResponse": {
+        "properties": {
+          "new": {
+            "type": "integer",
+            "title": "New"
+          },
+          "existing": {
+            "type": "integer",
+            "title": "Existing"
+          },
+          "dropped_engaged": {
+            "type": "integer",
+            "title": "Dropped Engaged"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/BatchOutcome"
+            },
+            "type": "array",
+            "title": "Outcomes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "new",
+          "existing",
+          "dropped_engaged",
+          "outcomes"
+        ],
+        "title": "IngestBatchResponse"
+      },
+      "IngestEventResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "IngestEventResponse"
+      },
+      "IngestPlan": {
+        "properties": {
+          "title_families": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Title Families"
+          },
+          "exclude": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude"
+          },
+          "remote_or_hybrid": {
+            "type": "boolean",
+            "title": "Remote Or Hybrid"
+          },
+          "search_locations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Search Locations"
+          },
+          "greenhouse_boards": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Greenhouse Boards"
+          },
+          "freshness_days": {
+            "type": "integer",
+            "title": "Freshness Days"
+          },
+          "enabled_sources": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Enabled Sources"
+          },
+          "monitoring_gates": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Monitoring Gates"
+          },
+          "monitored_targets": {
+            "items": {
+              "$ref": "#/components/schemas/MonitoredTarget"
+            },
+            "type": "array",
+            "title": "Monitored Targets"
+          },
+          "board_slugs": {
+            "$ref": "#/components/schemas/BoardSlugs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title_families",
+          "exclude",
+          "remote_or_hybrid",
+          "search_locations",
+          "greenhouse_boards",
+          "freshness_days",
+          "enabled_sources",
+          "monitoring_gates",
+          "monitored_targets",
+          "board_slugs"
+        ],
+        "title": "IngestPlan"
+      },
       "Interaction": {
         "properties": {
           "id": {
@@ -4065,6 +4466,31 @@
         ],
         "title": "MeResponse"
       },
+      "MonitoredTarget": {
+        "properties": {
+          "company_id": {
+            "title": "Company Id"
+          },
+          "name": {
+            "title": "Name"
+          },
+          "ats_provider": {
+            "title": "Ats Provider"
+          },
+          "ats_identifier": {
+            "title": "Ats Identifier"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "company_id",
+          "name",
+          "ats_provider",
+          "ats_identifier"
+        ],
+        "title": "MonitoredTarget"
+      },
       "Profile": {
         "properties": {
           "id": {
@@ -4131,6 +4557,36 @@
         ],
         "title": "RelationshipSummary"
       },
+      "RunEvent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "run",
+            "title": "Type"
+          },
+          "jobs_scraped": {
+            "type": "integer",
+            "title": "Jobs Scraped"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "title": "Duration Seconds"
+          },
+          "run_type": {
+            "type": "string",
+            "title": "Run Type"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "jobs_scraped",
+          "duration_seconds",
+          "run_type"
+        ],
+        "title": "RunEvent"
+      },
       "Score": {
         "properties": {
           "profile_id": {
@@ -4159,6 +4615,31 @@
           "scored_at"
         ],
         "title": "Score"
+      },
+      "SourceDisabledEvent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "source_disabled",
+            "title": "Type"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "source",
+          "reason"
+        ],
+        "title": "SourceDisabledEvent"
       },
       "Stats": {
         "properties": {

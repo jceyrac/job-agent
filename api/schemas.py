@@ -10,9 +10,9 @@ Only the list envelope scalars (`total`, `limit`, `offset`) are typed `int` —
 they are produced by the API's pagination layer, never read from the DB.
 """
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ApiModel(BaseModel):
@@ -308,6 +308,86 @@ class JobCreate(ApiModel):
 class JobCreated(ApiModel):
     job_id: str
     created: bool
+
+
+# ── ingest plan (spec 045, US2) — assembled at request time, no profile ──────
+
+class MonitoredTarget(ApiModel):
+    company_id: Any
+    name: Any
+    ats_provider: Any
+    ats_identifier: Any
+
+
+class BoardSlugs(ApiModel):
+    lever: list[str]
+    workable: list[str]
+    greenhouse_watching: list[str]
+
+
+class IngestPlan(ApiModel):
+    title_families: list[str]
+    exclude: list[str]
+    remote_or_hybrid: bool
+    search_locations: list[str]
+    greenhouse_boards: list[str]
+    freshness_days: int
+    enabled_sources: dict[str, bool]
+    monitoring_gates: dict[str, bool]
+    monitored_targets: list[MonitoredTarget]
+    board_slugs: BoardSlugs
+
+
+# ── ingest batch + events (spec 045, US3) — the API is the single writer ─────
+
+class BatchPosting(ApiModel):
+    """One posting in a batch — the `JobPosting` field set the orchestrator
+    collected, minus the computed/dedup fields (id/canonical/norm). Unlike the
+    single `JobCreate`, a posting with no URL and an empty title/company is NOT
+    rejected here: `ingest_batch` reports it per-posting and keeps going."""
+    source: str = "manual"
+    title: str = ""
+    company: str = ""
+    url: str | None = None
+    location: str | None = None
+    description: str | None = None
+    base_location: str | None = None
+    posted_date: str | None = None
+    monitored_company_id: int | None = None
+
+
+class BatchOutcome(ApiModel):
+    job_id: Any   # str for new/existing/dropped_engaged; None for a reported error
+    result: Any   # "new" | "existing" | "dropped_engaged" | "error"
+
+
+class IngestBatchResponse(ApiModel):
+    new: int
+    existing: int
+    dropped_engaged: int
+    outcomes: list[BatchOutcome]
+
+
+class SourceDisabledEvent(ApiModel):
+    type: Literal["source_disabled"]
+    source: str      # scraper slug, e.g. "linkedin"
+    reason: str
+
+
+class RunEvent(ApiModel):
+    type: Literal["run"]
+    jobs_scraped: int
+    duration_seconds: float
+    run_type: str    # "scrape" | "scrape_monitored"
+
+
+IngestEvent = Annotated[
+    Union[SourceDisabledEvent, RunEvent], Field(discriminator="type")
+]
+
+
+class IngestEventResponse(ApiModel):
+    ok: bool
 
 
 # ── read:me — identity / feed ────────────────────────────────────────────────

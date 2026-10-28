@@ -12,6 +12,15 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 MAX_BODY_BYTES = 64 * 1024
 
+# Spec 045 (R5): `POST /v1/ingest/batch` accepts up to 5 MB — ~600 postings with
+# descriptions, chunked by the orchestrator to ≤ ~100 postings per request. Every
+# other route keeps the 64 KB cap.
+INGEST_BATCH_MAX_BODY_BYTES = 5 * 1024 * 1024
+
+_ROUTE_LIMITS = {
+    "/v1/ingest/batch": INGEST_BATCH_MAX_BODY_BYTES,
+}
+
 _413_BODY = b'{"error":"payload_too_large","message":"Request body too large"}'
 
 
@@ -25,10 +34,14 @@ class RequestSizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Route-specific override (spec 045) — the ingest batch route raises the
+        # cap; everything else keeps the default.
+        max_bytes = _ROUTE_LIMITS.get(scope.get("path"), self.max_bytes)
+
         headers = dict(scope.get("headers") or [])
         content_length = headers.get(b"content-length")
         if content_length is not None and content_length.isdigit():
-            if int(content_length) > self.max_bytes:
+            if int(content_length) > max_bytes:
                 await self._send_413(send)
                 return
 
@@ -40,7 +53,7 @@ class RequestSizeLimitMiddleware:
             if message["type"] == "http.request":
                 if not too_large:
                     body.extend(message.get("body", b""))
-                    if len(body) > self.max_bytes:
+                    if len(body) > max_bytes:
                         too_large = True
                         body.clear()
                 more_body = message.get("more_body", False)

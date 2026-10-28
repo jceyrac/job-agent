@@ -2900,6 +2900,113 @@ TESTS = [
 ]
 
 
+def _ingest_id(source="board", title="PM", company="Acme", url="https://a.com/1"):
+    return JobPosting(source=source, title=title, company=company, location="",
+                      url=url or "").id
+
+
+def _ingest_posting(source="board", title="PM", company="Acme", url="https://a.com/1", **kw):
+    p = {"source": source, "title": title, "company": company, "url": url}
+    p.update(kw)
+    return p
+
+
+def _seed_engaged(db, job_id="engaged-1", title="Backend Engineer", company="Acme"):
+    with db._conn() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, title, company, source, location, first_seen, last_seen) "
+            "VALUES (?, ?, ?, 'board', 'Zurich', '2026-01-01', '2026-01-01')",
+            (job_id, title, company))
+        conn.execute(
+            "INSERT INTO job_tracking (user_id, job_id, status, changed_at) "
+            "VALUES (?, ?, 'applied', '2026-01-01')",
+            (db.user_id, job_id))
+
+
+def test_ingest_batch_new_and_idempotent():
+    db = JobStorage(":memory:")
+    p = _ingest_posting()
+    r1 = db.ingest_batch([p])
+    jid = _ingest_id()
+    assert r1["new"] == 1 and r1["existing"] == 0 and r1["dropped_engaged"] == 0
+    assert r1["outcomes"] == [{"job_id": jid, "result": "new"}]
+
+    r2 = db.ingest_batch([p])
+    assert r2["new"] == 0 and r2["existing"] == 1 and r2["dropped_engaged"] == 0
+    assert r2["outcomes"] == [{"job_id": jid, "result": "existing"}]
+    with db._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+
+def test_ingest_batch_fallback_dedup():
+    # Same (source, norm_title, norm_company) but different URLs → one row
+    # (LinkedIn issues a new numeric id on every scrape).
+    db = JobStorage(":memory:")
+    a = _ingest_posting(source="linkedin", title="PM", company="Acme",
+                        url="https://www.linkedin.com/jobs/view/111")
+    b = _ingest_posting(source="linkedin", title="PM", company="Acme",
+                        url="https://www.linkedin.com/jobs/view/222")
+    r = db.ingest_batch([a, b])
+    assert r["new"] == 1 and r["existing"] == 1
+    with db._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+
+def test_ingest_batch_engaged_dedup():
+    db = JobStorage(":memory:")
+    _seed_engaged(db, title="Backend Engineer", company="Acme")
+    before = None
+    with db._conn() as conn:
+        before = conn.execute("SELECT last_seen FROM jobs WHERE id = 'engaged-1'").fetchone()[0]
+
+    r = db.ingest_batch([_ingest_posting(title="Backend Engineer", company="Acme", url=None)])
+    assert r["new"] == 0 and r["existing"] == 0 and r["dropped_engaged"] == 1
+    assert r["outcomes"] == [{"job_id": "engaged-1", "result": "dropped_engaged"}]
+    with db._conn() as conn:
+        after = conn.execute("SELECT last_seen FROM jobs WHERE id = 'engaged-1'").fetchone()[0]
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1  # no new row
+    assert after != before
+
+
+def test_ingest_batch_upserts_company():
+    db = JobStorage(":memory:")
+    p = _ingest_posting(company="Acme Corp")
+    db.ingest_batch([p])
+    with db._conn() as conn:
+        comp = conn.execute(
+            "SELECT id, name_normalized FROM companies WHERE name = 'Acme Corp'"
+        ).fetchone()
+        assert comp is not None
+        assert comp["name_normalized"] == _normalize_company_name("Acme Corp")
+        row = conn.execute("SELECT company_id FROM jobs").fetchone()
+        assert row["company_id"] == comp["id"]
+
+
+def test_ingest_batch_error_reported():
+    db = JobStorage(":memory:")
+    good = _ingest_posting()
+    bad = {"source": "board", "title": "", "company": "", "url": None}
+    r = db.ingest_batch([good, bad])
+    assert r["new"] == 1 and r["existing"] == 0 and r["dropped_engaged"] == 0
+    assert r["outcomes"] == [
+        {"job_id": _ingest_id(), "result": "new"},
+        {"job_id": None, "result": "error"},
+    ]
+
+
+def test_ingest_batch_chunk_boundaries():
+    # 120 postings cross three ~50-posting BEGIN IMMEDIATE sub-chunks.
+    db = JobStorage(":memory:")
+    postings = [
+        _ingest_posting(title=f"PM {i}", company="Acme", url=f"https://a.com/{i}")
+        for i in range(120)
+    ]
+    r = db.ingest_batch(postings)
+    assert r["new"] == 120 and r["existing"] == 0 and r["dropped_engaged"] == 0
+    with db._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 120
+
+
 def run_storage_tests() -> list[tuple[str, bool, str]]:
     global _results
     _results = []
@@ -3132,7 +3239,8 @@ def test_get_watching_companies_by_method_excludes_legacy_null_method():
 
 def test_scraper_helper_seed_merge_greenhouse():
     """get_greenhouse_boards merges seed + DB slugs, seed first for legacy coverage."""
-    from core.scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
+    from core.scrape import get_greenhouse_boards
+    from core.scrapers.greenhouse import GREENHOUSE_BOARDS_SEED
 
     db = JobStorage(":memory:")
     _setup_test_companies(db)
@@ -3151,7 +3259,8 @@ def test_scraper_helper_seed_merge_greenhouse():
 
 def test_scraper_helper_seed_merge_lever():
     """get_lever_slugs merges seed + DB slugs, deduplicating overlaps."""
-    from core.scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
+    from core.scrape import get_lever_slugs
+    from core.scrapers.ats.lever import LEVER_SLUGS_SEED
 
     db = JobStorage(":memory:")
     _setup_test_companies(db)
@@ -3167,7 +3276,8 @@ def test_scraper_helper_seed_merge_lever():
 
 def test_scraper_helper_seed_merge_workable():
     """get_workable_slugs merges seed + DB slugs."""
-    from core.scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
+    from core.scrape import get_workable_slugs
+    from core.scrapers.ats.workable import WORKABLE_SLUGS_SEED
 
     db = JobStorage(":memory:")
     _setup_test_companies(db)
@@ -3188,9 +3298,10 @@ def test_scraper_helper_seed_merge_workable():
 
 def test_scraper_helper_graceful_with_none_db():
     """Scraper helpers return seed only when db is None."""
-    from core.scrapers.greenhouse import get_greenhouse_boards, GREENHOUSE_BOARDS_SEED
-    from core.scrapers.ats.lever import get_lever_slugs, LEVER_SLUGS_SEED
-    from core.scrapers.ats.workable import get_workable_slugs, WORKABLE_SLUGS_SEED
+    from core.scrape import get_greenhouse_boards, get_lever_slugs, get_workable_slugs
+    from core.scrapers.greenhouse import GREENHOUSE_BOARDS_SEED
+    from core.scrapers.ats.lever import LEVER_SLUGS_SEED
+    from core.scrapers.ats.workable import WORKABLE_SLUGS_SEED
 
     assert get_greenhouse_boards(None) == list(GREENHOUSE_BOARDS_SEED)
     assert get_lever_slugs(None) == list(LEVER_SLUGS_SEED)
