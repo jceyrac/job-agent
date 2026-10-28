@@ -219,3 +219,53 @@ def test_ingest_identity_existing_posting_refresh(tmp_path, monkeypatch):
         assert company_id is not None
         assert norm_title is not None
         assert norm_company is not None
+
+
+def test_ingest_identity_duplicate_engaged(tmp_path, monkeypatch):
+    """Two postings that normalise to the same engaged job are both dropped, touch
+    that engaged row once, and the two paths stay identical.
+
+    Guards the real-scrape case the synthetic fixture above missed: a broad scrape
+    collects the same job (title+company) from more than one source, so
+    `dropped_engaged` counts *postings* while the touched-engaged set collapses to
+    the distinct job id. The record/replay harness (tests/run_ingest_replay.py)
+    must therefore compare distinct-to-distinct, never distinct-to-posting-count.
+    """
+    monkeypatch.setattr("core.storage._now", lambda: FIXED_NOW)
+
+    path_a = str(tmp_path / "a.db")
+    path_b = str(tmp_path / "b.db")
+    db_a = JobStorage(path_a)
+    db_b = JobStorage(path_b)
+
+    _seed_engaged(db_a, "engaged-1", "Backend Engineer", "Alpha Corp")
+    _seed_engaged(db_b, "engaged-1", "Backend Engineer", "Alpha Corp")
+
+    jobs = [
+        # Same (title, company) as the engaged row, twice — different URLs, so two
+        # postings collapse to the one engaged target.
+        _mk("board", "Backend Engineer", "Alpha Corp", "https://alpha.com/jobs/9"),
+        _mk("board", "Backend Engineer", "Alpha Corp", "https://alpha.com/jobs/9b"),
+        _mk("board", "Staff Engineer", "Acme", "https://acme.com/jobs/1",
+            location="Remote"),
+    ]
+
+    _direct_write(db_a, jobs)
+    result = db_b.ingest_batch([_serialize(j) for j in jobs])
+
+    assert _snapshot(path_a) == _snapshot(path_b)
+
+    assert result["new"] == 1            # only "Staff Engineer"
+    assert result["existing"] == 0
+    assert result["dropped_engaged"] == 2  # both postings dropped
+    dropped_ids = {o["job_id"] for o in result["outcomes"]
+                   if o["result"] == "dropped_engaged"}
+    assert dropped_ids == {"engaged-1"}  # collapsed to the one engaged row
+
+    # The engaged row was touched once (to FIXED_NOW) in both copies.
+    for path in (path_a, path_b):
+        conn = sqlite3.connect(path)
+        seen = conn.execute(
+            "SELECT last_seen FROM jobs WHERE id = 'engaged-1'").fetchone()[0]
+        conn.close()
+        assert seen == FIXED_NOW

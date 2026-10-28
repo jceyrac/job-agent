@@ -44,7 +44,7 @@ from pathlib import Path
 
 from core.models import JobPosting
 from core.scrape import dedupe_against_db
-from core.storage import JobStorage
+from core.storage import JobStorage, _normalize_key
 
 FIXED_NOW = "2026-02-02T00:00:00+00:00"
 
@@ -154,8 +154,16 @@ def _posting_from_payload(d: dict) -> JobPosting:
     )
 
 
-def _direct_write(db: JobStorage, jobs: list[JobPosting]) -> int:
-    """Replay the direct path's write sequence (broad/monitored, pre-title-gated)."""
+def _direct_write(db: JobStorage, jobs: list[JobPosting]) -> tuple[int, set[str]]:
+    """Replay the direct path's write sequence (broad/monitored, pre-title-gated).
+
+    Returns `(dropped_count, touched_engaged_ids)` — the number of postings the
+    engaged dedup dropped, and the *distinct* engaged job_ids whose `last_seen`
+    it touched. The distinct set is re-derived with the same shared
+    `_normalize_key` `dedupe_against_db` uses, so duplicate postings (same
+    normalised title+company → same engaged row) collapse to one id, exactly as
+    `touch_many`'s set does.
+    """
     kept = dedupe_against_db(jobs, db)
     for job in kept:
         company_id = None
@@ -166,7 +174,18 @@ def _direct_write(db: JobStorage, jobs: list[JobPosting]) -> int:
                 pass
         db.save_unscored(job, company_id=company_id,
                          monitored_company_id=job.monitored_company_id)
-    return len(jobs) - len(kept)  # dropped-engaged count
+
+    engaged_map = {}
+    for row in db.get_engaged_job_keys():
+        key = _normalize_key(row["title"], row["company"])
+        if key:
+            engaged_map[key] = row["id"]
+    touched: set[str] = set()
+    for job in jobs:
+        key = _normalize_key(job.title, job.company)
+        if key in engaged_map:
+            touched.add(engaged_map[key])
+    return len(jobs) - len(kept), touched
 
 
 def _api_write(db: JobStorage, payloads: list[dict]) -> dict:
@@ -250,7 +269,7 @@ def _replay(fixture_path: str, seed_db_path: str | None) -> int:
     db_a = JobStorage(path_a)
     db_b = JobStorage(path_b)
 
-    dropped_direct = _direct_write(db_a, jobs)
+    dropped_direct, direct_touched = _direct_write(db_a, jobs)
     result = _api_write(db_b, payloads)
 
     jobs_a, comps_a = _snapshot(path_a)
@@ -263,7 +282,8 @@ def _replay(fixture_path: str, seed_db_path: str | None) -> int:
                        if o["result"] == "dropped_engaged"}
 
     print(f"\nReplay baseline: {baseline} ({len(payloads)} postings)")
-    print(f"  direct path:   dropped_engaged={dropped_direct}")
+    print(f"  direct path:   dropped_engaged={dropped_direct} "
+          f"({len(direct_touched)} distinct rows touched)")
     print(f"  API path:      new={result['new']} existing={result['existing']} "
           f"dropped_engaged={result['dropped_engaged']}")
 
@@ -288,10 +308,16 @@ def _replay(fixture_path: str, seed_db_path: str | None) -> int:
         ok = False
         print(f"  dropped-engaged count: ❌ direct={dropped_direct} "
               f"API={result['dropped_engaged']}")
-    if len(api_dropped_ids) != result["dropped_engaged"]:
+    if direct_touched != api_dropped_ids:
         ok = False
-        print(f"  dropped-engaged set size: ❌ {len(api_dropped_ids)} "
-              f"!= {result['dropped_engaged']}")
+        print(f"  dropped-engaged set: ❌ direct touched {len(direct_touched)} "
+              f"ids, API dropped {len(api_dropped_ids)} ids")
+        for jid in sorted(direct_touched ^ api_dropped_ids):
+            print(f"    {jid!r}: direct={jid in direct_touched} "
+                  f"api={jid in api_dropped_ids}")
+    else:
+        print(f"  dropped-engaged set: identical ({len(api_dropped_ids)} "
+              f"distinct ids)")
 
     if ok:
         print("\n✅ IDENTITY HOLDS — direct and API writers produced identical state")
