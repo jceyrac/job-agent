@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Staging tracker + read-only API + worker on verva (spec 033 FR-009/010/014;
-# spec 041 FR-011; spec 043 US5).
+# Staging tracker + API + worker on verva (spec 033 FR-009/010/014;
+# spec 041 FR-011; spec 043 US5; spec 045 US4/US5 — the worker/one-shot runs
+# exercise the ingest-via-API path with a staging-minted platform token).
 #
-# Runs a candidate commit as a disposable tracker on port 8502, a read-only API on
+# Runs a candidate commit as a disposable tracker on port 8502, an API on
 # 8602/10000, and a task worker against a copy of the latest backup, without touching
 # production (its container, images, the `job_data` volume, or `/opt/job-agent`'s
 # working tree).
@@ -32,6 +33,14 @@ API_PORT="8602"
 # (8443) or nginx (443 — Nextcloud): staging uses 10000.
 API_HTTPS_PORT="10000"
 WORKER_CONTAINER="job-agent-staging-worker"
+# Dedicated bridge so the worker/one-shot `run` containers can reach the staging
+# API by its compose-style service name `api` (spec 045 — the ingest client's
+# default base URL is `http://api:8601`, the same as prod).
+NETWORK="job-agent-staging"
+# Path inside the staging volume holding the staging-minted platform ingest
+# token (0600). Set on the worker + `run` as JOB_AGENT_API_TOKEN_FILE so the raw
+# token is never printed and disappears with the volume at `down`.
+INGEST_TOKEN_FILE="/app/data/.staging_ingest_token"
 ENV_FILE="/opt/job-agent/.env"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -112,6 +121,21 @@ up() {
     python:3.11-slim sh -c 'cp /backup/jobs.db /app/data/jobs.db; if [ -f /backup/cv_agent_checkpoints.sqlite ]; then cp /backup/cv_agent_checkpoints.sqlite /app/data/cv_agent_checkpoints.sqlite; fi'
   rm -rf "$tmp"
 
+  # 4a. Mint a staging-only platform ingest token on the staging volume (spec 045,
+  #     FR-007/US5). `scripts.api_token create` prints the raw token on line 1 and
+  #     a summary on line 2; we keep only line 1 and write it (umask 077 → 0600)
+  #     into the volume — never echoed to the host. The SHA-256 hash lives in the
+  #     staging DB and the raw token in the volume file, both deleted at `down`.
+  docker run --rm \
+    -e JOB_AGENT_DATA_DIR=/app/data \
+    -e JOB_AGENT_REQUIRE_DB=1 \
+    -v "$VOLUME":/app/data \
+    "$IMAGE" \
+    sh -c 'umask 077; T=$(python -m scripts.api_token create --name staging-ingest --scopes ingest --user platform | head -n 1); [ -n "$T" ] || { echo "ERROR: empty ingest token" >&2; exit 1; }; printf "%s" "$T" > '"$INGEST_TOKEN_FILE"
+
+  # 4b. The dedicated bridge the worker/run use to reach the API as `api`.
+  docker network create "$NETWORK" >/dev/null
+
   # 5. Start the tracker. Streamlit binds 0.0.0.0 inside the container (same as
   #    the prod compose command) so the port mapping reaches it; the host
   #    publishes loopback-only (never 0.0.0.0). Side-effect env vars are blanked
@@ -132,10 +156,13 @@ up() {
   assert_serve_port_free "$PORT"
   tailscale serve --bg "--tcp=${PORT}" "tcp://127.0.0.1:${PORT}"
 
-  # 7. Start the read-only API on the same image/volume/env (spec 041, FR-011).
-  #    uvicorn binds 0.0.0.0 inside the container — like the tracker's streamlit —
-  #    so the port mapping reaches it; the host publishes loopback-only.
+  # 7. Start the API on the same image/volume/env (spec 041, FR-011). It joins
+  #    the staging bridge under the alias `api` so the worker/run containers can
+  #    reach it by the compose-style name `http://api:8601` (spec 045). uvicorn
+  #    binds 0.0.0.0 inside the container — like the tracker's streamlit — so the
+  #    port mapping reaches it; the host publishes loopback-only.
   docker run -d --name "$API_CONTAINER" \
+    --network "$NETWORK" --network-alias api \
     -p "127.0.0.1:${API_PORT}:8601" \
     --env-file "$ENV_FILE" \
     -e JOB_AGENT_DATA_DIR=/app/data \
@@ -153,11 +180,18 @@ up() {
 
   # 9. Start the worker (task queue consumer) on the same image/volume/env. It
   #    shares /app/data with the tracker and API, so it sees the same queue and
-  #    the same `.pipeline.lock` file (spec 043, FR-004).
+  #    the same `.pipeline.lock` file (spec 043, FR-004). It joins the staging
+  #    bridge and runs with ingest_via_api=on + the staging token file, so a
+  #    `scrape`/`scrape_monitored` task goes through the API (spec 045, US4).
   docker run -d --name "$WORKER_CONTAINER" \
+    --network "$NETWORK" \
     --env-file "$ENV_FILE" \
     -e JOB_AGENT_DATA_DIR=/app/data \
     -e JOB_AGENT_REQUIRE_DB=1 \
+    -e JOB_AGENT_API_URL=http://api:8601 \
+    -e JOB_AGENT_API_TOKEN= \
+    -e JOB_AGENT_API_TOKEN_FILE="$INGEST_TOKEN_FILE" \
+    -e INGEST_VIA_API=on \
     -e GMAIL_APP_PASSWORD= \
     -e NOTIFY_TO= \
     -e JOPLIN_TOKEN= \
@@ -178,16 +212,30 @@ up() {
 run() {
   [ "$#" -ge 1 ] || die "usage: scripts/staging.sh run <command…>"
   docker volume inspect "$VOLUME" >/dev/null 2>&1 || die "staging volume '$VOLUME' not found — run 'scripts/staging.sh up <ref>' first."
+  docker network inspect "$NETWORK" >/dev/null 2>&1 || die "staging network '$NETWORK' not found — run 'scripts/staging.sh up <ref>' first."
   [ -f "$ENV_FILE" ] || die "env file $ENV_FILE not found."
 
   if is_live_command "$@"; then
     warn "this command may hit real sources or consume LLM credits."
   fi
 
+  # Ingest plumbing (spec 045): default to the staging-minted token file and the
+  # in-network API base, with ingest_via_api=on. The caller may override
+  # JOB_AGENT_API_TOKEN / JOB_AGENT_API_TOKEN_FILE / INGEST_VIA_API in its own
+  # environment — e.g. JOB_AGENT_API_TOKEN=invalid to prove the fail-loudly path.
+  local api_token="${JOB_AGENT_API_TOKEN-}"
+  local api_token_file="${JOB_AGENT_API_TOKEN_FILE:-$INGEST_TOKEN_FILE}"
+  local ingest_via_api="${INGEST_VIA_API:-on}"
+
   docker run --rm \
+    --network "$NETWORK" \
     --env-file "$ENV_FILE" \
     -e JOB_AGENT_DATA_DIR=/app/data \
     -e JOB_AGENT_REQUIRE_DB=1 \
+    -e JOB_AGENT_API_URL=http://api:8601 \
+    -e JOB_AGENT_API_TOKEN="$api_token" \
+    -e JOB_AGENT_API_TOKEN_FILE="$api_token_file" \
+    -e INGEST_VIA_API="$ingest_via_api" \
     -e GMAIL_APP_PASSWORD= \
     -e NOTIFY_TO= \
     -e JOPLIN_TOKEN= \
@@ -203,6 +251,7 @@ down() {
   tailscale serve --bg "--https=${API_HTTPS_PORT}" off >/dev/null 2>&1 || true
   docker rmi "$IMAGE" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+  docker network rm "$NETWORK" >/dev/null 2>&1 || true
   git -C "$REPO" worktree remove "$WORKTREE" --force >/dev/null 2>&1 || true
   git -C "$REPO" worktree prune
 
@@ -223,6 +272,9 @@ down() {
   if docker volume ls --format '{{.Name}}' | grep -qx "$VOLUME"; then
     echo "leftover: volume $VOLUME" >&2; leftover=1
   fi
+  if docker network ls --format '{{.Name}}' | grep -qx "$NETWORK"; then
+    echo "leftover: network $NETWORK" >&2; leftover=1
+  fi
   if git -C "$REPO" worktree list --porcelain | grep -q "worktree $WORKTREE"; then
     echo "leftover: worktree $WORKTREE" >&2; leftover=1
   fi
@@ -234,7 +286,7 @@ down() {
   fi
 
   if [ "$leftover" -eq 0 ]; then
-    echo "Staging cleaned up — no container, image, volume, worktree or tailscale serve entry on $PORT/$API_HTTPS_PORT remains."
+    echo "Staging cleaned up — no container, image, volume, network, worktree or tailscale serve entry on $PORT/$API_HTTPS_PORT remains."
   else
     echo "ERROR: staging artifacts remain (see above)." >&2
     return 1
