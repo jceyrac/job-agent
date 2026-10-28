@@ -1,7 +1,25 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 2.0.3 → 2.0.4
+  Version change: 2.0.4 → 2.1.0
+  Bump rationale: MINOR — expansion matérielle de la règle de test : le code
+  path exige `ruff check .` et `python -m pytest tests/` verts avant tout
+  commit qui touche du code Python (plus seulement `core/storage.py` /
+  `core/models.py`) ; nouvelle règle « chaque correction de bug embarque un
+  test de régression » ; ajout de `/speckit.analyze` au chemin des specs.
+  Aucun principe existant ne change de sens.
+
+  Modified sections:
+    - Development Workflow — étape 3 du code path élargie à tout code Python
+      (ruff + pytest) ; nouvelle règle de test de régression ; ajout du
+      Spec path avec `/speckit.analyze` entre `/speckit.tasks` et
+      `/speckit.implement` ; paragraphe « Tests » mis à jour vers la suite
+      actuelle et les gates (hooks, CI).
+    - Principe VI — rationale mis à jour pour décrire la suite actuelle
+      (stockage, contrat/auth/isolation de l'API, gardes, scrapers sur
+      fixtures).
+
+  Prior version (2.0.4) :
   Bump rationale: PATCH — suppression de la violation connue résolue par
   l'étape 6 partie 2 (spec 043) : les boutons du tracker n'enchaînent plus
   de subprocess (plus de `subprocess`/`threading` dans `tracker_views/`) ;
@@ -184,9 +202,11 @@ l'offre FELFEL, le job de Lausanne) avant d'être considérés comme terminés.
 Chaque phase MUST être confirmée avant de passer à la suivante. Pas de
 déploiement sans validation.
 
-**Rationale** : Les tests automatisés couvrent le stockage, mais pas le
-comportement des scrapers ni la qualité du scoring. La vérification
-empirique sur des cas connus est le filet de sécurité pour le reste.
+**Rationale** : Les tests automatisés couvrent le stockage, le
+contrat/auth/isolation de l'API, les gardes de la constitution et les
+scrapers sur fixtures, mais pas le comportement live des scrapers ni la
+qualité du scoring. La vérification empirique sur des cas connus est le
+filet de sécurité pour le reste.
 
 ### VII. Sécurité d'abord
 
@@ -335,13 +355,22 @@ en cours, les concerne explicitement.
 
 Ces règles découlent des principes II, V, VI, VII et XI.
 
+**Spec path** : `spec.md` → `/speckit.clarify` → `/speckit.plan` →
+`/speckit.tasks` → `/speckit.analyze` → `/speckit.implement`. `/speckit.analyze`
+MUST run entre `/speckit.tasks` et `/speckit.implement` (analyse de cohérence
+des specs avant implémentation).
+
 **Code path** :
 1. Lire la spec SpecKit applicable dans `specs/`
 2. Modifier le code — diffs minimaux, pas de refactoring opportuniste
-3. Si `core/storage.py` ou `core/models.py` touché : `python -m pytest tests/`
-4. Vérification empirique contre les cas de régression connus
-5. Commit avec message descriptif
-6. `git push` → `scripts/deploy.sh` sur le serveur
+3. `ruff check .` et `python -m pytest tests/` verts avant tout commit qui
+   touche du code Python
+4. Chaque correction de bug embarque un test de régression qui échoue avant
+   le fix — sauf si le bug n'est observable que contre des sources live,
+   alors le cas connu du Principe VI s'applique et la spec dit pourquoi
+5. Vérification empirique contre les cas de régression connus
+6. Commit avec message descriptif
+7. `git push` → `scripts/deploy.sh` sur le serveur
 
 **Migration path** (étapes de `docs/roadmap-api.md`) : le code path,
 plus backup avant déploiement, flag de retour arrière, et validation de la
@@ -353,9 +382,12 @@ touchant le schéma évitent la fin de mois (mise à jour des statuts en batch).
 2. Pas de déploiement, pas de commit, pas de touché au code
 3. Vérifier le résultat sur un scoring suivant
 
-**Tests** : `tests/test_storage.py` (unit, in-memory DB) à exécuter avant
-tout commit touchant `core/storage.py` ou `core/models.py`. `tests/run_all.py`
-(intégration, hit live scrapers) à exécuter intentionnellement seulement.
+**Tests** : la suite automatisée (`python -m pytest tests/`) couvre le
+stockage (in-memory DB), le contrat/auth/isolation de l'API, les gardes de
+la constitution et les scrapers sur fixtures — verte avant tout commit qui
+touche du code Python (étape 3), appliquée par les gates (hooks, CI).
+`tests/run_all.py` (intégration, hit live scrapers) reste à exécuter
+intentionnellement seulement.
 
 **Secrets** : Stockés dans des variables d'environnement (`.env`), jamais
 dans le repo. `.env` et fichiers de secrets sont `.gitignore`d.
@@ -388,4 +420,4 @@ constitution, la constitution prévaut.
 - Les violations connues listées dans le Sync Impact Report sont tolérées
   jusqu'à l'étape de roadmap qui les résout.
 
-**Version**: 2.0.4 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-17
+**Version**: 2.1.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-28
