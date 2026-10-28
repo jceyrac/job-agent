@@ -102,8 +102,8 @@
 
 **Independent Test**: `/speckit.analyze` finds no inconsistency (SC-005).
 
-- [ ] T015 [US5] Amend `.specify/memory/constitution.md` to **v2.1.0** (FR-010 / US5-1) with a Sync Impact Report: Development Workflow step 3 → `ruff check .` and `python -m pytest tests/` green before every commit touching Python; new rule that every bug fix ships with a regression test (unless live-source-only, then Principle VI known-case); spec path adds `/speckit.analyze` between `/speckit.tasks` and `/speckit.implement`; "Tests" paragraph + Principle VI rationale updated to the current suite. Commit as `docs: amend constitution to v2.1.0 (test gates, regression tests, analyze step)`.
-- [ ] T016 [US5] Update `CLAUDE.md` (FR-010 / US5-2): add `ruff check .` to "Commands"; align "Testing" with the amended constitution and note the Stop hook will block on a red suite.
+- [X] T015 [US5] Amend `.specify/memory/constitution.md` to **v2.1.0** (FR-010 / US5-1) with a Sync Impact Report: Development Workflow step 3 → `ruff check .` and `python -m pytest tests/` green before every commit touching Python; new rule that every bug fix ships with a regression test (unless live-source-only, then Principle VI known-case); spec path adds `/speckit.analyze` between `/speckit.tasks` and `/speckit.implement`; "Tests" paragraph + Principle VI rationale updated to the current suite. Commit as `docs: amend constitution to v2.1.0 (test gates, regression tests, analyze step)`.
+- [X] T016 [US5] Update `CLAUDE.md` (FR-010 / US5-2): add `ruff check .` to "Commands"; align "Testing" with the amended constitution and note the Stop hook will block on a red suite.
 
 **Checkpoint**: US5 done — written rules and gates agree.
 
@@ -111,7 +111,7 @@
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T017 Run `/speckit.analyze` (US5-1 spec-path requirement; SC-005) — confirm constitution, `CLAUDE.md` and the gates state the same rule.
+- [X] T017 Run `/speckit.analyze` (US5-1 spec-path requirement; SC-005) — confirm constitution, `CLAUDE.md` and the gates state the same rule.
 - [ ] T018 Validate SC-001…SC-006 end-to-end per `quickstart.md` (break-a-guard, undefined-name flag, CI green/red, secret push rejection, consistency, ≤60 s) and mark the tasks `[X]`.
 
 ---
