@@ -1,5 +1,7 @@
 # job_agent
 
+[![tests](https://github.com/jceyrac/job-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/jceyrac/job-agent/actions/workflows/tests.yml)
+
 Personal automation agent for a Senior Product Manager job search across
 **Web3 / DeFi / fintech / AI**, with a single unified search profile, a
 Streamlit tracker + lightweight CRM, and targeted company monitoring via ATS

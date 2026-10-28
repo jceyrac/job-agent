@@ -77,8 +77,8 @@
 
 **Independent Test**: Push a deliberately red commit on a scratch branch — the workflow turns red (SC-003).
 
-- [ ] T012 [US3] Create `.github/workflows/tests.yml` (FR-007): triggers `push` (all branches) + `pull_request`; `ubuntu-latest`, Python 3.11; steps `pip install -e ".[dev]"`, `ruff check .`, `python -m pytest tests/ -q`; `permissions: contents: read`; no secrets; actions pinned to full commit SHA (version in a comment); `timeout-minutes: 15`; pip cache allowed.
-- [ ] T013 [US3] Add the workflow status badge to `README.md` (FR-008).
+- [X] T012 [US3] Create `.github/workflows/tests.yml` (FR-007): triggers `push` (all branches) + `pull_request`; `ubuntu-latest`, Python 3.11; steps `pip install -e ".[dev]"`, `ruff check .`, `python -m pytest tests/ -q`; `permissions: contents: read`; no secrets; actions pinned to full commit SHA (version in a comment); `timeout-minutes: 15`; pip cache allowed.
+- [X] T013 [US3] Add the workflow status badge to `README.md` (FR-008).
 
 **Checkpoint**: US3 works — a green SHA is required before staging/merge.
 
