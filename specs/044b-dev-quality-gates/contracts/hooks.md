@@ -30,7 +30,7 @@ and what the `PostToolUse`/`Stop` hooks rely on.
 ## `stop_tests.py` (Stop)
 
 - Input: stdin JSON with `stop_hook_active` (bool).
-- Behaviour (US1 scenarios 1–6):
+- Behaviour (US1 scenarios 1–7):
   1. Change detection: `git status --porcelain`; if no modified/untracked `.py`
      file → exit 0 (no pytest run).
   2. Run `python -m pytest tests/ -q -x --no-header -p no:cacheprovider` with the

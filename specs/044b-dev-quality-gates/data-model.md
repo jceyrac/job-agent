@@ -3,8 +3,8 @@
 **No new entities, no schema change, no storage.** This feature adds tooling
 (Claude Code hooks, a linter, GitHub Actions CI) that operates on the repository
 itself, not on the application's data. `data/`, `core/storage.py`, and every DB
-table are untouched (spec non-goal: no application code change except the R2
-`core/prepare.py` fix).
+table are untouched (spec non-goal: no application code change — the R2
+`core/prepare.py` `F821` was fixed by a separate hotfix, out of this spec's scope).
 
 The only state the gates introduce is configuration on disk:
 

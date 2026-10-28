@@ -84,7 +84,7 @@ As the user, I want every Python file Claude Code writes to be checked immediate
 1. **Given** `ruff` added to the `dev` extra and a `[tool.ruff.lint]` section in `pyproject.toml` selecting **only** `E9`, `F63`, `F7`, `F82` (syntax/IO errors, invalid comparisons, statement errors, undefined names), **Then** `ruff check .` is the project lint command.
 2. **Given** a `PostToolUse` hook with matcher `Write|Edit|MultiEdit`, **When** the edited file ends in `.py`, **Then** the hook runs `ruff check <that file>`; on findings it exits 2 with ruff's output on stderr; otherwise exit 0. Non-`.py` files are ignored.
 3. **Given** the rule set, **Then** no style rule, no unused-import rule, no formatter is enabled (Principle V: no diff noise, no opportunistic refactor).
-4. **Given** the baseline run of `ruff check .` on the current tree, **Then** every finding is either fixed in a dedicated commit (each fix is a real bug and is listed in `research.md`) or, if the plan finds a false positive, excluded by a narrow `per-file-ignores` entry with a comment. The tree is clean before the hooks are enabled.
+4. **Given** the baseline run of `ruff check .` on the current tree, **Then** the tree is clean before the hooks are enabled. The single baseline finding (`F821` in `core/prepare.py`, research R2) was fixed by a separate hotfix on `main`, not in this spec — 044b makes no application-code change. A future false positive would be excluded by a narrow `per-file-ignores` entry with a comment.
 
 ---
 
@@ -170,7 +170,7 @@ As Claude Code (any model), I want the constitution and `CLAUDE.md` to state the
 
 ### Non-goals
 
-- No application code change other than fixing real `E9/F63/F7/F82` findings from the baseline (US2-4).
+- No application code change (the baseline `F821` in `core/prepare.py` was fixed by a separate hotfix on `main`, out of this spec's scope — research R2).
 - No style lint, no formatter (`ruff format`), no import sorting, no type checker (mypy/pyright) — candidates for a later spec once the gates are proven.
 - No additional skills, no reviewer subagent, no `/security-review` automation.
 - No change to `staging.sh` / `deploy.sh` (no automatic CI-status check on verva); the green-SHA rule is a checklist rule in this spec.
