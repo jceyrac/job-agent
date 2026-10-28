@@ -1,7 +1,7 @@
 # CLAUDE.md — job_agent
 
 Instructions for Claude Code. Read this before touching any file.
-The constitution (`.specify/memory/constitution.md`, v2.0.0) takes precedence over this file.
+The constitution (`.specify/memory/constitution.md`, v2.1.0) takes precedence over this file.
 
 ---
 
@@ -57,6 +57,9 @@ uvicorn api.main:app --host 127.0.0.1 --port 8601
 python -m scripts.api_token create --name <client> --scopes read:me [--expires-in <days>]
 python -m scripts.api_token list [--user <id>] [--json]
 python -m scripts.api_token revoke <token-id>
+
+# Lint (E9/F63/F7/F82 — undefined names, syntax, statement errors)
+ruff check .
 
 # Run tests
 python -m pytest tests/
@@ -259,7 +262,9 @@ Lifecycle dates are set manually (statuses are often updated in batch at month e
 
 ## Testing
 
-Unit tests live in `tests/test_storage.py` (in-memory DB — fast). Run before committing any change to `core/storage.py` or `core/models.py`.
+`ruff check .` and `python -m pytest tests/` must be green before every commit that touches Python code (constitution v2.1.0, Development Workflow). The suite covers storage (in-memory DB), the API contract/auth/isolation, the constitution guards, and scrapers on fixtures. The Claude Code Stop hook runs the suite automatically when a turn changed Python and **blocks once on a red suite** — fix the failure, don't weaken the hook.
+
+Every bug fix ships a regression test that fails before the fix (unless the bug is only observable against live sources, then a known-case check per Principle VI).
 
 Integration tests in `tests/run_all.py` hit live scrapers — only run intentionally.
 
@@ -269,7 +274,7 @@ Roadmap steps also require: next nightly cron OK, tracker smoke test (feed, stat
 
 ## Specs
 
-All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` → `/speckit.clarify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`). Read the relevant spec before starting any task.
+All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` → `/speckit.clarify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.analyze` → `/speckit.implement`). Read the relevant spec before starting any task.
 
 `prompts/` holds legacy BUILD_*/SPEC_* files — historical reference only, never a source of current requirements.
 
