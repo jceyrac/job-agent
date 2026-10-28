@@ -451,7 +451,6 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
     try:
         raw, model = _call_prepare_model(
             bullet_system, bullet_prompt,
-            preferred_models=PREPARE_LIGHT_MODELS,
             json_mode=True,
             max_tokens=1500,
         )
@@ -488,7 +487,6 @@ def prepare_job_application(job_id: str, profile_id: str | None = None,
     try:
         raw, model = _call_prepare_model(
             research_system, user_prompt,
-            preferred_models=PREPARE_LIGHT_MODELS,
             json_mode=True,
             max_tokens=600,
         )

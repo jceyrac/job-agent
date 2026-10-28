@@ -214,6 +214,60 @@ def test_build_user_prompt():
     assert "Summary: A great fintech role." in prompt
 
 
+def test_prepare_steps_3_4_no_nameerror():
+    """Regression: steps 3 (CV bullets) and 4 (company research) must not raise.
+
+    Spec 013b removed the Groq/Gemini model chain but missed two call sites that
+    still passed ``preferred_models=PREPARE_LIGHT_MODELS`` (an undefined name) to
+    ``_call_prepare_model``. That raised ``NameError`` before ``llm.call``, was
+    swallowed by the surrounding ``except``, and persisted as an ``error`` dict —
+    so the package silently shipped without bullets or research. The kwargs are
+    removed; both steps must now complete.
+    """
+    import core.prepare as prepare_mod
+
+    db, job = _setup_db_with_job()
+
+    def fake_llm(messages, json_mode=False, max_tokens=0, sleep_after=0):
+        system = (messages[0]["content"] if messages else "").lower()
+        if "cover letter" in system:
+            return "Dear Hiring Manager,\n\nThis is a test cover letter.\n\nWarm regards"
+        if "screening" in system:
+            return json.dumps({
+                "why_company": "Admire the work",
+                "why_fit": "Strong fit",
+                "salary": "",
+                "notice_period": "1 month",
+            })
+        if "cv reviewer" in system:
+            return json.dumps({
+                "bullets": [{"text": "Led API platform", "rationale": "Matches JD"}],
+                "omit": [],
+            })
+        # company research
+        return json.dumps({
+            "what_company_does": "A fintech scaleup",
+            "role_stakes": "High",
+            "why_jerome_fit": "Strong",
+        })
+
+    with patch.object(prepare_mod, "JobStorage", return_value=db), \
+         patch.object(prepare_mod.llm, "call", side_effect=fake_llm), \
+         patch.object(prepare_mod.time, "sleep", return_value=None):
+        result = prepare_mod.prepare_job_application(
+            job.id, profile_id=PROFILE_ID, mock=True,
+        )
+
+    assert result is not None, "prepare_job_application returned None"
+    bullets = result["cv_bullets_selected"]
+    assert isinstance(bullets, dict) and "error" not in bullets, \
+        f"step 3 (CV bullets) failed: {bullets!r}"
+    research = result["company_research"]
+    assert isinstance(research, dict) and "error" not in research, \
+        f"step 4 (company research) failed: {research!r}"
+    assert research.get("what_company_does") == "A fintech scaleup"
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -222,6 +276,7 @@ TESTS = [
     test_bullet_json_parse_retry,
     test_slugify,
     test_build_user_prompt,
+    test_prepare_steps_3_4_no_nameerror,
 ]
 
 
