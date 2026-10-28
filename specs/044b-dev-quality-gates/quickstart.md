@@ -15,7 +15,7 @@ How to run and validate the gates by hand. Implementation detail lives in
 
 ```bash
 ruff check .                     # lint (E9/F63/F7/F82) — must be clean
-python -m pytest tests/ -q       # 698 tests, ~15 s — must pass
+python -m pytest tests/ -q       # 716 tests, ~15 s — must pass
 ```
 
 ## Hooks

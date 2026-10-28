@@ -90,7 +90,7 @@
 
 **Independent Test**: Push a fake, well-formed provider key on a scratch branch — the push is rejected (SC-004).
 
-- [ ] T014 [US4] Finalize `specs/044b-dev-quality-gates/quickstart.md` (FR-011): enabling secret scanning + push protection (Settings → Code security), how to see hooks (`/hooks`), how to run the gates by hand, re-check after a Claude Code upgrade, and the note that branch protection on `main` is deferred. The actual GitHub setting is a manual step by the user (no code).
+- [X] T014 [US4] Finalize `specs/044b-dev-quality-gates/quickstart.md` (FR-011): enabling secret scanning + push protection (Settings → Code security), how to see hooks (`/hooks`), how to run the gates by hand, re-check after a Claude Code upgrade, and the note that branch protection on `main` is deferred. The actual GitHub setting is a manual step by the user (no code).
 
 **Checkpoint**: US4 documented; enabling + validation is a manual user step.
 
