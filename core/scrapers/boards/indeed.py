@@ -1,8 +1,4 @@
-"""Indeed scraper using python-jobspy.
-
-Re-enable after IP block clears:
-  python -c "from storage import JobStorage; db = JobStorage('data/jobs.db'); db.set_config('scraper.indeed.enabled', 'true')"
-"""
+"""Indeed scraper using python-jobspy."""
 
 import time
 
@@ -58,10 +54,8 @@ class IndeedScraper(BaseScraper):
         total, dupes = 0, 0
         consecutive_timeouts = 0
 
-        from core.profiles import load_active_profile
-        _p = load_active_profile(self._storage)
         terms = job_filter.titles or SEARCH_TERMS_INDEED
-        raw_locs = _p.effective_search_locations()
+        raw_locs = self._locations
         countries = [_to_indeed_slug(n) for n in raw_locs] if raw_locs else INDEED_COUNTRIES
 
         original_request = patch_requests_for_indeed()
@@ -86,7 +80,7 @@ class IndeedScraper(BaseScraper):
                                 f"({consecutive_timeouts}/{MAX_CONSECUTIVE_TIMEOUTS})"
                             )
                             if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS:
-                                self.disable(
+                                self.report_disable(
                                     f"{MAX_CONSECUTIVE_TIMEOUTS} consecutive timeouts — likely IP block"
                                 )
                                 return all_jobs

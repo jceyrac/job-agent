@@ -26,7 +26,7 @@ def test_free_work_always_fetches_all_slugs(monkeypatch):
                         fake_fetch_slug)
     monkeypatch.setattr("core.scrapers.boards.free_work.time.sleep", lambda _: None)
 
-    scraper = FreeWorkScraper(storage=None)
+    scraper = FreeWorkScraper()
 
     # Case 1: narrow profile
     scraper.fetch(JobFilter(titles=["product"]))

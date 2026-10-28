@@ -48,17 +48,6 @@ def _with_nbpages(results: dict, nb_pages: int) -> dict:
     return {"hits": results["hits"], "nbPages": nb_pages, "nbHits": results["nbHits"]}
 
 
-class _FakeStorage:
-    def __init__(self):
-        self.config_calls: list[tuple] = []
-
-    def get_config(self, key):
-        return None
-
-    def set_config(self, key, value):
-        self.config_calls.append((key, value))
-
-
 # ── Parsing / mapping ────────────────────────────────────────────────────────
 
 def test_parses_page1_fixture():
@@ -148,12 +137,11 @@ def test_wide_net_no_relevance_filter(monkeypatch):
 
 
 def test_malformed_next_data_returns_empty(monkeypatch):
-    storage = _FakeStorage()
     requested = _install_fake_fetch(monkeypatch, {})  # _fetch_page → None
-    scraper = JoinupScraper(storage=storage)
+    scraper = JoinupScraper()
 
     jobs = scraper.fetch(JobFilter())
 
     assert jobs == []
     assert requested == [1]
-    assert storage.config_calls == []  # no auto-disable on parse failure
+    assert scraper.auto_disabled_reason is None  # no auto-disable on parse failure

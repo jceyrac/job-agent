@@ -10,7 +10,6 @@ import httpx
 
 from core.scrapers.base import BaseScraper
 from core.models import JobFilter, JobPosting
-from core.storage import JobStorage
 
 BASE_URL = "https://apply.workable.com/api/v3/accounts"
 HEADERS = {
@@ -20,15 +19,6 @@ HEADERS = {
 
 # Seed slugs — preserved as fallback for fresh installs and legacy companies.
 WORKABLE_SLUGS_SEED = ["walletconnect", "walletconnect-foundation"]
-
-
-def get_workable_slugs(db: JobStorage | None) -> list[str]:
-    """Return Workable slugs from DB (watching + workable) merged with seed."""
-    if db is None:
-        return list(WORKABLE_SLUGS_SEED)
-    rows = db.get_watching_companies_by_method("workable")
-    slugs = [r["ats_identifier"] for r in rows if r.get("ats_identifier")]
-    return list(dict.fromkeys(list(WORKABLE_SLUGS_SEED) + slugs))
 
 POST_BODY = {"query": "", "location": [], "department": [], "worktype": [], "remote": []}
 
@@ -40,11 +30,11 @@ class WorkableScraper(BaseScraper):
     SUPPORTS_DISCOVERY = True
 
     def _get_slugs(self) -> list[dict]:
-        """Resolve scraping targets: DB targets (monitoring) or hardcoded slugs (broad scrape)."""
+        """Resolve scraping targets: DB targets (monitoring) or injected slugs (broad scrape)."""
         if self._targets:
             return [{"slug": c["ats_identifier"], "name": c.get("name", c["ats_identifier"].title())}
                     for c in self._targets if c.get("ats_identifier")]
-        return [{"slug": s, "name": s.replace("-", " ").title()} for s in get_workable_slugs(self._storage)]
+        return [{"slug": s, "name": s.replace("-", " ").title()} for s in (self._slugs or [])]
 
     def fetch(self, job_filter: JobFilter | None = None) -> list[JobPosting]:
         slugs = self._get_slugs()

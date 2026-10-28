@@ -6,7 +6,6 @@ import httpx
 
 from core.scrapers.base import BaseScraper
 from core.models import JobFilter, JobPosting
-from core.storage import JobStorage
 from core.title_gate import title_matches_profile
 
 BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
@@ -48,21 +47,6 @@ GREENHOUSE_BOARDS_SEED = [
     "dfinity",       # Dfinity / ICP — Zug
     "amun",          # 21.co / 21Shares — Zurich
 ]
-
-
-def get_greenhouse_boards(db: JobStorage | None) -> list[str]:
-    """Return Greenhouse board slugs from DB (watching + greenhouse) merged with seed.
-
-    Falls back to GREENHOUSE_BOARDS_SEED if DB is None or returns zero rows.
-    Legacy watching companies have scraping_method=NULL and are not returned
-    by the DB query — they remain covered by the seed list.
-    """
-    if db is None:
-        return list(GREENHOUSE_BOARDS_SEED)
-    rows = db.get_watching_companies_by_method("greenhouse")
-    slugs = [r["ats_identifier"] for r in rows if r.get("ats_identifier")]
-    # Seed first so legacy companies are always covered; DB slugs appended
-    return list(dict.fromkeys(list(GREENHOUSE_BOARDS_SEED) + slugs))
 
 
 def _parse_greenhouse_location(name: str) -> tuple[str, str]:
@@ -135,21 +119,16 @@ class GreenhouseScraper(BaseScraper):
             print(f"[{self.SOURCE_NAME}] ⚠️ beautifulsoup4 not installed")
             return []
 
-        # Title family filter comes from the platform ingestion scope (spec 040).
-        profile_titles = self._storage.get_ingestion_scope()["title_families"]
+        # Title family filter comes from the platform ingestion scope (spec 040),
+        # injected by the orchestrator (spec 045).
+        profile_titles = self._title_families
 
         # Use DB-driven targets when provided (monitoring path),
-        # otherwise fall back to profile boards / DB+seed list (broad scrape)
+        # otherwise fall back to the injected boards (broad scrape)
         if self._targets is not None:
             board_tokens = [t["ats_identifier"] for t in self._targets]
         else:
-            from core.profiles import load_active_profile
-            active_profile = load_active_profile(self._storage)
-            boards = active_profile.greenhouse_boards
-            if boards:
-                board_tokens = boards
-            else:
-                board_tokens = get_greenhouse_boards(self._storage)
+            board_tokens = self._boards
 
         jobs: list[JobPosting] = []
         board_summary: list[str] = []

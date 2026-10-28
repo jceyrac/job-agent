@@ -43,10 +43,8 @@ class LinkedInScraper(BaseScraper):
             print(f"[{self.SOURCE_NAME}] python-jobspy not installed — pip install python-jobspy")
             return []
 
-        from core.profiles import load_active_profile
-        _p = load_active_profile(self._storage)
         terms = job_filter.titles or SEARCH_TERMS_LINKEDIN
-        locations = _p.effective_search_locations() or LINKEDIN_LOCATIONS
+        locations = self._locations or LINKEDIN_LOCATIONS
 
         start = time.time()
         all_jobs: list[JobPosting] = []
