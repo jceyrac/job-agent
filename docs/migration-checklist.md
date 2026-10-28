@@ -8,7 +8,9 @@ step** — tick each item before a step is declared complete. Run on verva (SSH)
 ## Release process — branch → staging → merge → deploy → SHA check
 
 Every roadmap step ships the same way; nothing deploys until the exact commit is
-validated on staging.
+validated on staging. **No staging, merge or deploy unless the CI of that exact
+SHA is green** (a `PreToolUse` hook, `.claude/hooks/ci_gate.py`, enforces this for
+Claude Code's own commands).
 
 1. **Branch** — work on a spec branch; the branch tip must be exactly the commit to ship.
 2. **Stage the exact SHA** — on verva: `scripts/staging.sh up <full-sha>` (never the branch
