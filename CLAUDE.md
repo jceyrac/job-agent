@@ -292,5 +292,5 @@ failure) shipped 2026-10-27 (`cd5c107`).
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/044b-dev-quality-gates/plan.md
+at specs/045-ingestion-via-api/plan.md
 <!-- SPECKIT END -->

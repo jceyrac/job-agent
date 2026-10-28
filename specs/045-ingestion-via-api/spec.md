@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-27
 
-**Status**: Draft — ready for `/speckit.clarify` (4 open questions, see end)
+**Status**: Clarified — ready for `/speckit.plan` (Q1–Q4 resolved, see Clarifications)
 
 **Input**: Roadmap `docs/roadmap-api.md`, step 7 ("Ingestion via API", kept by decision 2026-10-21). Constitution: I (wide net; the ingestion scope is a platform parameter, never derived from a profile), VIII (scrapers know only their output contract; "à terme" no DB access except through the ingestion endpoint), X (shared catalogue vs user space), XI (progressive migration, flags, day-one identical), VII (least privilege). Lessons recorded after the 2026-10-27 hotfix: `BEGIN IMMEDIATE` for any read-then-write transaction; housekeeping never blocks ingestion. "Scrapers become pure functions (targets in, postings out). The scrape orchestrator gets its plan from the API and sends what it collected to the API, which is the only writer of the catalogue for ingestion. A flag keeps the current direct path until the new one is proven identical."
 
@@ -37,7 +37,18 @@ API v1 (specs 041–044): scoped tokens, `ingest` scope and `POST /v1/jobs` (sin
 
 ### Out of this step
 
-Extraction, scoring, purge and the combined `runs` row of `core.main` keep their direct `JobStorage` access (non-goal; see Q4).
+Extraction, scoring, purge and the combined `runs` row of `core.main` keep their direct `JobStorage` access (non-goal).
+
+---
+
+## Clarifications
+
+### Session 2026-10-28
+
+- Q: Engaged-job dedup — union of all users' engaged jobs vs whole catalogue? → A: Union of all users' engaged jobs; keep today's behaviour exactly, server-side (day-one identical).
+- Q: Search locations + Greenhouse boards — platform scope or profile-derived? → A: Move into the platform ingestion scope, initialised once from the current profile values.
+- Q: Who owns the ingestion token? → A: A non-human platform principal holding ingest-only tokens.
+- Q: Scope of "through the API"? → A: Scraping and ingestion only; extraction, scoring, purge and core.main's combined run record stay direct.
 
 ---
 
@@ -52,7 +63,7 @@ As the maintainer, I want every scraper to receive everything it needs from the 
 **Acceptance Scenarios**:
 
 1. **Given** `BaseScraper`, **Then** it no longer takes `storage`; `is_enabled()` is decided by the orchestrator from the plan, and auto-disable is reported back as an event the orchestrator sends to the API (US3).
-2. **Given** LinkedIn/Indeed, **Then** search locations come from the platform ingestion scope (Q2), not the profile.
+2. **Given** LinkedIn/Indeed, **Then** search locations come from the platform ingestion scope, not the profile.
 3. **Given** Greenhouse/Lever/Workable, **Then** their board/slug lists come from the plan (monitored targets or catalogue lists), not from storage or a profile.
 
 ---
@@ -62,7 +73,7 @@ As the maintainer, I want every scraper to receive everything it needs from the 
 **Acceptance Scenarios**:
 
 1. **Given** `GET /v1/ingest/plan` (scope `ingest`), **Then** it returns everything a run needs: title families, exclude words, remote/hybrid option, search locations, freshness window, enabled sources and per-provider monitoring gates, the monitored targets (union of companies watched by any user, with ATS provider/identifier), and the catalogue board/slug lists.
-2. **Given** the plan, **Then** no profile is read and no user-space data is exposed except what Q1 decides for dedup.
+2. **Given** the plan, **Then** no profile is read and no user-space data is exposed except the union of all users' engaged jobs, used for dedup.
 
 ---
 
@@ -72,7 +83,7 @@ As the operator, I want collected postings sent in batches to the API, which ded
 
 **Acceptance Scenarios**:
 
-1. **Given** `POST /v1/ingest/batch` (scope `ingest`) with up to N postings (body limit raised for this route, e.g. 5 MB; chunked by the orchestrator), **Then** for each posting the server applies, in order: id computation (`JobPosting.id`), the engaged-job dedup (Q1) with `last_seen` touch, company upsert, `save_unscored` if new / `last_seen` touch if existing; it returns per-batch counts (`new`, `existing`, `dropped_engaged`) and per-posting outcomes.
+1. **Given** `POST /v1/ingest/batch` (scope `ingest`) with up to N postings (body limit raised for this route, e.g. 5 MB; chunked by the orchestrator), **Then** for each posting the server applies, in order: id computation (`JobPosting.id`), the engaged-job dedup (union of all users' engaged jobs) with `last_seen` touch, company upsert, `save_unscored` if new / `last_seen` touch if existing; it returns per-batch counts (`new`, `existing`, `dropped_engaged`) and per-posting outcomes.
 2. **Given** a batch, **Then** it is processed in short transactions (`BEGIN IMMEDIATE`, one per chunk), never holding the write lock across the whole run; a failing posting is reported without failing the batch.
 3. **Given** `POST /v1/ingest/events` (scope `ingest`), **Then** source auto-disable (`<source>.enabled=false`, reason) and scrape-only run records (`log_run` for `scrape` / `scrape_monitored` runs) are written by the API.
 4. **Given** the same batch sent twice, **Then** the second call creates nothing new (idempotent).
@@ -83,8 +94,8 @@ As the operator, I want collected postings sent in batches to the API, which ded
 
 **Acceptance Scenarios**:
 
-1. **Given** `INGEST_VIA_API` (config key, default `off` at deploy), **Then** `off` keeps today's direct path unchanged and `on` uses plan + batch; switching needs no deploy.
-2. **Given** a record/replay harness, **When** a real scrape is captured once to a fixture (postings only, no DB), **Then** replaying it through the direct path on DB copy A and through the API on DB copy B gives identical results: same job ids and fields, same company rows, same `last_seen` touches, same dropped-engaged set, same counts.
+1. **Given** `ingest_via_api` (config key, default `off` at deploy), **Then** `off` keeps today's direct path unchanged and `on` uses plan + batch; switching needs no deploy.
+2. **Given** a record/replay harness, **When** a real scrape (broad + monitored, ~600 postings) is captured once on staging to a fixture (postings only, no DB), **Then** replaying it through the direct path on DB copy A and through the API on DB copy B gives identical results: same job ids and fields, same company rows, same `last_seen` touches, same dropped-engaged set, same counts — this real-scrape replay is the gate for switching the flag on (a synthetic fixture alone is not sufficient).
 3. **Given** staging, **Then** `core.main` (or a monitored-only run) with `INGEST_VIA_API=on` completes, the worker's `scrape` task works through the API, and the tracker shows the same new jobs as the replay predicted.
 4. **Given** production, **Then** the flag is switched `on` after deploy, the next scheduled runs are `success` with usual volumes, and switching back to `off` is the rollback.
 
@@ -94,8 +105,8 @@ As the operator, I want collected postings sent in batches to the API, which ded
 
 **Acceptance Scenarios**:
 
-1. **Given** the ingestion token (Q3), **Then** it carries `ingest` only, belongs to a non-human platform principal, and is provided to the `agent` and `worker` containers through the environment (`.env`, never the repo); the API base URL inside the compose network is `http://api:8601`.
-2. **Given** the API is unreachable or the token invalid, **When** `INGEST_VIA_API=on`, **Then** the scrape fails loudly (clear error, non-zero exit, visible in the cron log and health check) — no silent fallback to the direct path.
+1. **Given** the ingestion token, **Then** it carries `ingest` only, belongs to a non-human platform principal, and is provided to the `agent` and `worker` containers through the environment (`.env`, never the repo); the API base URL inside the compose network is `http://api:8601`.
+2. **Given** the API is unreachable or the token invalid, **When** `ingest_via_api=on`, **Then** the scrape fails loudly (clear error, non-zero exit, visible in the cron log and health check) — no silent fallback to the direct path.
 
 ---
 
@@ -114,19 +125,19 @@ As the operator, I want collected postings sent in batches to the API, which ded
 ### Functional Requirements
 
 - **FR-001**: Scrapers take no storage and read no profile; targets and enabled state are injected; guard test (US1).
-- **FR-002**: Platform ingestion scope extended with `search_locations` (LinkedIn/Indeed) and `greenhouse_boards`, initialised **once** from the current profile values so day one is identical (Q2); `scripts/ingestion_scope.py` extended; the spec-040 guard extended to `effective_search_locations` and `greenhouse_boards`.
+- **FR-002**: Platform ingestion scope extended with `search_locations` (LinkedIn/Indeed) and `greenhouse_boards`, initialised **once** from the current profile values so day one is identical; `scripts/ingestion_scope.py` extended; the spec-040 guard extended to `effective_search_locations` and `greenhouse_boards`.
 - **FR-003**: `GET /v1/ingest/plan`, `POST /v1/ingest/batch`, `POST /v1/ingest/events` (scope `ingest`), contract-tested against the direct path.
-- **FR-004**: Server-side ingestion logic reuses the existing functions (`dedupe_against_db` semantics per Q1, `upsert_company`, `save_unscored`, `touch_many`, `log_run`) — no new rules; short `BEGIN IMMEDIATE` transactions.
-- **FR-005**: `INGEST_VIA_API` flag; direct path untouched while `off`.
-- **FR-006**: Record/replay harness and an identity test (US4-2) — the proof required before switching production.
-- **FR-007**: Platform principal and its token (Q3); compose env for `agent` and `worker`; no token in logs.
+- **FR-004**: Server-side ingestion logic reuses the existing functions (`dedupe_against_db` semantics against the union of all users' engaged jobs, `upsert_company`, `save_unscored`, `touch_many`, `log_run`) — no new rules; short `BEGIN IMMEDIATE` transactions.
+- **FR-005**: `ingest_via_api` flag; direct path untouched while `off`.
+- **FR-006**: Record/replay harness and an identity test (US4-2), plus a real-scrape record/replay on staging (broad + monitored, ~600 postings) replayed through the direct path (DB copy A) and the API path (DB copy B) with identical results — the gate for switching `ingest_via_api` on. A synthetic fixture alone is not sufficient.
+- **FR-007**: Non-human platform principal and its ingest-only token; compose env for `agent` and `worker`; no token in logs.
 - **FR-008**: Isolation suite and API guard extended; OpenAPI snapshot updated.
-- **FR-009**: Constitution PATCH: Principle I/VIII known-violation notes updated (profile-derived locations/boards fixed); `CLAUDE.md`, `docs/infrastructure.md`, roadmap updated.
-- **FR-010**: Standard release flow; staging includes US4-3; production switch with the flag after deploy.
+- **FR-009**: Constitution PATCH: record that the Principle I gap (profile-derived search locations / Greenhouse boards) is now closed and that Principle VIII's "à terme no DB access" is realised for the ingestion path; `CLAUDE.md`, `docs/infrastructure.md`, roadmap updated.
+- **FR-010**: Standard release flow: validate the **exact SHA** on staging (`scripts/staging.sh up <full-sha>`, never the branch name); STOP before merge for explicit go; deploy with `ingest_via_api=off`; post-deploy checks; STOP before switching; switch `on` in prod; next two scheduled runs `success` with usual volumes; rollback = switch back to `off`. Deploys outside 07:00/11:00/16:00 UTC.
 
 ### Non-goals
 
-- Extraction, scoring, purge and `core.main`'s combined run record through the API (Q4).
+- Extraction, scoring, purge and `core.main`'s combined run record through the API.
 - Changing what is collected (scope widening is a separate product decision).
 - New sources or scraper changes beyond removing DB/profile access.
 - Removing the direct path (contraction, step 10).
@@ -142,9 +153,9 @@ As the operator, I want collected postings sent in batches to the API, which ded
 
 ---
 
-## Open questions for `/speckit.clarify`
+## Decisions (resolved 2026-10-28)
 
-- **Q1 — Engaged-job dedup.** Today, a scraped posting matching (by normalised title + company) a job the user has engaged with is dropped and the existing job's `last_seen` is touched. **Recommendation:** keep exactly this behaviour server-side, using the **union of all users' engaged jobs** (identical today with one user), so day one is identical; revisit later whether dedup should rather be catalogue-wide. Alternative: dedup against the whole catalogue now (changes what is ingested).
-- **Q2 — Search locations and Greenhouse boards.** **Recommendation:** move them into the platform ingestion scope now, initialised from the current profile values (same approach as spec 040), closing the Constitution I gap. Alternative: leave them profile-derived and only pass them through the plan (keeps the gap).
-- **Q3 — Who owns the ingestion token.** Tokens belong to users. **Recommendation:** a non-human **platform principal** (a `users` row flagged as service, e.g. `platform`), holding only `ingest` tokens; it can never read or write any user space. Alternative: issue the ingestion token to the default user (simpler, but mixes a person and a service).
-- **Q4 — Scope of "through the API".** **Recommendation:** this step covers scraping and ingestion only (scrapers, plan, batch, events, scrape-only run records). `core.main`'s extraction, scoring, purge and combined run record stay direct; moving them is a later decision once the worker/API split is settled. Alternative: include them now (much larger step).
+- **Q1 — Engaged-job dedup** → union of all users' engaged jobs (today's behaviour, server-side).
+- **Q2 — Search locations + Greenhouse boards** → platform ingestion scope, initialised once from current profile values.
+- **Q3 — Ingestion token owner** → non-human platform principal, ingest-only tokens.
+- **Q4 — "Through the API" scope** → scraping and ingestion only; extraction/scoring/purge/combined run record stay direct.
