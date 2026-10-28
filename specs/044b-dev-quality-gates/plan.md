@@ -27,10 +27,10 @@ a separate hotfix, out of 044b scope.
   GitHub repo settings (secret scanning).
 - **Project Type**: dev-tooling / CI for a Python repo (no runtime service change).
 - **Performance Goals**: Stop-hook overhead ≤ 60 s (measured: full suite ~15 s —
-  SC-006); `ruff check <file>` < 1 s on a single edited file. If the full suite
-  ever exceeds the 60 s budget, the hook falls back to a documented fast subset
-  (see `contracts/hooks.md`) — a stop is never blocked for >60 s.
-- **Constraints**: offline (tests never hit the network beyond `pip install`);
+  SC-006); `ruff check <file>` < 1 s on a single edited file. The hook times the
+  pytest step and, above 60 s, prints a non-blocking warning — no subset (YAGNI).
+- **Constraints**: offline is **enforced** — an autouse socket fixture blocks
+  non-loopback connects and the Stop hook strips `LLM_API_KEY`/`DEEPSEEK_API_KEY`;
   dev-only dependency (not installed in the Docker image); no formatter/style
   lint (Principle V).
 - **Scale/Scope**: one repo, one workflow, two hook scripts, ~40 test files.
@@ -45,8 +45,9 @@ a separate hotfix, out of 044b scope.
 - **VI (empirical validation)**: PASS — SC-001…SC-006 are concrete, runnable
   acceptance gates (break-a-guard, undefined-name, red CI, secret push).
 - **VII (security)**: PASS — `permissions: contents: read`, no CI secrets, push
-  protection on the public repo; hooks are deterministic harness gates, not model
-  behaviour.
+  protection on the public repo; offline is enforced (socket fixture + LLM-key
+  stripping) so no accidental LLM spend; hooks are deterministic harness gates,
+  not model behaviour.
 - **XI (definition of done)**: PASS — the feature *is* a strengthening of
   "done = green" (constitution "Development Workflow" + "Tests" expanded).
 - **Dependencies (Architecture Constraints)**: `ruff` is a new dependency —
@@ -87,7 +88,9 @@ specs/044b-dev-quality-gates/
 └── tests.yml            # NEW — lint + pytest CI
 pyproject.toml           # add ruff to dev extra + [tool.ruff] section
 .gitignore               # .claude/* with ! exceptions (version settings + hooks)
-tests/test_dev_hooks.py  # NEW — FR-004 hook script tests
+tests/conftest.py          # MODIFIED — autouse socket guard (offline enforcement)
+tests/test_offline_guard.py  # NEW — proves a non-loopback connect fails
+tests/test_dev_hooks.py    # NEW — FR-004 hook script tests
 ```
 
 **Structure Decision**: single-project layout (existing repo); the feature adds

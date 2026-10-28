@@ -71,6 +71,7 @@ As the user, I want Claude Code to run the test suite automatically when it fini
 4. **Given** no `.py` file changed (doc-only turn, spec writing, conversation), **Then** the hook exits 0 immediately without running pytest.
 5. **Given** the suite passes, **Then** exit 0, nothing shown.
 6. **Given** pytest is missing or the venv is not found, **Then** non-blocking error with an explicit message (never a silent pass).
+7. **Given** the Stop hook runs pytest, **Then** it removes `LLM_API_KEY` and `DEEPSEEK_API_KEY` from the subprocess environment, so a forgotten real LLM call raises instead of spending money (CI has no secret; the suite is offline and enforced).
 
 ---
 
@@ -130,7 +131,7 @@ As Claude Code (any model), I want the constitution and `CLAUDE.md` to state the
 
 ### Edge Cases
 
-- Long suite: if the baseline wall time of `pytest tests/` on the Mac exceeds 60 s, the Stop hook runs a fast subset (all guard tests + tests matching the changed modules, defined in the plan) and CI runs the full suite. Decision recorded in `research.md` with the measured time.
+- Long suite: the Stop hook times the pytest run; above 60 s it prints a non-blocking warning ("suite exceeded 60 s budget — consider a subset spec"). No subset is implemented (the suite is ~15 s today; YAGNI). Decision recorded in `research.md` with the measured time.
 - A test is flaky: the hook must not be weakened; the flaky test is fixed or marked with a reason in the same spec. No `--lf`/retry plugin.
 - Claude Code is used for a doc-only task (specs, CLAUDE.md): no `.py` change → no pytest run (US1-4).
 - Untracked scratch `.py` files in the repo trigger the run; acceptable — the run is cheap and such files should not be there.
@@ -148,8 +149,8 @@ As Claude Code (any model), I want the constitution and `CLAUDE.md` to state the
 
 - **FR-001**: `.claude/settings.json` (committed) declares exactly two hooks: `PostToolUse` (matcher `Write|Edit|MultiEdit`) → `.claude/hooks/lint_edited.py`; `Stop` → `.claude/hooks/stop_tests.py`. Commands use `"$CLAUDE_PROJECT_DIR"` and the project venv interpreter (`.venv/bin/python`). No permissions block in this file (permissions stay in the local, ignored file).
 - **FR-002**: `lint_edited.py` reads the hook JSON on stdin, takes `tool_input.file_path`, ignores non-`.py` paths and paths outside the project, runs `ruff check <path>`, exits 2 with ruff output on findings, 0 otherwise, and a non-blocking non-zero code with a message if ruff is not installed.
-- **FR-003**: `stop_tests.py` implements US1 scenarios 1–6: change detection via `git status --porcelain`, pytest invocation, output truncation (bounded, e.g. last 60 lines), `stop_hook_active` loop guard, overall timeout below the hook timeout set in `settings.json`.
-- **FR-004**: Both hook scripts are pure stdlib Python, testable by feeding JSON on stdin; `tests/test_dev_hooks.py` covers: non-`.py` ignored, ruff finding → exit 2, clean file → 0, no changes → no pytest, red suite + `stop_hook_active=false` → 2, red suite + `stop_hook_active=true` → non-blocking, missing tool → non-blocking. Subprocess calls are injected/mocked; the test never runs the real suite recursively.
+- **FR-003**: `stop_tests.py` implements US1 scenarios 1–7: change detection via `git status --porcelain`, pytest invocation **with `LLM_API_KEY`/`DEEPSEEK_API_KEY` removed from the subprocess environment**, output truncation (bounded, e.g. last 60 lines), `stop_hook_active` loop guard, and a timed run that prints a non-blocking warning above 60 s (no subset — the suite is ~15 s). Overall timeout below the hook timeout set in `settings.json`.
+- **FR-004**: Both hook scripts are pure stdlib Python, testable by feeding JSON on stdin; `tests/test_dev_hooks.py` covers: non-`.py` ignored, ruff finding → exit 2, clean file → 0, no changes → no pytest, red suite + `stop_hook_active=false` → 2, red suite + `stop_hook_active=true` → non-blocking, missing tool → non-blocking. Subprocess calls are injected/mocked; the test never runs the real suite recursively. Offline is also enforced: an autouse fixture in `tests/conftest.py` makes `socket.connect` to any non-loopback address raise (stdlib `socket`, no new dependency; `TestClient`/ASGI transport on loopback keeps working), and `tests/test_offline_guard.py` proves a non-loopback connect fails.
 
 **Lint**
 
@@ -186,5 +187,5 @@ As Claude Code (any model), I want the constitution and `CLAUDE.md` to state the
 - **SC-003**: GitHub Actions is green on `044b-dev-quality-gates`; a deliberately red commit on a scratch branch turns it red.
 - **SC-004**: A push containing a test secret is rejected by push protection.
 - **SC-005**: Constitution v2.1.0, `CLAUDE.md` and the gates state the same rule (`/speckit.analyze` finds no inconsistency).
-- **SC-006**: Stop-hook overhead on a typical code turn ≤ 60 s (measured; otherwise the subset rule of Edge Cases applies).
+- **SC-006**: Stop-hook overhead on a typical code turn ≤ 60 s (measured); above 60 s the hook warns non-blocking (no subset).
 

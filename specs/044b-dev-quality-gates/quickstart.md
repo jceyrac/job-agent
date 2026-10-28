@@ -29,20 +29,20 @@ python -m pytest tests/ -q       # 698 tests, ~15 s — must pass
 - Re-check hook semantics after a Claude Code upgrade (version changes can alter
   matcher/exit-code behaviour).
 
-### Time budget & fallback
+### Time budget & offline
 
-The Stop hook's pytest step is budgeted at **60 s** (the hook timeout). The full
-suite (~15 s today) runs by default; if it ever grows past the budget, the hook
-falls back to the fast guard subset and prints "full suite deferred to CI" — the
-full suite still runs in GitHub Actions. The fallback subset:
+The Stop hook's pytest step is budgeted at **60 s** (the hook timeout); the full
+suite (~15 s today) runs by default. Above 60 s the hook prints a non-blocking
+warning ("suite exceeded 60 s budget — consider a subset spec") — **no subset is
+implemented** (YAGNI).
 
-```bash
-python -m pytest tests/test_storage.py tests/test_dev_hooks.py \
-  tests/test_api_guard.py tests/test_guard_llm_provider.py \
-  tests/test_tracker_no_subprocess.py -q
-```
+Offline is enforced, not just assumed:
 
-Adjust this list in `tasks.md` as 044b adds files.
+- `tests/conftest.py` installs an autouse fixture that makes `socket.connect` to
+  any non-loopback address raise; `TestClient`/ASGI transport (loopback) keeps
+  working. One test proves a non-loopback connect fails.
+- The Stop hook runs pytest with `LLM_API_KEY` / `DEEPSEEK_API_KEY` removed, so a
+  forgotten real LLM call fails instead of spending money.
 
 ## CI
 

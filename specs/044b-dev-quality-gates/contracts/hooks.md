@@ -43,8 +43,9 @@ and what the `PostToolUse`/`Stop` hooks rely on.
      red after one forced attempt — review needed"); no infinite loop.
   6. pytest missing / venv not found → non-blocking error (never a silent pass).
 
-- **Budget & fallback**: the pytest step is budgeted at 60 s (the hook timeout).
-  If the full suite exceeds it, fall back to the documented fast subset (see
-  `quickstart.md`) and exit 0 with a "full suite deferred to CI" note (the subset
-  still exits 2 on red). The subset is a *fallback* only — the default is the
-  full suite, which is ~15 s today.
+- **Offline**: the pytest step runs with `LLM_API_KEY` and `DEEPSEEK_API_KEY`
+  removed from the subprocess environment (a forgotten real LLM call raises
+  instead of spending money). No other env change.
+- **Budget**: the hook times the pytest step; above **60 s** it prints a
+  non-blocking warning ("suite exceeded 60 s budget — consider a subset spec").
+  No subset is implemented — the suite is ~15 s today.

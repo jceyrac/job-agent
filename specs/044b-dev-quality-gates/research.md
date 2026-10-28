@@ -36,12 +36,29 @@ Context. Measurements taken on the dev Mac (M5 Pro), repo at
 - **Root cause**: `core/prepare.py` passes
   `preferred_models=PREPARE_LIGHT_MODELS` to `_call_prepare_model`, which has no
   such parameter and no model-chain (the project is DeepSeek-only: `llm.call()`
-  uses the single `LLM_MODEL`). It is a dead leftover from the pre-spec-037
-  multi-provider era. This is a **real bug on an active path**
+  uses the single `LLM_MODEL`). It is the result of an **incomplete application
+  of spec 013b** (`f724691`): the constant was removed but these two call sites
+  were missed, so they now raise `NameError` when executed — not dead code, a
+  live crash. This is a **real bug on an active path**
   (`core/job_actions.prepare_one` → `core.prepare.prepare_job_application` →
   `tracker_views/job_helpers.py`): those two branches would raise `NameError`
   (undefined name) and, even if the name were defined, `TypeError` (unexpected
   keyword).
+- **History (git log -S, 2026-10-28)**: `PREPARE_LIGHT_MODELS` was defined in
+  `f873b42` (feat(prepare): add prepare.py, Groq+Gemini multi-provider era) and
+  removed in `f724691` (2026-06-27, "replace Groq+Gemini with DeepSeek-only",
+  specs 013/013b). Spec 013b's checklist is explicit — the constants are "dead
+  code after spec 013 — the model list was for Groq, not used by DeepSeek" and
+  "remove the `preferred_models=...` argument" from all call sites. `f724691`
+  removed the constant and 5 call sites but **missed 2** (the bullet-selection and
+  company-research primary calls). The intended fix is therefore **removing the
+  two kwargs**, not restoring a light-model choice: `core/llm.py` is DeepSeek-only
+  (single `MODEL`, no chain). Prod evidence: no `NameError` in recent
+  `job-tracker`/`job-worker` logs or the host `agent.log` (grep 2026-10-28) —
+  consistent with the error being caught-and-swallowed (printed only as
+  `… failed: name 'PREPARE_LIGHT_MODELS' is not defined` on Streamlit/CLI stdout)
+  and/or the action not being run since the last container restart; it does not
+  weaken the reachability finding (the call graph is unambiguous).
 - **Disposition (2026-10-28)**: OUT OF 044b SCOPE — fixed by a separate hotfix
   branched from `main` (remove the two `preferred_models=PREPARE_LIGHT_MODELS`
   kwargs + a regression test). 044b itself makes no application-code change; its
@@ -68,16 +85,21 @@ Context. Measurements taken on the dev Mac (M5 Pro), repo at
   Edge Cases. The Stop hook runs the **full** suite; the fast-subset rule is not
   needed (SC-006 satisfied with margin). The subset fallback is documented in
   quickstart.md as a contingency only.
-- **Offline confirmation (2026-10-28)**: the suite is fully offline — API tests
-  run `fastapi.testclient.TestClient` against a temp-file DB (`tests/conftest.py`
-  `api_env`, never the live `data/jobs.db`), scraper tests monkeypatch the network
-  fetch (`test_free_work_wide_net.py`), and no test calls `llm.call` (only
-  `test_guard_llm_provider.py` reads `LLM_API_KEY` from env — never connects).
-  Practical proof: 698 tests in ~15 s is impossible with real LLM/network calls.
-- **Budget & fallback**: the Stop hook's pytest step is budgeted at **60 s** (the
-  hook timeout). If a full-suite run ever exceeds it, the hook falls back to the
-  documented fast subset (see `contracts/hooks.md` + `quickstart.md`) and prints
-  "full suite deferred to CI" — so a stop is never blocked for >60 s.
+- **Offline — enforced, not just observed (2026-10-28)**: two deterministic guards:
+  1. an autouse fixture in `tests/conftest.py` makes `socket.connect` to any
+     non-loopback address raise (stdlib `socket` only — no new dependency);
+     `TestClient`/ASGI transport stays on loopback and keeps working. A test
+     proves a non-loopback connect fails.
+  2. the Stop hook runs pytest with `LLM_API_KEY` **and** `DEEPSEEK_API_KEY`
+     removed from the subprocess environment, so a forgotten real LLM call raises
+     `RuntimeError` ("No LLM API key configured") instead of spending money. CI
+     already has no secret. (`core/llm.py` reads only those two keys.)
+  Baseline fact: the suite is already offline (TestClient + temp DB in
+  `tests/conftest.py`; scraper tests monkeypatch the fetch; no test calls
+  `llm.call`) — 698 tests in ~15 s.
+- **Budget**: the Stop hook times the pytest step and, above **60 s**, prints a
+  non-blocking warning ("suite exceeded 60 s budget — consider a subset spec").
+  No subset is implemented (the suite is ~15 s; YAGNI). Budget recorded here.
 
 ## R4 — .gitignore (versioning the committed hooks)
 
