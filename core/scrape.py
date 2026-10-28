@@ -117,14 +117,31 @@ class _IngestError(Exception):
 def _ingest_via_api(db: JobStorage) -> bool:
     """The Constitution-XI switch (R6): `ingest_via_api` config key, default off.
 
-    `INGEST_VIA_API` env (a truthy value) overrides the config, so the switch can
-    be flipped in the compose `.env` without touching the DB or redeploying
-    (Phase 9).
+    The **config key** is the single source of truth — production flips it in the
+    DB with no redeploy (FR-010). `INGEST_VIA_API` (env) is a *staging/test*
+    bootstrap only: it is consulted solely when the config key is absent, and that
+    use is logged loudly to stderr. An env override set alongside a configured key
+    is ignored (and logged) — it must never silently change production behaviour,
+    and it must not appear in verva's `.env`.
     """
     env = os.environ.get("INGEST_VIA_API")
+    cfg = db.get_config("ingest_via_api")
+
+    if cfg is not None and cfg.strip() != "":
+        # Config key set → authoritative. Log any ignored env override.
+        on = cfg.strip().lower() in ("1", "true", "on", "yes")
+        if env is not None and env.strip() != "":
+            print(f"⚠ INGEST_VIA_API env set ({env.strip()!r}) but "
+                  f"config.ingest_via_api is authoritative ({cfg.strip()!r}) — "
+                  f"env ignored", file=sys.stderr)
+        return on
+
+    # Config key absent → env is the staging/test bootstrap, logged loudly.
     if env is not None and env.strip() != "":
+        print(f"⚠ INGEST_VIA_API env override used (config.ingest_via_api unset): "
+              f"{env.strip()!r} — staging/test only", file=sys.stderr)
         return env.strip().lower() in ("1", "true", "on", "yes")
-    return (db.get_config("ingest_via_api") or "").strip().lower() == "on"
+    return False
 
 
 def _load_ingest_token() -> str:

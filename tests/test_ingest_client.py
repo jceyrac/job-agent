@@ -106,6 +106,34 @@ def test_client_unreachable(monkeypatch):
         client.get_plan()
 
 
+# ── _ingest_via_api precedence: config key is the single source of truth ──────
+
+def _flag_db(value):
+    class _DB:
+        def get_config(self, key):
+            assert key == "ingest_via_api"
+            return value
+    return _DB()
+
+
+@pytest.mark.parametrize("cfg,env,expected", [
+    ("on", None, True),      # config on, no env
+    ("on", "off", True),     # config wins over env
+    ("off", None, False),
+    ("off", "on", False),    # config wins over env (production rule)
+    (None, "on", True),      # env bootstrap when config absent (staging)
+    (None, "true", True),
+    (None, "off", False),
+    (None, None, False),     # default off
+])
+def test_ingest_via_api_precedence(monkeypatch, cfg, env, expected):
+    if env is None:
+        monkeypatch.delenv("INGEST_VIA_API", raising=False)
+    else:
+        monkeypatch.setenv("INGEST_VIA_API", env)
+    assert scrape_mod._ingest_via_api(_flag_db(cfg)) is expected
+
+
 # ── the run fails loudly, never falls back to the direct path ─────────────────
 
 def test_main_exits_nonzero_on_ingest_error(monkeypatch):

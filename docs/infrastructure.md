@@ -158,9 +158,12 @@ stop writing the catalogue directly and instead POST the collected postings to
   compose service name, not the host's `127.0.0.1`). This is `_IngestClient`'s
   default; `JOB_AGENT_API_URL=http://api:8601` is set on `agent`/`worker` (and
   `tracker`) to make it explicit.
-- **Flag**: `INGEST_VIA_API` (env, a truthy value) overrides the
-  `config.ingest_via_api` key — `off` keeps the direct path unchanged and is the
-  rollback at every step.
+- **Flag**: the `config.ingest_via_api` key is the **single source of truth**
+  (default `off`; flip it in the DB with no redeploy — `off` keeps the direct
+  path unchanged and is the rollback at every step). `INGEST_VIA_API` (env) is a
+  **staging/test bootstrap only**: it is consulted solely when the config key is
+  absent, and its use is logged loudly to stderr; an env override set alongside a
+  configured key is ignored (and logged). It must not appear in verva's `.env`.
 
 ---
 
