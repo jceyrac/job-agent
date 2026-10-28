@@ -40,12 +40,12 @@
 
 > **NOTE: write these first, ensure they fail before implementation.**
 
-- [ ] T005 [P] [US1] Write the `stop_tests.py` cases in `tests/test_dev_hooks.py` (FR-004): no `.py` change → exit 0 without pytest; red suite + `stop_hook_active=false` → exit 2 with a bounded summary; red suite + `stop_hook_active=true` → non-blocking exit; missing pytest/venv → non-blocking error; **`LLM_API_KEY`/`DEEPSEEK_API_KEY` are stripped from the pytest subprocess environment**. Inject/mock subprocess calls — never run the real suite recursively.
+- [X] T005 [P] [US1] Write the `stop_tests.py` cases in `tests/test_dev_hooks.py` (FR-004): no `.py` change → exit 0 without pytest; red suite + `stop_hook_active=false` → exit 2 with a bounded summary; red suite + `stop_hook_active=true` → non-blocking exit; missing pytest/venv → non-blocking error; **`LLM_API_KEY`/`DEEPSEEK_API_KEY` are stripped from the pytest subprocess environment**. Inject/mock subprocess calls — never run the real suite recursively.
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Implement `.claude/hooks/stop_tests.py` per `contracts/hooks.md` (US1 scenarios 1–7, FR-003): `git status --porcelain` change detection, `.venv/bin/python -m pytest tests/ -q -x --no-header -p no:cacheprovider`, **remove `LLM_API_KEY`/`DEEPSEEK_API_KEY` from the subprocess environment**, output truncated to a bounded tail (e.g. last 60 lines), `stop_hook_active` loop guard, and a timed run that prints a non-blocking warning above 60 s (**no subset**).
-- [ ] T007 [US1] Declare the `Stop` hook in `.claude/settings.json` (FR-001) — command uses `"$CLAUDE_PROJECT_DIR"` and `.venv/bin/python`; no permissions block in this file.
+- [X] T006 [US1] Implement `.claude/hooks/stop_tests.py` per `contracts/hooks.md` (US1 scenarios 1–7, FR-003): `git status --porcelain` change detection, `.venv/bin/python -m pytest tests/ -q -x --no-header -p no:cacheprovider`, **remove `LLM_API_KEY`/`DEEPSEEK_API_KEY` from the subprocess environment**, output truncated to a bounded tail (e.g. last 60 lines), `stop_hook_active` loop guard, and a timed run that prints a non-blocking warning above 60 s (**no subset**).
+- [X] T007 [US1] Declare the `Stop` hook in `.claude/settings.json` (FR-001) — command uses `"$CLAUDE_PROJECT_DIR"` and `.venv/bin/python`; no permissions block in this file.
 
 **Checkpoint**: US1 works — Claude Code can no longer end a code turn silently red, and a forgotten LLM call fails instead of spending money.
 
