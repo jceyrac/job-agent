@@ -50,12 +50,14 @@ Offline is enforced, not just assumed:
   `python -m pytest tests/ -q`.
 - A deliberately red commit must turn the workflow red (SC-003).
 
-## Secrets (manual, GitHub)
+## Secrets (GitHub)
 
-- Settings → Code security → enable secret scanning + push protection.
-- Validate (SC-004): push a fake but well-formed provider key on a scratch branch
-  and confirm the push is rejected. Use a GitHub-documented test pattern, never a
-  real key.
+- **Done (2026-10-28)**: secret scanning + push protection enabled at the repo
+  level (verified by configuration in Settings → Code security).
+- No forged-secret test — GitHub's checksummed provider patterns make a synthetic
+  key unreliable as a test signal.
+- Note: non-partner secrets (DeepSeek key, Gmail app password) may not match a
+  provider checksum pattern and thus may not be detected by push protection.
 
 ## Branch protection (deferred — clarify Q3)
 
@@ -64,6 +66,6 @@ Offline is enforced, not just assumed:
 
 ## Definition of done
 
-`ruff check .` clean · `pytest tests/` green · workflow badge green · a
-test-secret push rejected · constitution v2.1.0 + `CLAUDE.md` + the gates agree
+`ruff check .` clean · `pytest tests/` green · workflow badge green · push
+protection enabled (SC-004) · constitution v2.1.0 + `CLAUDE.md` + the gates agree
 (`/speckit.analyze` finds no inconsistency — SC-005).

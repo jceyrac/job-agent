@@ -112,7 +112,7 @@
 ## Phase 8: Polish & Cross-Cutting Concerns
 
 - [X] T017 Run `/speckit.analyze` (US5-1 spec-path requirement; SC-005) — confirm constitution, `CLAUDE.md` and the gates state the same rule.
-- [ ] T018 Validate SC-001…SC-006 end-to-end per `quickstart.md` (break-a-guard, undefined-name flag, CI green/red, secret push rejection, consistency, ≤60 s) and mark the tasks `[X]`.
+- [X] T018 Validate SC-001…SC-006 end-to-end per `quickstart.md` (break-a-guard, undefined-name flag, CI green/red, secret push rejection, consistency, ≤60 s) and mark the tasks `[X]`.
 
 ---
 
