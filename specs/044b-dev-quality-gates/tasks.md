@@ -59,13 +59,13 @@
 
 ### Tests for User Story 2
 
-- [ ] T008 [P] [US2] Write the `lint_edited.py` cases in `tests/test_dev_hooks.py` (FR-004): non-`.py` path ignored → exit 0; ruff finding → exit 2 with ruff's output on stderr; clean file → exit 0; ruff not installed → non-blocking non-zero with a message.
+- [X] T008 [P] [US2] Write the `lint_edited.py` cases in `tests/test_dev_hooks.py` (FR-004): non-`.py` path ignored → exit 0; ruff finding → exit 2 with ruff's output on stderr; clean file → exit 0; ruff not installed → non-blocking non-zero with a message.
 
 ### Implementation for User Story 2
 
-- [ ] T009 [US2] Implement `.claude/hooks/lint_edited.py` per `contracts/hooks.md` (FR-002): read `tool_input.file_path` from stdin JSON, ignore non-`.py`/out-of-project paths, run `ruff check <path>`.
-- [ ] T010 [US2] Declare the `PostToolUse` hook (matcher `Write|Edit|MultiEdit`) in `.claude/settings.json` (FR-001) — confirm the matcher/tool names against `/hooks` first (research R1).
-- [ ] T011 [US2] Verify `ruff check .` is clean on this branch (FR-006 / US2-4). **Depends on the separate `core/prepare.py` hotfix landing on `main` and a rebase**; do not enable the hooks until the tree is clean.
+- [X] T009 [US2] Implement `.claude/hooks/lint_edited.py` per `contracts/hooks.md` (FR-002): read `tool_input.file_path` from stdin JSON, ignore non-`.py`/out-of-project paths, run `ruff check <path>`.
+- [X] T010 [US2] Declare the `PostToolUse` hook (matcher `Write|Edit|MultiEdit`) in `.claude/settings.json` (FR-001) — confirm the matcher/tool names against `/hooks` first (research R1).
+- [X] T011 [US2] Verify `ruff check .` is clean on this branch (FR-006 / US2-4). **Depends on the separate `core/prepare.py` hotfix landing on `main` and a rebase**; do not enable the hooks until the tree is clean.
 
 **Checkpoint**: US2 works — syntax/undefined-name bugs are caught at write time, not by cron.
 

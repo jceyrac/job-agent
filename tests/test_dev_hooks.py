@@ -152,3 +152,55 @@ def test_stop_budget_warning_is_non_blocking(stop_tests, monkeypatch, capsys):
     monkeypatch.setattr(stop_tests.time, "monotonic", lambda: next(ticks))
     assert stop_tests.run({"stop_hook_active": False}) == 0
     assert "budget" in capsys.readouterr().err
+
+
+# --- User Story 2: the PostToolUse hook (`lint_edited.py`) -------------------
+
+
+@pytest.fixture
+def lint_edited():
+    return _load_hook("lint_edited.py")
+
+
+def test_lint_non_py_path_ignored(lint_edited):
+    """A non-`.py` path is a no-op (exit 0), before any ruff call."""
+    assert lint_edited.run({"tool_input": {"file_path": "/repo/README.md"}}) == 0
+
+
+def test_lint_missing_path_ignored(lint_edited):
+    """A missing `tool_input.file_path` is a no-op."""
+    assert lint_edited.run({}) == 0
+    assert lint_edited.run({"tool_input": {}}) == 0
+
+
+def test_lint_outside_project_ignored(lint_edited, monkeypatch):
+    """A `.py` path outside the project is a no-op."""
+    monkeypatch.setattr(lint_edited, "_is_in_project", lambda p: False)
+    assert lint_edited.run({"tool_input": {"file_path": "/tmp/elsewhere.py"}}) == 0
+
+
+def test_lint_ruff_finding_blocks(lint_edited, monkeypatch, capsys):
+    """A ruff finding exits 2 with ruff's output on stderr."""
+    monkeypatch.setattr(lint_edited, "_is_in_project", lambda p: True)
+    monkeypatch.setattr(lint_edited, "_ruff_available", lambda: True)
+    monkeypatch.setattr(
+        lint_edited, "_run_ruff", lambda p: (1, "F821 Undefined name `foo`\n")
+    )
+    assert lint_edited.run({"tool_input": {"file_path": "/repo/foo.py"}}) == 2
+    assert "F821" in capsys.readouterr().err
+
+
+def test_lint_clean_file_passes(lint_edited, monkeypatch):
+    """A clean file exits 0, nothing shown."""
+    monkeypatch.setattr(lint_edited, "_is_in_project", lambda p: True)
+    monkeypatch.setattr(lint_edited, "_ruff_available", lambda: True)
+    monkeypatch.setattr(lint_edited, "_run_ruff", lambda p: (0, ""))
+    assert lint_edited.run({"tool_input": {"file_path": "/repo/foo.py"}}) == 0
+
+
+def test_lint_ruff_missing_is_non_blocking(lint_edited, monkeypatch, capsys):
+    """ruff unavailable → non-blocking non-zero with a message, never silent."""
+    monkeypatch.setattr(lint_edited, "_is_in_project", lambda p: True)
+    monkeypatch.setattr(lint_edited, "_ruff_available", lambda: False)
+    assert lint_edited.run({"tool_input": {"file_path": "/repo/foo.py"}}) == NON_BLOCKING
+    assert "ruff" in capsys.readouterr().err
