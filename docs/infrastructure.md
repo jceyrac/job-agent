@@ -141,6 +141,29 @@ tailscale serve --bg --https=8443 off
 
 ---
 
+# Ingestion via API — platform identity (spec 045)
+
+When `ingest_via_api=on`, the `agent` cron run and the `worker`'s scrape tasks
+stop writing the catalogue directly and instead POST the collected postings to
+`POST /v1/ingest/batch` as the **platform principal** — a non-human `users` row
+(`is_service=1`) that owns ingest-only tokens.
+
+- **Token**: created once on the host:
+  `python -m scripts.api_token create --name platform-ingest --user platform --scopes ingest`
+  (the raw token is printed once, then only its SHA-256 hash is stored). It is
+  provided to the `agent` and `worker` containers via `JOB_AGENT_API_TOKEN` in the
+  compose `.env` — **never committed** (`.env` is gitignored; `.env.example`
+  carries a placeholder only).
+- **In-network base**: both containers reach the API at `http://api:8601` (the
+  compose service name, not the host's `127.0.0.1`). This is `_IngestClient`'s
+  default; `JOB_AGENT_API_URL=http://api:8601` is set on `agent`/`worker` (and
+  `tracker`) to make it explicit.
+- **Flag**: `INGEST_VIA_API` (env, a truthy value) overrides the
+  `config.ingest_via_api` key — `off` keeps the direct path unchanged and is the
+  rollback at every step.
+
+---
+
 # Worker — task queue consumer (spec 043)
 
 The `worker` container runs `python -m core.worker` and consumes the `tasks`

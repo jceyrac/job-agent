@@ -49,6 +49,9 @@ services:
     environment:
       - JOB_AGENT_DATA_DIR=/app/data
       - JOB_AGENT_REQUIRE_DB=1
+      # In-network API base — the ingest path (spec 045) POSTs to the api service
+      # by compose name; 127.0.0.1 is the host's loopback, not the api container's.
+      - JOB_AGENT_API_URL=http://api:8601
     restart: unless-stopped
     logging:
       driver: json-file
@@ -67,6 +70,8 @@ services:
     environment:
       - JOB_AGENT_DATA_DIR=/app/data
       - JOB_AGENT_REQUIRE_DB=1
+      # In-network API base — same as worker (spec 045 ingest path).
+      - JOB_AGENT_API_URL=http://api:8601
     profiles:
       - manual   # triggered by cron, not kept alive
 

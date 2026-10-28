@@ -771,3 +771,56 @@ def test_api_write_profile_isolated(two_users):
     )
     assert a.get_profile("prof-a")["name"] == "A edited"
     assert b.get_profile("prof-b")["name"] == "Profile prof-b"  # B's own profile intact
+
+
+# ── Isolation: platform principal (spec 045, FR-007/FR-008) ───────────────────
+
+def _platform_headers(api_env) -> dict:
+    return {"Authorization": f"Bearer {api_env.make_token(['ingest'], user_id='platform')}"}
+
+
+def test_platform_token_ingest_only(api_env):
+    """A platform-principal token (scope `ingest` only) drives the ingest
+    endpoints but can never read or write user space — 403, not 200/404."""
+    h = _platform_headers(api_env)
+
+    # Ingest endpoints are open to the platform principal.
+    assert api_env.client.get("/v1/ingest/plan", headers=h).status_code == 200
+    assert api_env.client.post("/v1/ingest/batch", json=[], headers=h).status_code == 200
+    assert api_env.client.post(
+        "/v1/ingest/events",
+        json={"type": "run", "jobs_scraped": 0, "duration_seconds": 0.0, "run_type": "full"},
+        headers=h,
+    ).status_code == 200
+
+    # User-space reads (read:me) are forbidden.
+    for path in ("/v1/me", "/v1/me/feed", "/v1/me/contacts", "/v1/me/applications",
+                 "/v1/me/stats", "/v1/me/dashboard", "/v1/me/companies",
+                 "/v1/me/jobs/job-1"):
+        r = api_env.client.get(path, headers=h)
+        assert r.status_code == 403, f"{path} → {r.status_code}"
+        assert r.json() == {"error": "forbidden", "message": "Insufficient scope"}
+
+    # User-space writes (write:me) are forbidden.
+    assert api_env.client.put(
+        "/v1/me/jobs/job-1/status",
+        json={"status": "applied", "occurred_at": "2026-01-05"}, headers=h,
+    ).status_code == 403
+    assert api_env.client.patch(
+        "/v1/me/companies/1", json={"status": "blacklisted"}, headers=h,
+    ).status_code == 403
+
+
+def test_platform_principal_is_service_without_profile(api_env):
+    """The platform principal is flagged `is_service=1` with no active profile and
+    no user-space rows — a non-human identity, never a person's account."""
+    conn = sqlite3.connect(api_env.path)
+    row = conn.execute(
+        "SELECT display_name, is_service, active_profile_id FROM users WHERE id = 'platform'"
+    ).fetchone()
+    n_profiles = conn.execute(
+        "SELECT COUNT(*) FROM search_profiles WHERE user_id = 'platform'").fetchone()[0]
+    conn.close()
+
+    assert row == ("Platform ingestion", 1, None)
+    assert n_profiles == 0
