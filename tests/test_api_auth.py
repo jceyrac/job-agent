@@ -11,7 +11,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -87,19 +86,24 @@ def test_403_missing_scope(api_env):
 
 # ── last_used_at throttle (FR-005) ───────────────────────────────────────────
 
-def test_last_used_at_throttled_to_once_per_minute(api_env):
+def test_last_used_at_throttled_to_once_per_minute(api_env, monkeypatch):
     raw = api_env.make_token(["read:me"])
     row = api_env.db.resolve_api_token(raw)
-    token_id = row["id"]
     assert row["last_used_at"] is None
 
-    # First request sets last_used_at.
+    # Deterministic clock, independent of host uptime: a freshly booted CI runner
+    # has monotonic() < 60 s, which must still set last_used_at on first use
+    # (the old `get(token_id, 0.0)` default skipped the first touch in that case).
+    clock = {"t": 5.0}
+    monkeypatch.setattr(deps.time, "monotonic", lambda: clock["t"])
+
+    # First request sets last_used_at even though monotonic() == 5.0 (< 60).
     assert api_env.client.get("/v1/me", headers=_auth(raw)).status_code == 200
     t1 = api_env.db.resolve_api_token(raw)["last_used_at"]
     assert t1 is not None
 
-    # Simulate a very recent touch so the throttle suppresses the next write.
-    deps._last_touch[token_id] = time.monotonic()
+    # A second request within the 60 s window is throttled (no update).
+    clock["t"] = 10.0
     assert api_env.client.get("/v1/me", headers=_auth(raw)).status_code == 200
     assert api_env.db.resolve_api_token(raw)["last_used_at"] == t1
 

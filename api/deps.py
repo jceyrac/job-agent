@@ -102,7 +102,8 @@ def get_current_user(
 
     token_id = row["id"]
     now = time.monotonic()
-    if now - _last_touch.get(token_id, 0.0) >= 60.0:
+    last = _last_touch.get(token_id)
+    if last is None or now - last >= 60.0:
         _last_touch[token_id] = now
         db.touch_api_token(token_id)
 
