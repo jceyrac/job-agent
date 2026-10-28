@@ -4,7 +4,8 @@ tests/test_ingestion_scope.py — guard: ingestion reads the platform scope only
 Three invariants, enforced by source scanning:
 
 1. No ingestion code (``core/scrape.py``, ``core/scrapers/**``) reads the profile's
-   ``job_titles`` / ``title_exclude`` / ``scrape_remote_or_hybrid``. Ingestion must go
+   ``job_titles`` / ``title_exclude`` / ``scrape_remote_or_hybrid`` /
+   ``effective_search_locations`` / ``greenhouse_boards``. Ingestion must go
    through ``JobStorage.get_ingestion_scope()`` (Constitution I — the scope is a
    platform parameter, never profile-derived).
 
@@ -15,8 +16,8 @@ Three invariants, enforced by source scanning:
 3. Board scrapers (indeed, linkedin) take their title terms from the ``JobFilter``
    passed by ``scrape.py``, not from ``JobStorage.get_ingestion_scope()`` — ``scrape.py``
    is the single reader of the scope for board sources (Constitution VIII; step 7
-   removes storage access from scrapers). Greenhouse is company-keyed and may keep its
-   scope read.
+   removed storage access from scrapers). Greenhouse likewise takes its ``boards``
+   from the injected plan, never a scope or profile read.
 
 Negative fixtures prove the scanners themselves catch the banned forms.
 """
@@ -25,6 +26,7 @@ import pathlib
 import re
 
 from core.storage import JobStorage
+from core.scrapers.base import BaseScraper
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -36,7 +38,8 @@ _INGESTION_FILES = (
 )
 
 _INGESTION_RE = re.compile(
-    r"(?<![\w])(?:job_titles|title_exclude|scrape_remote_or_hybrid)(?![\w])"
+    r"(?<![\w])(?:job_titles|title_exclude|scrape_remote_or_hybrid"
+    r"|effective_search_locations|greenhouse_boards)(?![\w])"
 )
 
 # ── Invariant 2: filtered_non_product is write-only in the schema ─────────────
@@ -105,7 +108,8 @@ def test_ingestion_never_reads_profile_title_fields():
             offenders[str(path.relative_to(_PROJECT_ROOT))] = hits
 
     assert not offenders, (
-        "ingestion code reads profile job_titles/title_exclude/scrape_remote_or_hybrid:\n"
+        "ingestion code reads profile job_titles/title_exclude/scrape_remote_or_hybrid/"
+        "effective_search_locations/greenhouse_boards:\n"
         + "\n".join(f"  {p}: {h}" for p, hs in offenders.items() for h in hs)
     )
 
@@ -148,13 +152,9 @@ def test_broad_scrape_builds_filter_from_scope_not_profile():
 
     captured = {}
 
-    class _FakeScraper:
+    class _FakeScraper(BaseScraper):
         SOURCE_NAME = "Fake"
         ACQUISITION_MODEL = "board"
-        def __init__(self, storage=None):
-            pass
-        def is_enabled(self):
-            return True
         def fetch(self, job_filter):
             captured["job_filter"] = job_filter
             return []
@@ -171,6 +171,8 @@ def test_broad_scrape_builds_filter_from_scope_not_profile():
             return []
         def get_stats(self, pid):
             return {"total": 0}
+        def get_config(self, key):
+            return None
         def log_run(self, **kwargs):
             pass
 
@@ -228,13 +230,9 @@ def test_broad_scrape_pre_save_title_gate_matches_scope():
         _post("Chief of Staff"),                                      # mismatch → skip
     ]
 
-    class _FakeScraper:
+    class _FakeScraper(BaseScraper):
         SOURCE_NAME = "Fake"
         ACQUISITION_MODEL = "board"
-        def __init__(self, storage=None):
-            pass
-        def is_enabled(self):
-            return True
         def fetch(self, job_filter):
             return postings
 
@@ -272,11 +270,19 @@ def test_scanner_detects_ingestion_profile_field_reads():
     assert _ingestion_field_hits("terms = _p.job_titles or SEARCH_TERMS") == ["job_titles"]
     assert _ingestion_field_hits("profile.scrape_remote_or_hybrid") == ["scrape_remote_or_hybrid"]
     assert _ingestion_field_hits("profile.title_exclude") == ["title_exclude"]
+    assert _ingestion_field_hits("profile.effective_search_locations()") == ["effective_search_locations"]
+    assert _ingestion_field_hits("profile.greenhouse_boards") == ["greenhouse_boards"]
 
 
 def test_scanner_ignores_scope_read():
     # get_ingestion_scope()["title_families"] is the legitimate ingestion path.
     assert _ingestion_field_hits('scope = db.get_ingestion_scope()["title_families"]') == []
+
+
+def test_scanner_ignores_get_greenhouse_boards_helper():
+    # get_greenhouse_boards is the orchestrator's DB helper in scrape.py, not a profile
+    # read — the `_` prefix keeps the token from matching the word-boundary guard.
+    assert _ingestion_field_hits("boards = get_greenhouse_boards(db)") == []
 
 
 def test_scanner_detects_filtered_non_product():

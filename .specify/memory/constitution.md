@@ -1,7 +1,23 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 2.0.4 → 2.1.0
+  Version change: 2.1.0 → 2.1.1
+  Bump rationale: PATCH — le gap du Principe I (zones de recherche et boards
+  Greenhouse dérivés du profil) est fermé par l'étape 7 (spec 045) :
+  `search_locations` et `greenhouse_boards` sont désormais des champs du
+  périmètre plateforme (`config.ingestion_scope`), initialisés une fois
+  depuis le profil puis édités via `scripts/ingestion_scope.py`. Le « à terme »
+  du Principe VIII (pas d'accès DB côté scraper) est réalisé pour l'ingestion :
+  les scrapers sont des fonctions pures et l'orchestrateur soumet les postings
+  à `POST /v1/ingest/batch`. Aucun principe existant ne change de sens.
+
+  Modified sections:
+    - Principe I — périmètre plateforme explicité : `search_locations` et
+      `greenhouse_boards` en font partie (le gap profil est fermé).
+    - Principe VIII — le « à terme » du contrat d'ingestion devient réalisé
+      (fonctions pures + endpoint `POST /v1/ingest/batch`).
+
+  Prior version (2.1.0) :
   Bump rationale: MINOR — expansion matérielle de la règle de test : le code
   path exige `ruff check .` et `python -m pytest tests/` verts avant tout
   commit qui touche du code Python (plus seulement `core/storage.py` /
@@ -103,11 +119,12 @@ Les scrapers d'agrégation MUST collecter largement sans aucun filtrage de
 pertinence. Le scorer est le seul point de décision où un job est jugé sur
 sa pertinence vis-à-vis d'un profil.
 
-Le périmètre d'ingestion (familles de postes, zones, fraîcheur, liste de
-sources) est un **paramètre plateforme**, curé et versionné. Il MUST NEVER
-être dérivé d'un profil ou d'un utilisateur. Tout filtre qui dépend d'un
-profil (titres, exclusions, mode de travail) appartient au scoring, en
-Tier 0 déterministe.
+Le périmètre d'ingestion (familles de postes, zones de recherche
+`search_locations`, liste de boards Greenhouse `greenhouse_boards`, fraîcheur,
+liste de sources) est un **paramètre plateforme**, curé et versionné, éditable
+via `scripts/ingestion_scope.py`. Il MUST NEVER être dérivé d'un profil ou
+d'un utilisateur. Tout filtre qui dépend d'un profil (titres, exclusions, mode
+de travail) appartient au scoring, en Tier 0 déterministe.
 
 Exception cadrée : les sources company-keyed (adaptateurs ATS, scrapers de
 sites carrières) renvoient la liste complète des postes d'une entreprise. Un
@@ -248,10 +265,12 @@ Les deux catégories MUST pouvoir tourner séparément (ex. `--source
 linkedin` vs `--source greenhouse`), et le monitoring MUST pouvoir tourner
 seul (`--monitored-only`) sans déclencher le filet large.
 
-Un scraper ne connaît que son contrat de sortie (`JobPosting`) ; à terme il
-MUST NOT accéder à la base autrement que par l'endpoint d'ingestion. Son
-indépendance est contractuelle, pas de déploiement : un seul worker
-d'ingestion les exécute.
+Un scraper ne connaît que son contrat de sortie (`JobPosting`) ; il MUST NOT
+accéder à la base autrement que par l'endpoint d'ingestion (`POST
+/v1/ingest/batch`). Ce contrat est réalisé pour l'ingestion (étape 7) : les
+scrapers sont des fonctions pures (aucun accès DB) et l'orchestrateur soumet
+les postings à l'endpoint. Son indépendance est contractuelle, pas de
+déploiement : un seul worker d'ingestion les exécute.
 
 **Rationale** : Les deux modèles ont des rythmes de changement différents
 (liste d'entreprises vs. termes de recherche) et des contraintes de
@@ -420,4 +439,4 @@ constitution, la constitution prévaut.
 - Les violations connues listées dans le Sync Impact Report sont tolérées
   jusqu'à l'étape de roadmap qui les résout.
 
-**Version**: 2.1.0 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-28
+**Version**: 2.1.1 | **Ratified**: 2026-06-12 | **Last Amended**: 2026-10-28

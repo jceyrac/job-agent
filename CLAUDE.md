@@ -1,7 +1,7 @@
 # CLAUDE.md — job_agent
 
 Instructions for Claude Code. Read this before touching any file.
-The constitution (`.specify/memory/constitution.md`, v2.1.0) takes precedence over this file.
+The constitution (`.specify/memory/constitution.md`, v2.1.1) takes precedence over this file.
 
 ---
 
@@ -280,13 +280,15 @@ All new work is specified with SpecKit in `specs/0XX-feature-name/` (`spec.md` �
 
 ---
 
-## Current focus (as of 2026-10-27)
+## Current focus (as of 2026-10-28)
 
 **API migration roadmap** — `docs/roadmap-api.md`. Steps 3–6b shipped (039 user-space
 separation → 040 platform ingestion scope → 041 read API → 042 write API → 043 task
 queue + worker + SSE → 044 agents via API), all in prod. Current focus: **step 7 —
-Ingestion via API** (`core/scrape.py` → `/ingest/batch`). The nightly cron
-"database is locked" hotfix (purge `BEGIN IMMEDIATE`, housekeeping continues on
+Ingestion via API** (`core/scrape.py` → `/ingest/batch`), implemented behind the
+`INGEST_VIA_API` flag (spec 045, default `off` — the direct path is unchanged);
+release and flag switch-on are pending the real-scrape identity gate. The nightly
+cron "database is locked" hotfix (purge `BEGIN IMMEDIATE`, housekeeping continues on
 failure) shipped 2026-10-27 (`cd5c107`).
 
 <!-- SPECKIT START -->

@@ -26,7 +26,7 @@ the flag on (Constitution XI).
 **Storage**: SQLite WAL via `JobStorage` (`data/jobs.db`), read + write only through
 `JobStorage` methods; `BEGIN IMMEDIATE` for any read-then-write transaction.
 
-**Testing**: pytest (716 tests), ruff `E9/F63/F7/F82`, in-memory DB fixtures,
+**Testing**: pytest, ruff `E9/F63/F7/F82`, in-memory DB fixtures,
 `TestClient` for API contract tests, the offline socket fixture.
 
 **Target Platform**: Linux server (verva) — Docker Compose (`api`, `worker`, `agent`,

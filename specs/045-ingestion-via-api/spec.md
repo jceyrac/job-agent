@@ -150,6 +150,7 @@ As the operator, I want collected postings sent in batches to the API, which ded
 - **SC-002**: Replay identity: direct path vs API path on copies of the same DB give identical results.
 - **SC-003**: Staging run with the flag on completes; worker scrape tasks work through the API.
 - **SC-004**: Production with the flag on: next scheduled runs `success`, usual volumes; flag off restores the old path.
+- **SC-005**: `ruff check .` and `python -m pytest tests/` green, and `/speckit.analyze` reports no CRITICAL issues before release.
 
 ---
 

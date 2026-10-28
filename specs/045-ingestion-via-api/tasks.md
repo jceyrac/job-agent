@@ -43,16 +43,16 @@
 
 > **NOTE: write these first, ensure they FAIL before implementation.**
 
-- [ ] T008 [P] [US1] Write `tests/test_scraper_purity.py` — source-scan guard + per-scraper unit tests for `boards/linkedin.py`, `boards/indeed.py`, `greenhouse.py`, `ats/lever.py`, `ats/workable.py` (injected plan + fake HTTP, no DB) — FR-001 / SC-001.
+- [x] T008 [P] [US1] Write `tests/test_scraper_purity.py` — source-scan guard + per-scraper unit tests for `boards/linkedin.py`, `boards/indeed.py`, `greenhouse.py`, `ats/lever.py`, `ats/workable.py` (injected plan + fake HTTP, no DB) — FR-001 / SC-001.
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Refactor `core/scrapers/base.py` — drop `storage`; constructor takes the injected plan slice (locations/boards/slugs/enabled); remove `is_enabled()`/`disable()` storage reads (enabled is decided by the orchestrator; auto-disable is reported back as an event) — FR-001.
-- [ ] T010 [P] [US1] Refactor `core/scrapers/boards/linkedin.py` to take search locations from the injected plan (no `load_active_profile`) — FR-001.
-- [ ] T011 [P] [US1] Refactor `core/scrapers/boards/indeed.py` to take search locations from the injected plan (no `load_active_profile`) — FR-001.
-- [ ] T012 [P] [US1] Refactor `core/scrapers/greenhouse.py` to take boards from the injected plan (no `load_active_profile`/`get_greenhouse_boards`) — FR-001.
-- [ ] T013 [P] [US1] Refactor `core/scrapers/ats/lever.py` and `core/scrapers/ats/workable.py` to take slugs from the injected plan (no `get_lever_slugs`/`get_workable_slugs`) — FR-001.
-- [ ] T014 [US1] Update `core/scrape.py` (`_run_broad_scrape` + `_run_monitored_only`) to compute targets/locations/boards/slugs/enabled from its existing direct `JobStorage` reads and inject them into scrapers — behaviour-neutral, app stays operational (the flag arrives in US4).
+- [x] T009 [US1] Refactor `core/scrapers/base.py` — drop `storage`; constructor takes the injected plan slice (locations/boards/slugs/enabled); remove `is_enabled()`/`disable()` storage reads (enabled is decided by the orchestrator; auto-disable is reported back as an event) — FR-001.
+- [x] T010 [P] [US1] Refactor `core/scrapers/boards/linkedin.py` to take search locations from the injected plan (no `load_active_profile`) — FR-001.
+- [x] T011 [P] [US1] Refactor `core/scrapers/boards/indeed.py` to take search locations from the injected plan (no `load_active_profile`) — FR-001.
+- [x] T012 [P] [US1] Refactor `core/scrapers/greenhouse.py` to take boards from the injected plan (no `load_active_profile`/`get_greenhouse_boards`) — FR-001.
+- [x] T013 [P] [US1] Refactor `core/scrapers/ats/lever.py` and `core/scrapers/ats/workable.py` to take slugs from the injected plan (no `get_lever_slugs`/`get_workable_slugs`) — FR-001.
+- [x] T014 [US1] Update `core/scrape.py` (`_run_broad_scrape` + `_run_monitored_only`) to compute targets/locations/boards/slugs/enabled from its existing direct `JobStorage` reads and inject them into scrapers — behaviour-neutral, app stays operational (the flag arrives in US4).
 
 **Checkpoint**: scrapers are pure and unit-tested; the direct path still runs identically.
 
@@ -66,13 +66,13 @@
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] Add contract tests for `GET /v1/ingest/plan` in `tests/test_api_ingest.py` (field-for-field vs direct reads; 401 without token, 403 without `ingest`) — FR-003.
+- [x] T015 [P] [US2] Add contract tests for `GET /v1/ingest/plan` in `tests/test_api_ingest.py` (field-for-field vs direct reads; 401 without token, 403 without `ingest`) — FR-003.
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] Add the `IngestPlan` response schema in `api/schemas.py` (`extra="forbid"`, fields per `data-model.md`).
-- [ ] T017 [US2] Add `api/routers/ingest.py` with `GET /v1/ingest/plan` (assembles scope + `freshness_days` + enabled sources + monitoring gates + monitored targets + board slugs via `JobStorage`; no profile/user-space).
-- [ ] T018 [US2] Register the router in `api/main.py` under prefix `/v1/ingest`.
+- [x] T016 [US2] Add the `IngestPlan` response schema in `api/schemas.py` (`extra="forbid"`, fields per `data-model.md`).
+- [x] T017 [US2] Add `api/routers/ingest.py` with `GET /v1/ingest/plan` (assembles scope + `freshness_days` + enabled sources + monitoring gates + monitored targets + board slugs via `JobStorage`; no profile/user-space).
+- [x] T018 [US2] Register the router in `api/main.py` under prefix `/v1/ingest`.
 
 **Checkpoint**: the plan endpoint serves the run plan; US1 scrapers could consume it.
 
@@ -86,15 +86,15 @@
 
 ### Tests for User Story 3
 
-- [ ] T019 [P] [US3] Add contract tests for `POST /v1/ingest/batch` and `POST /v1/ingest/events` in `tests/test_api_ingest.py` (idempotency, per-posting outcomes, engaged dedup + touch, failing posting ≠ failing batch, 413 over 5 MB) — FR-003.
+- [x] T019 [P] [US3] Add contract tests for `POST /v1/ingest/batch` and `POST /v1/ingest/events` in `tests/test_api_ingest.py` (idempotency, per-posting outcomes, engaged dedup + touch, failing posting ≠ failing batch, 413 over 5 MB) — FR-003.
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] Add `JobStorage.ingest_batch(postings)` in `core/storage.py` — load the engaged-key union once, then commit in ~50-posting `BEGIN IMMEDIATE` sub-chunks: `JobPosting.id` computation, engaged dedup + `last_seen` touch, `upsert_company`, `save_unscored` (new) / `touch_many` (existing); return `{new, existing, dropped_engaged, outcomes}` — FR-004.
-- [ ] T021 [P] [US3] Add `tests/test_storage.py` cases for `ingest_batch` (idempotency, dedup, counts, chunk boundaries).
-- [ ] T022 [US3] Add the batch/event request+response schemas in `api/schemas.py`.
-- [ ] T023 [US3] Add `POST /v1/ingest/batch` and `POST /v1/ingest/events` in `api/routers/ingest.py` (call `ingest_batch`; structured write-log; no SQL) — FR-003/FR-004.
-- [ ] T024 [US3] Raise the request-size limit to 5 MB for `/v1/ingest/batch` only in `api/middleware.py` — FR-003.
+- [x] T020 [US3] Add `JobStorage.ingest_batch(postings)` in `core/storage.py` — load the engaged-key union once, then commit in ~50-posting `BEGIN IMMEDIATE` sub-chunks: `JobPosting.id` computation, engaged dedup + `last_seen` touch, `upsert_company`, `save_unscored` (new) / `touch_many` (existing); return `{new, existing, dropped_engaged, outcomes}` — FR-004.
+- [x] T021 [P] [US3] Add `tests/test_storage.py` cases for `ingest_batch` (idempotency, dedup, counts, chunk boundaries).
+- [x] T022 [US3] Add the batch/event request+response schemas in `api/schemas.py`.
+- [x] T023 [US3] Add `POST /v1/ingest/batch` and `POST /v1/ingest/events` in `api/routers/ingest.py` (call `ingest_batch`; structured write-log; no SQL) — FR-003/FR-004.
+- [x] T024 [US3] Raise the request-size limit to 5 MB for `/v1/ingest/batch` only in `api/middleware.py` — FR-003.
 
 **Checkpoint**: the API is a full writer for ingestion; batch + events are contract-tested.
 
@@ -108,12 +108,12 @@
 
 ### Tests for User Story 4
 
-- [ ] T025 [P] [US4] Write `tests/test_ingest_identity.py` — capture a synthetic scrape fixture (postings only), replay through direct path vs API path on DB copies, assert identical job ids/fields, company rows, `last_seen` touches, dropped-engaged set, and counts — FR-006 / SC-002.
+- [x] T025 [P] [US4] Write `tests/test_ingest_identity.py` — capture a synthetic scrape fixture (postings only), replay through direct path vs API path on DB copies, assert identical job ids/fields, company rows, `last_seen` touches, dropped-engaged set, and counts — FR-006 / SC-002.
 
 ### Implementation for User Story 4
 
-- [ ] T026 [US4] Add the `ingest_via_api` flag branch in `core/scrape.py` — `off` = current direct path; `on` = `GET /v1/ingest/plan` → run → `POST /v1/ingest/batch` (chunked, ≤ ~100 postings / ≤ 5 MB per request) + `POST /v1/ingest/events`; fail loudly (non-zero exit) when the API is unreachable or the token invalid — no silent fallback (US5-2) — FR-005.
-- [ ] T027 [US4] Add the record/replay harness `tests/run_ingest_replay.py` (capture a scrape to fixture; replay both paths; diff) — FR-006.
+- [x] T026 [US4] Add the `ingest_via_api` flag branch in `core/scrape.py` — `off` = current direct path; `on` = `GET /v1/ingest/plan` → run → `POST /v1/ingest/batch` (chunked, ≤ ~100 postings / ≤ 5 MB per request) + `POST /v1/ingest/events`; fail loudly (non-zero exit) when the API is unreachable or the token invalid — no silent fallback (US5-2) — FR-005.
+- [x] T027 [US4] Add the record/replay harness `tests/run_ingest_replay.py` (capture a scrape to fixture; replay both paths; diff) — FR-006.
 
 ### Validation for User Story 4 (release-time gate)
 
@@ -131,11 +131,11 @@
 
 ### Tests for User Story 5
 
-- [ ] T029 [P] [US5] Write the isolation test in `tests/test_isolation.py` (platform token → ingest only; service principal excluded from user-space reads) — FR-007/FR-008.
+- [x] T029 [P] [US5] Write the isolation test in `tests/test_isolation.py` (platform token → ingest only; service principal excluded from user-space reads) — FR-007/FR-008.
 
 ### Implementation for User Story 5
 
-- [ ] T030 [US5] Provide the platform token to the `agent` and `worker` containers via compose env (`.env`, never the repo) and document the in-network API base `http://api:8601` in `docs/infrastructure.md` — FR-007.
+- [x] T030 [US5] Provide the platform token to the `agent` and `worker` containers via compose env (`.env`, never the repo) and document the in-network API base `http://api:8601` in `docs/infrastructure.md` — FR-007.
 
 **Checkpoint**: the platform identity is provisioned and isolated; a real run can authenticate.
 
@@ -143,11 +143,11 @@
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T031 [P] Extend `tests/test_api_guard.py` allow-list for `api/routers/ingest.py` and update the OpenAPI snapshot in `tests/test_api_openapi.py` — FR-008.
-- [ ] T032 [P] Extend the spec-040 guard `tests/test_ingestion_scope.py` to ban profile-derived `effective_search_locations`/`greenhouse_boards` in scrapers and update the Greenhouse "may keep its scope read" note (now injected) — FR-002.
-- [ ] T033 [P] Constitution PATCH (`docs: amend constitution to v2.1.1 (ingestion via API)`): record that the Principle I gap (profile-derived locations/boards) is closed and Principle VIII's "à terme no DB access" is realised for ingestion, with a Sync Impact Report — FR-009.
-- [ ] T034 [P] Update `CLAUDE.md`, `docs/infrastructure.md` and `docs/roadmap-api.md` (step 7 status) — FR-009.
-- [ ] T035 Run `ruff check .` + `python -m pytest tests/` green, then `/speckit.analyze` (SC-005).
+- [x] T031 [P] Extend `tests/test_api_guard.py` allow-list for `api/routers/ingest.py` and update the OpenAPI snapshot in `tests/test_api_openapi.py` — FR-008.
+- [x] T032 [P] Extend the spec-040 guard `tests/test_ingestion_scope.py` to ban profile-derived `effective_search_locations`/`greenhouse_boards` in scrapers and update the Greenhouse "may keep its scope read" note (now injected) — FR-002.
+- [x] T033 [P] Constitution PATCH (`docs: amend constitution to v2.1.1 (ingestion via API)`): record that the Principle I gap (profile-derived locations/boards) is closed and Principle VIII's "à terme no DB access" is realised for ingestion, with a Sync Impact Report — FR-009.
+- [x] T034 [P] Update `CLAUDE.md`, `docs/infrastructure.md` and `docs/roadmap-api.md` (step 7 status) — FR-009.
+- [x] T035 Run `ruff check .` + `python -m pytest tests/` green, then `/speckit.analyze` (SC-005).
 
 ---
 
