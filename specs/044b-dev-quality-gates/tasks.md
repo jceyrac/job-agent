@@ -14,8 +14,8 @@
 
 **Purpose**: Add the linter dependency and config that both the PostToolUse hook and CI depend on.
 
-- [ ] T001 [P] Add `ruff` to `[project.optional-dependencies] dev` (with a version range) and a `[tool.ruff]` section in `pyproject.toml` — `target-version = "py311"` and `[tool.ruff.lint] select = ["E9", "F63", "F7", "F82"]` (FR-005; no style/unused-import/formatter rules)
-- [ ] T002 Install the dev extras (`pip install -e ".[dev]"`) and confirm `ruff --version` and `ruff check .` run
+- [X] T001 [P] Add `ruff` to `[project.optional-dependencies] dev` (with a version range) and a `[tool.ruff]` section in `pyproject.toml` — `target-version = "py311"` and `[tool.ruff.lint] select = ["E9", "F63", "F7", "F82"]` (FR-005; no style/unused-import/formatter rules)
+- [X] T002 Install the dev extras (`pip install -e ".[dev]"`) and confirm `ruff --version` and `ruff check .` run
 
 ---
 
@@ -23,8 +23,8 @@
 
 **Purpose**: Make the committed hook files versionable, and make offline a hard guarantee before any gate relies on it.
 
-- [ ] T003 Update `.gitignore` — replace the whole-dir `.claude/` rule with `.claude/*` plus `!` exceptions for `.claude/settings.json` and `.claude/hooks/` (`.claude/settings.local.json` stays ignored); record the `git check-ignore -v` evidence in `specs/044b-dev-quality-gates/research.md` (FR-009 / US5-3)
-- [ ] T004 Add an **autouse** fixture to `tests/conftest.py` that makes `socket.connect` to any non-loopback address raise (stdlib `socket` only — no new dependency; loopback and `TestClient`/ASGI transport keep working), and `tests/test_offline_guard.py` proving a non-loopback connect fails (FR-004). Verify the full existing suite still passes with the fixture active.
+- [X] T003 Update `.gitignore` — replace the whole-dir `.claude/` rule with `.claude/*` plus `!` exceptions for `.claude/settings.json` and `.claude/hooks/` (`.claude/settings.local.json` stays ignored); record the `git check-ignore -v` evidence in `specs/044b-dev-quality-gates/research.md` (FR-009 / US5-3)
+- [X] T004 Add an **autouse** fixture to `tests/conftest.py` that makes `socket.connect` to any non-loopback address raise (stdlib `socket` only — no new dependency; loopback and `TestClient`/ASGI transport keep working), and `tests/test_offline_guard.py` proving a non-loopback connect fails (FR-004). Verify the full existing suite still passes with the fixture active.
 
 **Checkpoint**: hooks are versionable and the suite cannot touch the network; user stories can begin.
 

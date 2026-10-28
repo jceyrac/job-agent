@@ -8,7 +8,9 @@ storage. Each test file builds on `api_env`; none touches the live `data/jobs.db
 from __future__ import annotations
 
 import io
+import ipaddress
 import logging
+import socket as _socket
 import sqlite3
 from types import SimpleNamespace
 
@@ -109,3 +111,41 @@ def api_log_stream():
         yield buf
     finally:
         handler.stream = original
+
+
+def _is_loopback(host) -> bool:
+    """True for loopback literal hosts/IPs; a real hostname is non-loopback."""
+    if host in ("localhost", "::1", "127.0.0.1"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _block_non_loopback_sockets(monkeypatch):
+    """Offline enforcement (spec 044b FR-004 / research R3).
+
+    Replaces `socket.socket` with a subclass whose `connect` raises on any
+    non-loopback address, so a forgotten network call fails deterministically
+    instead of spending time or money. Loopback (127.0.0.0/8, ::1) and the ASGI
+    `TestClient` transport keep working; `socket.create_connection` is covered
+    because it instantiates through the (now-guarded) module-level `socket.socket`.
+    stdlib only — no new dependency.
+    """
+    real_socket = _socket.socket
+
+    class _GuardedSocket(real_socket):
+        def connect(self, address):
+            if self.family in (_socket.AF_INET, _socket.AF_INET6):
+                host = address[0]
+                if not _is_loopback(host):
+                    raise ConnectionError(
+                        f"offline guard: non-loopback connect to {host!r} blocked "
+                        f"(tests must not reach the network — spec 044b)"
+                    )
+            return super().connect(address)
+
+    monkeypatch.setattr(_socket, "socket", _GuardedSocket)
+    yield

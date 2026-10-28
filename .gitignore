@@ -28,7 +28,12 @@ docker-compose.override.yml
 claude-deepseek.sh
 .DS_Store
 .claude_backup/
-.claude/
+# Ignore everything under .claude/ except the committed project config and the
+# dev-quality-gates hooks (spec 044b FR-009). Git cannot re-include a file under
+# an ignored directory, so this must be `.claude/*` + `!` exceptions.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 data/jobs.db.pre-*
 outputs/
 data/orp_*.csv

@@ -108,9 +108,7 @@ Context. Measurements taken on the dev Mac (M5 Pro), repo at
   keeping `.claude/settings.local.json` (permissions) ignored, the rule becomes
   `.claude/*` plus `!` exceptions — Git cannot re-include a file under an ignored
   directory, so the wildcard-then-unignore form is required (US5-3).
-- **Evidence**: `git check-ignore -v` is captured in the implementation commit;
-  `.claude/commands/`, `.claude/skills/`, `.claude/ingest_parity.sh` and
-  `.claude/settings.local.json` stay ignored.
+- **Evidence** (`git check-ignore -q --no-index`, 2026-10-28): `.claude/settings.json` and `.claude/hooks/` are **trackable** (not ignored), while `.claude/settings.local.json`, `.claude/commands/`, `.claude/skills/`, and `.claude/ingest_parity.sh` are **ignored** (matched by `.gitignore:34` `.claude/*`). The negation rules (`.gitignore:35-36`) re-include exactly the two paths the spec versions.
 
 ## R5 — GitHub Actions workflow
 
