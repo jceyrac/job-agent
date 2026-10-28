@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name            TEXT,
     active_profile_id       TEXT,
     onboarding_completed_at TEXT,
+    is_service              INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT NOT NULL
 );
 
@@ -1037,11 +1038,17 @@ class JobStorage:
             # ── Platform ingestion scope — title judgement moves to scoring (spec 040) ──
             self._migrate_ingestion_scope(conn)
 
+            # ── Scope extension — search_locations/greenhouse_boards (spec 045) ──
+            self._migrate_ingestion_scope_locations(conn)
+
             # ── API read tokens — api_tokens table already created by SCHEMA (spec 041) ──
             self._migrate_api_tokens(conn)
 
             # ── Task queue — tasks/task_events tables already created by SCHEMA (spec 043) ──
             self._migrate_tasks(conn)
+
+            # ── Platform principal — users.is_service + 'platform' row (spec 045) ──
+            self._migrate_platform_principal(conn)
 
         logger.debug(f"[Storage] DB ready at {self.db_path}")
 
@@ -1069,6 +1076,31 @@ class JobStorage:
         if self._migration_applied(conn, "tasks"):
             return
         self._record_migration(conn, "tasks")
+
+    def _migrate_platform_principal(self, conn) -> None:
+        """Add `users.is_service` and seed the platform principal (spec 045).
+
+        Idempotent by construction (no `migrations` row): the column is added
+        only when missing and the `platform` row only when absent. The platform
+        principal owns ingest-only tokens and never reads/writes user space.
+        """
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "is_service" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN is_service INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.info("[Storage] Platform principal: added users.is_service")
+
+        row = conn.execute("SELECT 1 FROM users WHERE id = 'platform'").fetchone()
+        if row is None:
+            conn.execute(
+                """INSERT INTO users
+                   (id, display_name, active_profile_id, onboarding_completed_at,
+                    is_service, created_at)
+                   VALUES ('platform', 'Platform ingestion', NULL, NULL, 1, ?)""",
+                (_now(),),
+            )
+            logger.info("[Storage] Platform principal: seeded 'platform'")
 
     def _migrate_application_lifecycle(self, conn) -> None:
         """Add provenance/notes columns to interactions and backfill lifecycle events.
@@ -1259,6 +1291,66 @@ class JobStorage:
         )
         self._record_migration(conn, "ingestion_scope")
         logger.info("[Storage] ingestion_scope: seeded from profile %s", profile_id)
+
+    def _migrate_ingestion_scope_locations(self, conn) -> None:
+        """Seed scope `search_locations` / `greenhouse_boards` from the active
+        profile once (spec 045, Constitution I). Recorded as
+        `ingestion_scope_locations`.
+
+        Runs after `_migrate_ingestion_scope`, so the spec-040 keys already
+        exist; only the two new keys are copied (`setdefault` preserves a value
+        already written by the prose path)."""
+        if self._migration_applied(conn, "ingestion_scope_locations"):
+            return
+
+        from core.profiles import ACTIVE_PROFILE, SearchProfile
+
+        uid = self._ensure_default_user(conn)
+        row = conn.execute(
+            "SELECT active_profile_id FROM users WHERE id = ?", (uid,)
+        ).fetchone()
+        profile_id = row["active_profile_id"] if row and row["active_profile_id"] else None
+
+        profile = None
+        if profile_id:
+            prof = conn.execute(
+                "SELECT name, criteria FROM search_profiles WHERE id = ? AND user_id = ?",
+                (profile_id, uid),
+            ).fetchone()
+            if prof:
+                try:
+                    criteria = json.loads(prof["criteria"]) if prof["criteria"] else {}
+                except (TypeError, ValueError):
+                    criteria = {}
+                profile = SearchProfile.from_criteria(profile_id, prof["name"], criteria)
+
+        if profile is None:
+            profile = ACTIVE_PROFILE
+
+        raw = conn.execute(
+            "SELECT value FROM config WHERE key = 'ingestion_scope'"
+        ).fetchone()
+        scope = {}
+        if raw and raw["value"]:
+            try:
+                scope = json.loads(raw["value"])
+            except (TypeError, ValueError):
+                scope = {}
+        if not isinstance(scope, dict):
+            scope = {}
+        scope.setdefault("search_locations", list(profile.effective_search_locations()))
+        scope.setdefault("greenhouse_boards", list(profile.greenhouse_boards or []))
+
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES ('ingestion_scope', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(scope),),
+        )
+        self._record_migration(conn, "ingestion_scope_locations")
+        logger.info(
+            "[Storage] ingestion_scope_locations: seeded locations/boards from profile %s",
+            profile_id,
+        )
 
     def _ensure_default_user(self, conn) -> str:
         """Create the single default user if absent; return its id.
@@ -3798,6 +3890,9 @@ class JobStorage:
 
         Absent, malformed, or wrongly-typed config coerces to the safe default
         (open net, Constitution IX), following the `get_freshness_days` template.
+        The spec-045 keys (`search_locations`, `greenhouse_boards`) default to
+        `[]` individually when absent/malformed, without invalidating the
+        spec-040 keys (older DBs lack them).
         """
         raw = self.get_config("ingestion_scope")
         if raw:
@@ -3813,27 +3908,65 @@ class JobStorage:
                         and isinstance(exclude, list)
                         and all(isinstance(x, str) for x in exclude)
                         and isinstance(remote, bool)):
+                    locations = parsed.get("search_locations")
+                    boards = parsed.get("greenhouse_boards")
                     return {
                         "title_families": titles,
                         "exclude": exclude,
                         "remote_or_hybrid": remote,
+                        "search_locations": (
+                            locations if isinstance(locations, list)
+                            and all(isinstance(x, str) for x in locations) else []
+                        ),
+                        "greenhouse_boards": (
+                            boards if isinstance(boards, list)
+                            and all(isinstance(x, str) for x in boards) else []
+                        ),
                     }
-        return {"title_families": [], "exclude": [], "remote_or_hybrid": False}
+        return {
+            "title_families": [],
+            "exclude": [],
+            "remote_or_hybrid": False,
+            "search_locations": [],
+            "greenhouse_boards": [],
+        }
 
     def set_ingestion_scope(self, title_families: list[str],
                             exclude: list[str],
-                            remote_or_hybrid: bool) -> None:
-        """Persist the platform ingestion scope after validating types."""
+                            remote_or_hybrid: bool,
+                            search_locations: list[str] | None = None,
+                            greenhouse_boards: list[str] | None = None) -> None:
+        """Persist the platform ingestion scope after validating types.
+
+        `search_locations`/`greenhouse_boards` default to the current values
+        (`None` = leave unchanged), so the three-key call sites are unchanged.
+        """
         if not isinstance(title_families, list) or not all(isinstance(x, str) for x in title_families):
             raise ValueError("title_families must be a list[str]")
         if not isinstance(exclude, list) or not all(isinstance(x, str) for x in exclude):
             raise ValueError("exclude must be a list[str]")
         if not isinstance(remote_or_hybrid, bool):
             raise ValueError("remote_or_hybrid must be a bool")
+        if search_locations is not None and (
+                not isinstance(search_locations, list)
+                or not all(isinstance(x, str) for x in search_locations)):
+            raise ValueError("search_locations must be a list[str]")
+        if greenhouse_boards is not None and (
+                not isinstance(greenhouse_boards, list)
+                or not all(isinstance(x, str) for x in greenhouse_boards)):
+            raise ValueError("greenhouse_boards must be a list[str]")
+        if search_locations is None or greenhouse_boards is None:
+            current = self.get_ingestion_scope()
+            if search_locations is None:
+                search_locations = current["search_locations"]
+            if greenhouse_boards is None:
+                greenhouse_boards = current["greenhouse_boards"]
         scope = {
             "title_families": title_families,
             "exclude": exclude,
             "remote_or_hybrid": remote_or_hybrid,
+            "search_locations": search_locations,
+            "greenhouse_boards": greenhouse_boards,
         }
         self.set_config("ingestion_scope", json.dumps(scope))
 

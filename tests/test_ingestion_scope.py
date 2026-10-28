@@ -162,7 +162,9 @@ def test_broad_scrape_builds_filter_from_scope_not_profile():
     class _FakeDB:
         def get_ingestion_scope(self):
             return {"title_families": ["scoped title"], "exclude": ["scoped_ex"],
-                    "remote_or_hybrid": True}
+                    "remote_or_hybrid": True,
+                    "search_locations": ["Switzerland"],
+                    "greenhouse_boards": ["board1"]}
         def get_freshness_days(self):
             return 30
         def get_engaged_job_keys(self):

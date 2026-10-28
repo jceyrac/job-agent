@@ -14,7 +14,7 @@
 
 **Purpose**: No new dependency — confirm the branch starts clean.
 
-- [ ] T001 Baseline — confirm `ruff check .` and `python -m pytest tests/` are green on `045-ingestion-via-api` before any change (records the clean start point).
+- [x] T001 Baseline — confirm `ruff check .` and `python -m pytest tests/` are green on `045-ingestion-via-api` before any change (records the clean start point).
 
 ---
 
@@ -22,12 +22,12 @@
 
 **Purpose**: Storage seam for the scope extension and the platform principal — both stories read them; nothing user-facing changes yet.
 
-- [ ] T002 [P] Extend `get_ingestion_scope()` / `set_ingestion_scope()` in `core/storage.py` to carry `search_locations` (list[str]) and `greenhouse_boards` (list[str]), typed with the existing safe-default coercion (absent/malformed → `[]`) — FR-002.
-- [ ] T003 [P] Add a one-time seed migration in `core/storage.py` that copies the active profile's `effective_search_locations()` and `greenhouse_boards` into `config.ingestion_scope` so day one is identical — FR-002.
-- [ ] T004 [P] Extend `scripts/ingestion_scope.py` with `--set-locations` and `--set-boards` (prose path, comma/newline-split like `--set-titles`) — FR-002.
-- [ ] T005 [P] Add `users.is_service INTEGER NOT NULL DEFAULT 0` migration and seed the `platform` principal row (`id='platform'`, `display_name='Platform ingestion'`, `is_service=1`, no `active_profile_id`) in `core/storage.py` — FR-007 / Q3.
-- [ ] T006 [P] Extend `scripts/api_token.py` to create an ingest token for the platform principal (`--user platform --scopes ingest`; `ingest` scope already exists) — FR-007.
-- [ ] T007 [P] Update `tests/test_storage.py` and `tests/test_ingestion_scope.py` for the scope extension and `is_service` (round-trip, defaults, seed idempotency).
+- [x] T002 [P] Extend `get_ingestion_scope()` / `set_ingestion_scope()` in `core/storage.py` to carry `search_locations` (list[str]) and `greenhouse_boards` (list[str]), typed with the existing safe-default coercion (absent/malformed → `[]`) — FR-002.
+- [x] T003 [P] Add a one-time seed migration in `core/storage.py` that copies the active profile's `effective_search_locations()` and `greenhouse_boards` into `config.ingestion_scope` so day one is identical — FR-002.
+- [x] T004 [P] Extend `scripts/ingestion_scope.py` with `--set-locations` and `--set-boards` (prose path, comma/newline-split like `--set-titles`) — FR-002.
+- [x] T005 [P] Add `users.is_service INTEGER NOT NULL DEFAULT 0` migration and seed the `platform` principal row (`id='platform'`, `display_name='Platform ingestion'`, `is_service=1`, no `active_profile_id`) in `core/storage.py` — FR-007 / Q3.
+- [x] T006 [P] Extend `scripts/api_token.py` to create an ingest token for the platform principal (`--user platform --scopes ingest`; `ingest` scope already exists) — FR-007.
+- [x] T007 [P] Update `tests/test_storage.py` and `tests/test_ingestion_scope.py` for the scope extension and `is_service` (round-trip, defaults, seed idempotency).
 
 **Checkpoint**: scope carries locations/boards; the platform principal exists; no user-facing change.
 
@@ -90,7 +90,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] Add `JobStorage.ingest_batch(postings)` in `core/storage.py` — load the engaged-key union once, then per chunk (default 50) run one `BEGIN IMMEDIATE`: `JobPosting.id` computation, engaged dedup + `last_seen` touch, `upsert_company`, `save_unscored` (new) / `touch_many` (existing); return `{new, existing, dropped_engaged, outcomes}` — FR-004.
+- [ ] T020 [US3] Add `JobStorage.ingest_batch(postings)` in `core/storage.py` — load the engaged-key union once, then commit in ~50-posting `BEGIN IMMEDIATE` sub-chunks: `JobPosting.id` computation, engaged dedup + `last_seen` touch, `upsert_company`, `save_unscored` (new) / `touch_many` (existing); return `{new, existing, dropped_engaged, outcomes}` — FR-004.
 - [ ] T021 [P] [US3] Add `tests/test_storage.py` cases for `ingest_batch` (idempotency, dedup, counts, chunk boundaries).
 - [ ] T022 [US3] Add the batch/event request+response schemas in `api/schemas.py`.
 - [ ] T023 [US3] Add `POST /v1/ingest/batch` and `POST /v1/ingest/events` in `api/routers/ingest.py` (call `ingest_batch`; structured write-log; no SQL) — FR-003/FR-004.
@@ -112,7 +112,7 @@
 
 ### Implementation for User Story 4
 
-- [ ] T026 [US4] Add the `ingest_via_api` flag branch in `core/scrape.py` — `off` = current direct path; `on` = `GET /v1/ingest/plan` → run → `POST /v1/ingest/batch` (chunked) + `POST /v1/ingest/events`; fail loudly (non-zero exit) when the API is unreachable or the token invalid — no silent fallback (US5-2) — FR-005.
+- [ ] T026 [US4] Add the `ingest_via_api` flag branch in `core/scrape.py` — `off` = current direct path; `on` = `GET /v1/ingest/plan` → run → `POST /v1/ingest/batch` (chunked, ≤ ~100 postings / ≤ 5 MB per request) + `POST /v1/ingest/events`; fail loudly (non-zero exit) when the API is unreachable or the token invalid — no silent fallback (US5-2) — FR-005.
 - [ ] T027 [US4] Add the record/replay harness `tests/run_ingest_replay.py` (capture a scrape to fixture; replay both paths; diff) — FR-006.
 
 ### Validation for User Story 4 (release-time gate)
@@ -213,6 +213,6 @@ Each story is independently verifiable. US1 removes the DB access; US2/US3 add t
 - `[P]` = different files, no dependencies.
 - No new dependency; no schema change beyond `users.is_service` + the scope JSON.
 - "No SQL in `api/`" and "DB via `JobStorage` only" hold: the ingest router calls `JobStorage.ingest_batch`; the guard (T031) enforces it.
-- `ingest_batch` must use `BEGIN IMMEDIATE` per chunk (never a read→write upgrade) — the 2026-10-27 hotfix lesson.
+- `ingest_batch` must commit in ~50-posting `BEGIN IMMEDIATE` sub-chunks (never a read→write upgrade) — the 2026-10-27 hotfix lesson.
 - The synthetic fixture test (T025) is a regression test, not the switch gate; only the real-scrape staging replay (T028) gates switching on.
 - Release tasks (T036–T043) are sequential with explicit **STOP** points at T037 and T041 awaiting Jean Claude's go; every deploy is outside 07:00/11:00/16:00 UTC.

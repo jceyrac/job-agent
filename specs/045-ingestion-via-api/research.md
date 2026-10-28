@@ -44,7 +44,7 @@ Phase 0 decisions. Each entry: decision, rationale, alternatives rejected.
 
 - **Decision**: new `JobStorage.ingest_batch(postings) -> dict` — load the engaged-key
   set once in memory (`get_engaged_job_keys()`, already the union across all users), then
-  per chunk (default 50) open one `BEGIN IMMEDIATE` and, per posting, compute
+  per ~50-posting `BEGIN IMMEDIATE` sub-chunk open one transaction and, per posting, compute
   `JobPosting.id`, apply engaged dedup + `last_seen` touch, `upsert_company`, and
   `save_unscored` (new) or `touch_many` (existing). Returns
   `{new, existing, dropped_engaged}` plus per-posting outcomes.
@@ -59,8 +59,9 @@ Phase 0 decisions. Each entry: decision, rationale, alternatives rejected.
 - **Decision**: `RequestSizeLimitMiddleware` raises the cap to 5 MB for
   `POST /v1/ingest/batch` only (route-specific exemption); the orchestrator chunks to
   ≤ that and ≤ ~100 postings per request.
-- **Rationale**: ~600 postings with descriptions ≈ a few MB; chunking bounds per-request
-  memory and keeps transactions short.
+- **Rationale**: ~600 postings with descriptions ≈ a few MB; the ≤ ~100-posting request
+  bound keeps per-request memory low and the ~50-posting sub-chunk keeps each
+  `BEGIN IMMEDIATE` short.
 - **Alternatives**: raise the global limit — weakens the 64 KB guard for every other
   route.
 

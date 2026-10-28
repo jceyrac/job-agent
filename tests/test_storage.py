@@ -606,29 +606,48 @@ def test_migration_idempotent():
 
 
 def test_ingestion_scope_seeded_from_active_profile():
-    """Migration seeds config.ingestion_scope from the active profile (spec 040)."""
+    """Migration seeds config.ingestion_scope from the active profile (spec 040/045)."""
     from core.profiles import ACTIVE_PROFILE
     db = JobStorage(":memory:")
     scope = db.get_ingestion_scope()
     assert scope["title_families"] == list(ACTIVE_PROFILE.job_titles)
     assert scope["exclude"] == list(ACTIVE_PROFILE.title_exclude)
     assert scope["remote_or_hybrid"] == bool(ACTIVE_PROFILE.scrape_remote_or_hybrid)
+    assert scope["search_locations"] == list(ACTIVE_PROFILE.effective_search_locations())
+    assert scope["greenhouse_boards"] == list(ACTIVE_PROFILE.greenhouse_boards)
 
 
 def test_ingestion_scope_set_round_trip():
     db = JobStorage(":memory:")
     db.set_ingestion_scope(["product manager", "head of product"],
-                           ["junior", "intern"], True)
+                           ["junior", "intern"], True,
+                           ["Switzerland", "France"], ["board1", "board2"])
     assert db.get_ingestion_scope() == {
         "title_families": ["product manager", "head of product"],
         "exclude": ["junior", "intern"],
         "remote_or_hybrid": True,
+        "search_locations": ["Switzerland", "France"],
+        "greenhouse_boards": ["board1", "board2"],
     }
+
+
+def test_ingestion_scope_set_preserves_locations_when_omitted():
+    """Omitting the spec-045 keys leaves them unchanged (three-key call sites)."""
+    db = JobStorage(":memory:")
+    seeded = db.get_ingestion_scope()
+    db.set_ingestion_scope(["pm"], ["jr"], False)
+    scope = db.get_ingestion_scope()
+    assert scope["title_families"] == ["pm"]
+    assert scope["exclude"] == ["jr"]
+    assert scope["remote_or_hybrid"] is False
+    assert scope["search_locations"] == seeded["search_locations"]
+    assert scope["greenhouse_boards"] == seeded["greenhouse_boards"]
 
 
 def test_ingestion_scope_malformed_coerces_to_default():
     db = JobStorage(":memory:")
-    empty = {"title_families": [], "exclude": [], "remote_or_hybrid": False}
+    empty = {"title_families": [], "exclude": [], "remote_or_hybrid": False,
+             "search_locations": [], "greenhouse_boards": []}
     db.set_config("ingestion_scope", "not json")
     assert db.get_ingestion_scope() == empty
     db.set_config("ingestion_scope",
@@ -651,6 +670,19 @@ def test_ingestion_scope_set_validates_types():
             assert False, "expected ValueError"
         except ValueError:
             pass
+    for bad_locations, bad_boards in [
+        ("not a list", None),
+        ([1], None),
+        (None, "not a list"),
+        (None, [1]),
+    ]:
+        try:
+            db.set_ingestion_scope(["pm"], [], False,
+                                   search_locations=bad_locations,
+                                   greenhouse_boards=bad_boards)
+            assert False, "expected ValueError"
+        except ValueError:
+            pass
 
 
 def test_ingestion_scope_migration_idempotent():
@@ -663,6 +695,37 @@ def test_ingestion_scope_migration_idempotent():
         row = conn.execute(
             "SELECT 1 FROM migrations WHERE name = 'ingestion_scope'").fetchone()
     assert row is not None
+
+
+def test_ingestion_scope_locations_migration_idempotent():
+    db = JobStorage(":memory:")
+    scope1 = db.get_ingestion_scope()
+    with db._conn() as conn:
+        db._migrate_ingestion_scope_locations(conn)
+    assert db.get_ingestion_scope() == scope1
+    with db._conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM migrations WHERE name = 'ingestion_scope_locations'").fetchone()
+    assert row is not None
+
+
+def test_platform_principal_seeded():
+    db = JobStorage(":memory:")
+    with db._conn() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+        assert "is_service" in cols
+        row = conn.execute(
+            "SELECT display_name, is_service FROM users WHERE id = 'platform'").fetchone()
+        assert row is not None
+        assert row["display_name"] == "Platform ingestion"
+        assert row["is_service"] == 1
+    # idempotent: re-running the migration does not duplicate or error
+    with db._conn() as conn:
+        db._migrate_platform_principal(conn)
+    with db._conn() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) AS c FROM users WHERE id = 'platform'").fetchone()["c"]
+        assert n == 1
 
 
 def test_backfill_correctness():

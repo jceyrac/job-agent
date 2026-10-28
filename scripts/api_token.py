@@ -9,6 +9,7 @@ exactly once by `create` and never persisted.
 Usage:
   python -m scripts.api_token create --name <name> --scopes read:catalogue,read:me \
       [--user <id>] [--expires-in <days>]
+  python -m scripts.api_token create --name ingest --scopes ingest --user platform
   python -m scripts.api_token list [--user <id>] [--json]
   python -m scripts.api_token revoke <id>
 """
@@ -102,7 +103,8 @@ def main(argv: list[str]) -> int:
     p_create.add_argument("--name", required=True, help="operator label")
     p_create.add_argument("--scopes", required=True,
                           help="comma-separated subset of read:catalogue,read:me,write:me,write:catalogue,tasks:run,tasks:pipeline,ingest")
-    p_create.add_argument("--user", default=None, help="token owner (default: default user)")
+    p_create.add_argument("--user", default=None,
+                          help="token owner (default: default user; 'platform' = ingest principal)")
     p_create.add_argument("--expires-in", type=int, default=None, metavar="DAYS",
                           help="expire after N days (default: no expiry)")
 

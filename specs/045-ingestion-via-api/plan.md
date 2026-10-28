@@ -12,7 +12,9 @@ scrape orchestrator fetches a run plan from `GET /v1/ingest/plan`, runs the scra
 and submits collected postings to `POST /v1/ingest/batch`, which deduplicates, upserts
 companies and saves jobs server-side in short `BEGIN IMMEDIATE` transactions. A config
 flag `ingest_via_api` (default off) keeps today's direct path byte-for-byte until a
-record/replay harness proves the two paths identical (Constitution XI).
+record/replay harness proves the two paths identical — a synthetic-fixture identity
+test plus a real-scrape staging replay (~600 postings) that is the gate for switching
+the flag on (Constitution XI).
 
 ## Technical Context
 
@@ -33,9 +35,10 @@ record/replay harness proves the two paths identical (Constitution XI).
 **Project Type**: Monorepo — Python pipeline (`core/`) + FastAPI (`api/`) + Streamlit
 (`tracker/`).
 
-**Performance Goals**: One broad scrape ≈ 600 postings with descriptions; batch
-chunked (~50 postings/chunk) and capped at 5 MB/request; per-chunk transactions, never
-a write lock held across the run; total run time comparable to today.
+**Performance Goals**: One broad scrape ≈ 600 postings with descriptions; the
+orchestrator sends ≤ ~100 postings per request (≤ 5 MB), and `ingest_batch` commits in
+~50-posting `BEGIN IMMEDIATE` sub-chunks; never a write lock held across the run; total
+run time comparable to today.
 
 **Constraints**: No LLM or long work in a handler; no SQL in `api/`; scoped tokens;
 single user today (multi-user seam exists); surgical diffs; app stays operational after
@@ -54,7 +57,7 @@ every step.
 | VII — Sécurité | ✅ PASS | Non-human platform principal with ingest-only token; token via `.env`, never logged; API tailnet-only; least privilege. |
 | VIII — Scrapers par modèle | ✅ PASS | Scrapers become pure functions; targets injected by the orchestrator; "à terme no DB" now realised for the ingestion path. |
 | X — Catalogue vs espace utilisateur | ✅ PASS | Dedup moves server-side to the union of engaged jobs; no profile read in the orchestrator; no user-space data on catalogue entities. |
-| XI — Migration progressive | ✅ PASS | `ingest_via_api` flag; record/replay identity proof (US4-2); flag-off rollback; staging before prod. |
+| XI — Migration progressive | ✅ PASS | `ingest_via_api` flag; synthetic + real-scrape record/replay identity proof (US4-2); flag-off rollback; staging before prod. |
 | IX — Scoring optionnel | ✅ PASS | Batch writes unscored jobs; extraction/scoring/purge unchanged. |
 
 No violations to justify — Complexity Tracking is empty.
@@ -97,9 +100,10 @@ scripts/
 ├── ingestion_scope.py        # --set-locations / --set-boards
 └── api_token.py              # allow --user platform (ingest scope)
 tests/
-├── test_ingest_api.py        # contract + auth + isolation
+├── test_api_ingest.py        # plan/batch/events contract (spec 044 file, extended)
 ├── test_scraper_purity.py    # guard: no storage/profile under core/scrapers/
-└── test_ingest_identity.py   # record/replay identity
+├── test_ingest_identity.py   # record/replay identity
+└── test_isolation.py         # platform principal isolation (US5)
 ```
 
 **Structure Decision**: extend the existing monorepo in place — no new top-level

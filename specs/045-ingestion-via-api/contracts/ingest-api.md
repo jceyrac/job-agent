@@ -16,12 +16,12 @@ envelope `{error, message}` (401/403/404/413/422 as in `api/main.py`).
 
 - **Scope**: `ingest`.
 - **Body**: a list of postings (`JobCreate` shape + optional `monitored_company_id`),
-  max 5 MB (route-specific limit); the orchestrator chunks to ≤ ~100 postings.
+  max 5 MB (route-specific limit); the orchestrator sends ≤ ~100 postings per request.
 - **Per posting, in order**: id computation (`JobPosting.id`), engaged-job dedup against
   the union of all users' engaged jobs (with `last_seen` touch), company upsert,
   `save_unscored` if new / `last_seen` touch if existing.
-- **Transactions**: short `BEGIN IMMEDIATE`, one per chunk; a failing posting is
-  reported without failing the batch.
+- **Transactions**: `ingest_batch` commits in short `BEGIN IMMEDIATE` sub-chunks of
+  ~50 postings; a failing posting is reported without failing the batch.
 - **Response 200**: `{new, existing, dropped_engaged, outcomes[]}`.
 - **Idempotency**: the same batch twice creates nothing new (deterministic id).
 - **Guarantee**: no LLM, no subprocess, no SQL in the handler — all DB access via
