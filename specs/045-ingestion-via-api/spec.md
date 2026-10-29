@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-27
 
-**Status**: Clarified — ready for `/speckit.plan` (Q1–Q4 resolved, see Clarifications)
+**Status**: Shipped — live in prod with `ingest_via_api=on` (2026-10-29)
 
 **Input**: Roadmap `docs/roadmap-api.md`, step 7 ("Ingestion via API", kept by decision 2026-10-21). Constitution: I (wide net; the ingestion scope is a platform parameter, never derived from a profile), VIII (scrapers know only their output contract; "à terme" no DB access except through the ingestion endpoint), X (shared catalogue vs user space), XI (progressive migration, flags, day-one identical), VII (least privilege). Lessons recorded after the 2026-10-27 hotfix: `BEGIN IMMEDIATE` for any read-then-write transaction; housekeeping never blocks ingestion. "Scrapers become pure functions (targets in, postings out). The scrape orchestrator gets its plan from the API and sends what it collected to the API, which is the only writer of the catalogue for ingestion. A flag keeps the current direct path until the new one is proven identical."
 

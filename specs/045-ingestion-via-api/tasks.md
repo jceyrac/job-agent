@@ -117,7 +117,7 @@
 
 ### Validation for User Story 4 (release-time gate)
 
-- [ ] T028 [US4] Record a **real** scrape on staging (broad + monitored, ~600 postings) to a fixture, then replay it through the direct path (DB copy A) and the API path (DB copy B); assert identical results. This real-scrape replay is the gate for switching `ingest_via_api` on — the synthetic fixture (T025) alone is not sufficient — FR-006 / SC-002.
+- [x] T028 [US4] Record a **real** scrape on staging (broad + monitored, ~600 postings) to a fixture, then replay it through the direct path (DB copy A) and the API path (DB copy B); assert identical results. This real-scrape replay is the gate for switching `ingest_via_api` on — the synthetic fixture (T025) alone is not sufficient — FR-006 / SC-002.
 
 **Checkpoint**: the flag switches paths; identity is provable (synthetic + real); off is unchanged.
 
@@ -155,14 +155,14 @@
 
 **Purpose**: ship behind the flag and switch only after explicit go. Deploys stay outside 07:00/11:00/16:00 UTC. `INGEST_VIA_API=off` is the rollback at every step.
 
-- [ ] T036 Staging on the **exact SHA**: `scripts/staging.sh up <full-sha>` (never the branch name); run the real-scrape identity gate (T028) + the US4-3 flag-on run (`core.main` / monitored-only + worker `scrape` task); capture results. Deploy outside 07:00/11:00/16:00 UTC.
-- [ ] T037 **STOP** — report the staging identity proof + flag-on results to Jean Claude; await an explicit **go** before merging.
-- [ ] T038 Merge to `main` ff-only from the exact SHA (`git merge --ff-only <full-sha>`; refuse non-ff).
-- [ ] T039 Deploy to prod with `INGEST_VIA_API=off` (`./scripts/deploy.sh`); the first post-deploy runs stay on the direct path. Deploy outside 07:00/11:00/16:00 UTC.
-- [ ] T040 Post-deploy checks: `tailscale serve status` still lists `tcp 8501` + `https 8443 /api`; `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA.
-- [ ] T041 **STOP** — report the post-deploy checks to Jean Claude; await an explicit **go** before switching the flag.
-- [ ] T042 Switch `INGEST_VIA_API=on` in prod config (no redeploy).
-- [ ] T043 Verify the **next two scheduled runs** are `success` with usual volumes; rollback = switch back to `off` (no redeploy).
+- [x] T036 Staging on the **exact SHA**: `scripts/staging.sh up <full-sha>` (never the branch name); run the real-scrape identity gate (T028) + the US4-3 flag-on run (`core.main` / monitored-only + worker `scrape` task); capture results. Deploy outside 07:00/11:00/16:00 UTC.
+- [x] T037 **STOP** — report the staging identity proof + flag-on results to Jean Claude; await an explicit **go** before merging.
+- [x] T038 Merge to `main` ff-only from the exact SHA (`git merge --ff-only <full-sha>`; refuse non-ff).
+- [x] T039 Deploy to prod with `INGEST_VIA_API=off` (`./scripts/deploy.sh`); the first post-deploy runs stay on the direct path. Deploy outside 07:00/11:00/16:00 UTC.
+- [x] T040 Post-deploy checks: `tailscale serve status` still lists `tcp 8501` + `https 8443 /api`; `git -C /opt/job-agent rev-parse HEAD` equals the merged SHA.
+- [x] T041 **STOP** — report the post-deploy checks to Jean Claude; await an explicit **go** before switching the flag.
+- [x] T042 Switch `INGEST_VIA_API=on` in prod config (no redeploy).
+- [x] T043 Verify the **next two scheduled runs** are `success` with usual volumes; rollback = switch back to `off` (no redeploy).
 
 ---
 
