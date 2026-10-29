@@ -1,7 +1,7 @@
 """tracker_views/jobs.py — Jobs list view."""
 import streamlit as st
 
-from core.profiles import ACTIVE_PROFILE_ID, DEFAULT_PROFILE_ID
+from core.profiles import DEFAULT_PROFILE_ID
 from tracker_views.shared import (
     ensure_db, get_db,
     load_jobs, load_applications_index,
@@ -191,7 +191,9 @@ def _render_list():
             m, sec = divmod(rem, 60)
             return f"in {h}h {m}m {sec}s"
 
-    last_run = db.get_last_run(ACTIVE_PROFILE_ID)
+    # Latest run overall — full runs are recorded with profile_id='platform'
+    # (spec 045), not the active profile, so filtering here would go stale.
+    last_run = db.get_last_run()
     dur = _fmt_duration(last_run.get("duration_seconds") if last_run else None)
     dur_str = f" ({dur})" if dur else ""
     if last_run is None:

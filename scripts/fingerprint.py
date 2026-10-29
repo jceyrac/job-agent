@@ -181,7 +181,9 @@ def build_fingerprint(db_path: str, as_of: str, profile_id: str | None,
         counts = _table_counts(copy_path)
         dashboard = _dashboard_at(db, as_of)
         stats = db.get_stats(profile)
-        last_run = db.get_last_run(profile)
+        # Latest run overall — full runs are recorded with profile_id='platform'
+        # (spec 045), not the active profile, so filtering here would go stale.
+        last_run = db.get_last_run()
         applications = len(db.get_all_applications())
         companies = len(db.get_companies())
         contacts = len(db.get_all_contacts())

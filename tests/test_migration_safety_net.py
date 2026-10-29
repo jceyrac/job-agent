@@ -193,6 +193,25 @@ def test_fingerprint_as_of_pins_dashboard_windows(tmp_path):
     assert len(near["dashboard"]["follow_ups_due_today"]) == 1
 
 
+def test_fingerprint_last_run_is_latest_platform_run(tmp_path):
+    """The fingerprint's last_run is the latest run regardless of profile_id.
+
+    Post spec-045, full runs are recorded with profile_id='platform' (the
+    ingestion principal), not the active profile. The reader must still surface
+    that latest run — filtering on the active profile would return a stale
+    'unified_jc' row.
+    """
+    src = _scratch_db(tmp_path)
+    db = JobStorage(src)
+    db.log_run("unified_jc", 5, 0, 0, "success")  # pre-switch shape
+    db.log_run("platform", 10, 0, 0, "success")   # post-switch full run
+
+    fp = build_fingerprint(src, "2026-10-03", None, None, "test")
+
+    assert fp["last_run"]["profile_id"] == "platform"
+    assert fp["last_run"]["jobs_scraped"] == 10
+
+
 # ── compare detects a diff (SC-004) ──────────────────────────────────────────
 
 def test_compare_identical_is_empty():
