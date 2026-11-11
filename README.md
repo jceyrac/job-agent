@@ -3,151 +3,214 @@
 [![tests](https://github.com/jceyrac/job-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/jceyrac/job-agent/actions/workflows/tests.yml)
 
 Personal automation agent for a Senior Product Manager job search across
-**Web3 / DeFi / fintech / AI**, with a single unified search profile, a
-Streamlit tracker + lightweight CRM, and targeted company monitoring via ATS
-adapters.
+**Web3 / DeFi / fintech / AI**: a wide-net job ingestion pipeline, LLM
+extraction and scoring against a unified search profile, targeted company
+monitoring via ATS adapters, a lightweight CRM, a CV / cover-letter agent —
+all behind a **versioned, token-scoped HTTP API** (FastAPI) that the Streamlit
+tracker, the background worker, the scrapers and the agents consume.
 
----
-
-## How it works
-
-```
-Scrape (wide net) → Extract (structured fields) → Score (LLM, per profile) → Tracker (Streamlit)
-                  ↘ Monitored-only scrape (ATS adapters) ↗
-```
-
-1. **`scrape.py`** fetches raw postings from job boards (LinkedIn, Indeed,
-   Web3Career, RemoteOK, WeWorkRemotely, CryptoJobsList, and more) and writes
-   them to SQLite. The scraper is a *wide net* — no relevance filtering at this
-   stage.
-2. **`score.py --extract`** runs a profile-independent extraction pass: work
-   mode, geo zone, company size, sector, country, contract type, language.
-3. **`score.py --profile <id>`** runs the full pipeline for one search
-   profile: pre-filter → extract any unextracted survivors → LLM evaluation
-   (1–10 score + reasoning) via DeepSeek, with deterministic Tier-0 rules (company
-   blacklist, country/sector/language exclusions, soft penalties) ahead of any
-   LLM call.
-4. **`tracker.py`** (Streamlit) is the human interface: browse and triage
-   scored jobs, manage companies/contacts/interactions (lightweight CRM), edit
-   the active search profile, and configure monitored companies.
-5. **`scrape.py --monitored-only`** runs a separate, company-keyed scrape: for
-   a curated list of companies you actively target, it queries their ATS
-   (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable) directly and
-   pulls **all** their open roles — bypassing the noisy aggregation boards
-   entirely.
-
-All scoring and filtering decisions live in one **unified search profile**
-(`unified_jc` by default), edited from the Settings page or via
-`profile_generator.py` during onboarding.
-
-> **Note**: today, step 5 must be run manually
-> (`python scrape.py --monitored-only`) or via the Settings UI — `main.py`'s
-> full pipeline runs only steps 1–4. Wiring monitoring into the full pipeline
-> as an optional, config-gated step is specced in
-> `specs/002-pipeline-monitoring-step/` (not yet implemented).
+> **Status (Nov 2026)** — the API migration (`docs/roadmap-api.md`) has
+> completed phases A–C: the domain lives in an installable `core/` package,
+> user data is separated from the shared catalogue, the API serves reads,
+> writes, long-running tasks and ingestion, and agents talk to it over HTTP.
+> Phase D (new `web/` front + in-app chat with the CV agent) is next; until
+> then the Streamlit tracker remains the human interface.
 
 ---
 
 ## Architecture
 
 ```
-job_agent/
-├── main.py              # Thin orchestrator: scrape → extract → score (subprocess pipeline)
-├── scrape.py             # Broad scrape (--monitored-only for company-keyed mode)
-├── score.py               # Extraction + LLM evaluation (--extract / --profile / --rescore / --mock)
-├── scorer.py              # DeepSeek LLM calls (extraction + evaluation)
-├── title_gate.py          # Deterministic PM-title gate (pre-LLM, protects DeepSeek quota)
-├── ats_detection.py        # Resolves an ATS provider/identifier from a careers URL
-├── storage.py              # SQLite persistence (WAL mode) — all DB access goes through here
-├── models.py               # JobPosting / JobFilter dataclasses
-├── filters.py              # JobFilterEngine (title, location, work mode, company size…)
-├── profiles.py             # SearchProfile dataclass + ALL_PROFILES
-├── profile_generator.py    # Onboarding: questionnaire + CV → structured profile
-├── context_tuner.py         # LLM-generated scoring_context proposals
-├── preference_report.py     # --full / --action-items / --suggest-context / --apply-context
-├── prepare.py                # Application package prep (cover letter, CV bullets, research)
-├── job_actions.py             # extract_one / score_one / contact discovery
-├── notifier.py                 # Email digest + Joplin export
-│
-├── scrapers/
-│   ├── base.py            # BaseScraper ABC (enable/disable via config, optional targets=)
-│   ├── boards/             # Aggregation boards — wide-net, query-driven
-│   │   ├── linkedin.py, indeed.py (+ _jobspy_helpers.py)
-│   │   ├── web3career.py, remoteok.py, weworkremotely.py
-│   │   ├── cryptojobslist.py, cryptojobs_com.py, defi_jobs.py
-│   │   ├── tietalent.py, jobup.py, wellfound.py
-│   ├── ats/                 # Company-keyed ATS adapters — used by --monitored-only
-│   │   ├── ashby.py, lever.py, smartrecruiters.py, workable.py, workday.py
-│   ├── greenhouse.py         # Greenhouse (broad CRYPTO_WEB3_BOARDS net + monitored-only path)
-│   └── company_sites/        # Bespoke per-company scrapers (currently empty)
-│
-├── tracker.py               # Streamlit entry point (multi-page app)
-└── tracker_views/
-    ├── dashboard.py          # Follow-ups, recent inbound, stale outreach
-    ├── jobs.py / job_detail.py / job_helpers.py   # Job list + detail, filters, status actions
-    ├── companies.py / company_detail.py           # Company list/detail, monitoring badges + toggle
-    ├── contacts.py / contact_detail.py            # Lightweight CRM
-    ├── preferences.py         # Feedback loop / preference report UI
-    ├── onboarding.py           # First-run wizard (questionnaire + CV → profile)
-    ├── settings.py              # Profile editor, scraper toggles, monitored companies, setup
-    └── shared.py                # Cached loaders, badges, filters, monitoring helpers
+                          ┌────────────────────────────────────────────┐
+  Scrapers (pure fns) ───▶│  POST /v1/ingest/batch   (scope: ingest)   │
+  boards · ATS · sites    │                                            │
+                          │            api/  (FastAPI, :8601)          │
+  Streamlit tracker ─────▶│  /v1/jobs, /v1/companies   shared catalogue│
+  (human UI, today)       │  /v1/me/...                user space      │
+                          │  /v1/me/tasks  (+ SSE events)  task queue  │
+  cv_agent & agents ─────▶│                                            │
+  (scoped tokens, no DB)  └──────────────────┬─────────────────────────┘
+                                             │  core.storage (only DB path)
+  future web/ front ──────▶ same origin      ▼
+                                      SQLite  data/jobs.db  (WAL)
+                                             ▲
+  worker (core.worker) ──── polls `tasks` ───┘  runs scrape / extract / score
+  agent  (core.main)   ──── cron, nightly pipeline (ingests via the API)
 ```
+
+Design principles (see `.specify/memory/constitution.md` and
+`docs/roadmap-api.md`):
+
+- **Shared catalogue vs. user space.** Ingestion, jobs, extraction and
+  company facts are user-independent. Scoring, tracking, applications,
+  company relationships and contacts are a *user's view* on the catalogue and
+  are keyed by `user_id` (one user today; the seam for multi-user exists).
+- **Modular monolith.** One API service, one router per domain (`catalogue`,
+  `me`, `tasks`, `ingest`), one SQLite database, `core.storage` as the single
+  DB access path (guarded by tests).
+- **No LLM call inside an HTTP request.** Anything slow (scrape, extract,
+  score, single-job score) is a row in `tasks`, executed by the `worker`
+  container, with progress streamed over SSE.
+- **Scrapers are independent by contract, not by deployment.** They are pure
+  functions: they fetch the ingestion plan (`GET /v1/ingest/plan`) and post
+  batches to `/v1/ingest/batch` under the `platform` identity. Ingestion scope
+  is a platform setting, never derived from a user profile; the PM-title gate
+  is a deterministic Tier-0 step of scoring.
+- **Agents are API clients.** The cv_agent reads jobs and writes its
+  application documents through the API with a scoped token; it may not
+  import `core.storage`, `sqlite3` or the DB path (boundary enforced by tests).
+- **Tailnet-only, scoped tokens.** The API is reachable only over Tailscale;
+  tokens are hashed at rest, bound to a user and carry explicit scopes. The
+  prerequisites for any future public exposure are listed in
+  `docs/api-exposure.md`.
+
+### Repository layout
+
+```
+job_agent/
+├── api/                       # FastAPI service (spec 041+)
+│   ├── main.py                # App factory, /health, error envelope, routers
+│   ├── deps.py                # DB + user resolution, scope checks
+│   ├── routers/               # catalogue · me · tasks · ingest
+│   ├── schemas.py / serializers.py
+│   ├── middleware.py          # request-size limit (64 KB write bodies)
+│   ├── write_log.py / logging_config.py   # write audit + failed-auth logging
+│   └── openapi.json           # committed contract (checked by tests)
+│
+├── core/                      # Installable domain package (spec 034)
+│   ├── storage.py             # SQLite persistence + migrations — sole DB access path
+│   ├── paths.py               # All data paths (JOB_AGENT_DATA_DIR); refuses an empty prod DB
+│   ├── main.py                # Pipeline orchestrator (cron entry point)
+│   ├── scrape.py              # Broad + --monitored-only scrape → ingest via API
+│   ├── score.py / scorer.py   # Extraction + LLM evaluation, Tier-0 rules
+│   ├── llm.py                 # Only module that knows the LLM provider (DeepSeek)
+│   ├── tasks.py / worker.py   # Task queue + worker loop
+│   ├── title_gate.py, filters.py, models.py, profiles.py, geo_ch.py
+│   ├── ats_detection.py, company_researcher.py, job_actions.py, prepare.py
+│   ├── profile_generator.py, context_tuner.py, preference_report.py
+│   ├── notifier.py, export_jobs.py, seed.py
+│   ├── cv_agent/              # LangGraph CV / cover-letter agent (API client)
+│   └── scrapers/
+│       ├── base.py            # BaseScraper — no JobStorage, pure fetch functions
+│       ├── boards/            # Wide-net boards (LinkedIn, Indeed, Web3Career, Jobup, …)
+│       ├── ats/               # Company-keyed ATS adapters (Ashby, Lever, Workday, …)
+│       ├── greenhouse.py      # Greenhouse (broad crypto boards + monitored path)
+│       └── company_sites/     # Bespoke per-company scrapers
+│
+├── tracker.py                 # Streamlit entry point (to be replaced by web/)
+├── tracker_views/             # Jobs, job detail, companies, contacts, dashboard,
+│                              # reports, preferences, onboarding, settings
+├── scripts/                   # Ops: api_token, backup_db, staging.sh, deploy.sh, parity checks
+├── specs/                     # SpecKit specs (spec.md / plan.md / tasks.md per feature)
+├── docs/                      # roadmap-api, api-exposure, infrastructure, restore procedure
+└── tests/                     # pytest — incl. architecture guards (DB access, LLM provider,
+                               # cv_agent boundary, scraper purity, no subprocess in tracker)
+```
+
+---
+
+## The API
+
+Base URL in production: `https://<host>.<tailnet>.ts.net:8443/api` (Tailscale
+`serve` strips `/api` and forwards to `127.0.0.1:8601`). Interactive docs at
+`/api/docs`. All routes except `/health` are under `/v1` and require a bearer
+token.
+
+| Area | Routes | Scope |
+| --- | --- | --- |
+| Health | `GET /health` (version = image git SHA, purge staleness warnings) | none |
+| Catalogue | `GET /v1/jobs`, `GET /v1/jobs/{id}`, `POST /v1/jobs`, `GET /v1/companies/{id}` | `read:catalogue` |
+| Catalogue writes | `PATCH /v1/companies/{id}` (company facts) | `write:catalogue` |
+| User reads | `GET /v1/me`, `/feed`, `/jobs/{id}`, `/stats`, `/dashboard`, `/applications`, `/companies[/{id}]`, `/contacts[/{id}]` | `read:me` |
+| User writes | job status, application, lifecycle events (add / edit / delete), company relationship, contacts, interactions, active profile, profile upsert | `write:me` |
+| Tasks | `POST/GET /v1/me/tasks`, `GET /v1/me/tasks/{id}`, `GET …/{id}/events` (SSE), `POST …/{id}/cancel` — types `scrape`, `scrape_monitored`, `extract`, `score`, `score_job` | `tasks:run` / `tasks:pipeline` |
+| Ingestion | `GET /v1/ingest/plan`, `POST /v1/ingest/batch`, `POST /v1/ingest/events` | `ingest` |
+
+Errors use a single envelope `{"error": "<code>", "message": "…"}` with no
+stack traces or internal paths. A resource that isn't the caller's returns
+404, never 403 (no existence oracle).
+
+Tokens are managed only from the CLI — the API never mints or revokes them:
+
+```bash
+python -m scripts.api_token create --name tracker --scopes read:catalogue,read:me,write:me,tasks:run
+python -m scripts.api_token create --name ingest --scopes ingest --user platform
+python -m scripts.api_token list
+python -m scripts.api_token revoke <id>
+```
+
+The raw token is printed once; only its SHA-256 hash is stored.
+
+---
+
+## How the pipeline works
+
+```
+Scrape (wide net) ──▶ /v1/ingest/batch ──▶ Extract (structured fields) ──▶ Score (per user profile) ──▶ Feed
+Monitored-only scrape (ATS adapters) ──┘
+```
+
+1. **Scrape** — board scrapers cast a wide net with no relevance filtering;
+   monitored-company ATS adapters pull *all* open roles of the companies you
+   target. With `ingest_via_api` on (production default since spec 045),
+   results are posted to the API rather than written directly.
+2. **Extract** — profile-independent extraction: work mode, geo zone, company
+   size, sector, country, contract type, language.
+3. **Score** — per profile: deterministic Tier-0 rules (PM-title gate, company
+   blacklist, country / sector / language exclusions, soft penalties), then an
+   LLM evaluation (1–10 score + reasoning) via DeepSeek. A job from a monitored
+   company gets a strong positive signal in the scoring context, not a score
+   override.
+4. **Triage** — scored jobs appear in the user feed (tracker today, `web/`
+   tomorrow); status changes, lifecycle events and CRM updates go through
+   `/v1/me/*`.
+
+All scoring and filtering decisions come from one **unified search profile**
+stored in the DB (`profiles.py` is a one-time bootstrap seed only), edited from
+the Settings page or generated during onboarding.
 
 ---
 
 ## Data model (SQLite, `data/jobs.db`)
 
-| Table | Purpose |
-| --- | --- |
-| `jobs` | Raw + extracted job postings (one row per job, shared across profiles) |
-| `companies` | Company registry — status, enrichment, ATS provider/identifier, `monitored` flag |
-| `search_profiles` | Search profile definitions (criteria JSON, including `scoring_context` prose) |
-| `job_scores` | Per-job × per-profile score, reason, comp flag |
-| `job_tracking` / `status_history` | Pipeline status (`new` → `saved`/`applied`/`rejected`/`archived`/`expired`) |
-| `contacts` / `interactions` | Lightweight CRM — people at target companies, touchpoint timeline |
-| `runs` | Pipeline run log (`run_type`: `full` or `monitored_only`) |
-| `config` | Key-value store — active profile, scraper enable/disable flags, secrets metadata |
-| `migrations` | Idempotent schema migration tracking |
+| Table | Space | Purpose |
+| --- | --- | --- |
+| `jobs` | catalogue | Raw + extracted postings, one row per job |
+| `companies`, `company_status_history` | catalogue | Company registry, enrichment, ATS provider / identifier |
+| `runs` | catalogue | Pipeline run log (`full`, `monitored_only`; platform runs) |
+| `users` | user | Users (one today) |
+| `search_profiles` | user | Profile criteria + `scoring_context`, owned by a user |
+| `job_scores` | user | Score per `(job_id, profile_id)` |
+| `job_tracking`, `status_history` | user | Pipeline status and its history |
+| `job_applications` | user | Application lifecycle (events, dates, documents) |
+| `user_companies` | user | Monitored flag, relationship status, notes |
+| `contacts`, `interactions` | user | Private CRM — contacts are per user |
+| `tasks`, `task_events` | system | Task queue + progress events (SSE) |
+| `api_tokens` | system | Hashed, scoped, user-bound tokens with optional expiry |
+| `config`, `migrations` | system | Key-value settings and flags; idempotent schema migrations |
 
-All schema changes go through `storage.py`'s `_init_db()` migration chain —
-new databases get the full schema, existing ones are migrated in place on
-first connection.
+All schema changes go through `core/storage.py`'s migration chain
+(expand / contract: add and backfill first, remove old columns in a separate
+step).
 
 ---
 
 ## Targeted company monitoring
 
-In addition to the wide-net board scrapers, you can mark specific companies as
-**monitored**. A monitored company has a resolved ATS (`ats_provider` +
-`ats_identifier`, e.g. `greenhouse` / `fireblocks`) and a `monitored` flag.
+Mark specific companies as **monitored**: each has a resolved ATS
+(`ats_provider` + `ats_identifier`, e.g. `greenhouse` / `fireblocks`) and a
+per-user `monitored` flag in `user_companies`.
 
-- **Add a company**: paste its careers URL in Settings → "Monitored
-  Companies". `ats_detection.py` resolves the ATS provider from the hostname
-  (or a single page fetch for vanity domains like `careers.coinbase.com`), or
-  falls back to manual provider/identifier entry.
-- **Toggle monitoring**: a single toggle per company, shown in the Companies
-  list, company detail page, and Settings. The toggle reflects a three-state
-  model:
-  - **not monitorable** — no ATS/scraper resolved → no badge, no toggle
-  - **monitorable, scraper disabled** — toggle shown but disabled, with a
-    pointer to the relevant scraper toggle in Settings
-  - **monitorable, scraper enabled** — interactive toggle; badge shows
-    `🟢 Monitored · {provider}` or `⚪ Monitorable · {provider}`
-- **Run the monitoring scrape**:
-  ```bash
-  python scrape.py --monitored-only
-  ```
-  Iterates monitored companies grouped by ATS provider, fetches *all* their
-  openings (no title filtering at scrape time), and writes them with
-  `monitored_company_id` set.
-- **Title gate** (`title_gate.py`): before any LLM call, jobs from monitored
-  companies are checked against a PM-family inclusion list (case-insensitive
-  substring match, errs on inclusion). Non-matching jobs are marked
-  `filtered_non_product` and never consume API quota.
-- **Scoring signal**: "this job is from a monitored company" is injected into
-  the LLM scoring context as prose — a strong positive signal, not a hard
-  score override. A clearly mismatched role (junior, wrong company type) still
-  scores low.
+- **Add a company** — paste its careers URL in Settings → "Monitored
+  Companies"; `core/ats_detection.py` resolves the provider from the hostname
+  (or one page fetch for vanity domains), with manual entry as a fallback.
+- **Toggle monitoring** — one toggle per company (Companies list, company
+  detail, Settings), with three states: not monitorable / monitorable but
+  scraper disabled / monitorable and active.
+- **Run it** — `python -m core.scrape --monitored-only`, or a
+  `scrape_monitored` task from the tracker.
+- **Title gate** — non-PM roles from monitored companies are marked
+  `filtered_non_product` before any LLM call.
 
 ---
 
@@ -156,16 +219,9 @@ In addition to the wide-net board scrapers, you can mark specific companies as
 ### 1. Prerequisites
 
 - Python 3.11+
-- A [DeepSeek](https://platform.deepseek.com) account (API key) for LLM extraction and evaluation — **optional if you only want scraping**
-- Docker + Docker Compose — **optional**, only needed for server deployment
-
-The app runs natively on **Windows, macOS, and Linux** without Docker. All
-dependencies are pure Python or have prebuilt wheels for all three platforms.
-
-Docker is only required if you want to deploy to a server with the
-always-on `tracker` service and cron-triggered `agent` container (see
-[Deployment](#deployment) below). On Windows, you can schedule
-`python main.py` via Task Scheduler instead of cron.
+- A [DeepSeek](https://platform.deepseek.com) API key for extraction and
+  scoring — optional if you only want scraping
+- Docker + Docker Compose — optional, for server deployment
 
 ### 2. Clone and install
 
@@ -174,167 +230,114 @@ git clone https://github.com/jceyrac/job-agent.git
 cd job-agent
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e ".[dev]"          # core is an installable package
+cp .env.example .env             # then set DEEPSEEK_API_KEY
 ```
-
-### 3. Required API keys and subscriptions
-
-**`DEEPSEEK_API_KEY` is the only key required to run the full pipeline.**
-All other keys are optional.
-
-> **Running without LLM (scraping only)**: if you don't want to set up a
-> DeepSeek account, you can still run `scrape.py` and `scrape.py
-> --monitored-only` to populate the DB with raw job postings. Jobs will
-> appear in the tracker without scores, summaries, or structured fields
-> (work mode, geo zone, sector). The score filter in the Jobs tab won't
-> apply, but you can browse and triage raw jobs directly. This is useful
-> for testing the scraping layer or if you prefer to review jobs manually
-> without LLM assistance.
 
 | Service | Variable | Required? | Notes |
 | --- | --- | --- | --- |
-| [DeepSeek](https://platform.deepseek.com) | `DEEPSEEK_API_KEY` | ✅ For scoring | Sole LLM backend for extraction and evaluation. Cost is negligible — a full pipeline run (100 jobs) costs roughly $0.01. |
-| Gmail SMTP | `GMAIL_FROM` + `GMAIL_APP_PASSWORD` | Optional | Sends the daily email digest. Requires a [Google App Password](https://myaccount.google.com/apppasswords). |
-| Any email address | `NOTIFY_TO` | Optional | Digest recipient. Required if Gmail SMTP is configured. |
-| [Joplin](https://joplinapp.org) | `JOPLIN_TOKEN` | Optional | Exports job notes to Joplin via Web Clipper. Get the token in Joplin → Tools → Web Clipper → Advanced options. |
-| [RapidAPI](https://rapidapi.com) | `X_RAPIDAPI_KEY` | Optional | Powers the Wellfound scraper. Free tier limited to 10 req/month. |
+| [DeepSeek](https://platform.deepseek.com) | `DEEPSEEK_API_KEY` | ✅ for scoring | Sole LLM backend, used only through `core/llm.py`. |
+| Gmail SMTP | `GMAIL_FROM` + `GMAIL_APP_PASSWORD` | Optional | Daily email digest. |
+| Any email | `NOTIFY_TO` | Optional | Digest recipient. |
+| [Joplin](https://joplinapp.org) | `JOPLIN_TOKEN` | Optional | Note export via Web Clipper. |
+| [RapidAPI](https://rapidapi.com) | `X_RAPIDAPI_KEY` | Optional | Wellfound scraper (10 req/month free). |
 
-These can be set in `.env` before launching, or entered directly from the
-Streamlit **Settings** page after onboarding (written to `.env`, never stored
-in the database).
+Runtime configuration: `JOB_AGENT_DATA_DIR` (data directory),
+`JOB_AGENT_REQUIRE_DB=1` (refuse to start on a missing DB, set in production),
+`JOB_AGENT_API_URL` (API base URL for the tracker, worker, scrapers and agents).
 
-```bash
-cp .env.example .env
-# Edit .env and paste your DEEPSEEK_API_KEY
-```
-
-> **Note on scraper coverage without optional keys**: without `X_RAPIDAPI_KEY`,
-> the Wellfound scraper is disabled. All other board scrapers (LinkedIn, Indeed,
-> Web3Career, RemoteOK, CryptoJobsList, and more) work without any extra key.
-> Monitored-company ATS scrapers (Greenhouse, Lever, Ashby, Workable,
-> Workday) also require no key.
-
-### 4. First run — onboarding wizard
+### 3. Run locally
 
 ```bash
-streamlit run tracker.py
+uvicorn api.main:app --port 8601     # API
+python -m core.worker                # task worker
+streamlit run tracker.py             # tracker UI (onboarding wizard on first launch)
+python -m core.main                  # one full pipeline run
 ```
 
-On first launch, the onboarding wizard walks you through:
-
-1. **Template** — pick a starting point (General tech, Fintech, Web3, or blank)
-2. **Criteria** — target roles, location, work modes, company sizes, industries, languages
-3. **Scraping mode** — choose between broad board scraping, targeted company monitoring, or both
-4. **CV upload** — optional; extracts your experience to improve the scoring rubric
-5. **Generate** — calls DeepSeek to write a personalised `scoring_context` (the essay the scorer reads)
-6. **Review** — edit and refine the rubric before saving
-
-This creates your active search profile and configures which pipeline steps run.
-
-### 5. Run the pipeline
+Individual steps:
 
 ```bash
-python main.py
+python -m core.scrape                     # broad board scrape
+python -m core.scrape --monitored-only    # company-keyed monitoring scrape
+python -m core.score --extract            # extraction only
+python -m core.score --profile unified_jc [--rescore] [--limit N]
+python -m core.score --mock --profile unified_jc
 ```
-
-This runs, in sequence, the steps you enabled during onboarding:
-
-1. `scrape.py --monitored-only` — company-keyed ATS scrape (if monitoring is enabled and companies are configured)
-2. `scrape.py` — broad scrape across all enabled job boards (if board scraping is enabled)
-3. `score.py --extract` — profile-independent structured field extraction
-4. `score.py --profile <active>` — LLM scoring, digest, and notifications
-
-You can also run steps individually:
-
-```bash
-python scrape.py                  # broad board scrape
-python scrape.py --monitored-only # company-keyed monitoring scrape only
-python score.py --extract         # extraction only (profile-independent)
-python score.py --profile unified_jc [--rescore] [--limit N]
-python score.py --mock --profile unified_jc   # sanity-check scoring_context against fixed test jobs
-```
-
-Or use CLI flags to override the pipeline mode for a single run:
-
-```bash
-python main.py --monitored-only   # only the monitoring scrape + extract + score
-python main.py --no-monitoring    # skip monitoring, run broad scrape only
-python main.py --no-scrape        # skip broad scrape (e.g. extract+score only)
-```
-
-### 6. Use the tracker
-
-```bash
-streamlit run tracker.py
-```
-
-- **Jobs** — browse scored jobs, filter by score/location/work mode, update status
-- **Companies** — company registry, monitoring status, relationship notes
-- **Contacts** — lightweight CRM for recruiters and hiring managers
-- **Dashboard** — follow-ups due, recent inbound interactions, stale outreach
-- **Settings** — profile editor, scraper toggles, monitored companies, API key setup
 
 ---
 
 ## Deployment
 
-`docker-compose.yml` defines two services:
+`docker-compose.yml` defines four services sharing the `job_data` volume:
 
-- **`tracker`** — always-on Streamlit UI on port 8501
-- **`agent`** — `python main.py`, triggered by cron (not kept alive)
+| Service | Command | Role |
+| --- | --- | --- |
+| `api` | `uvicorn api.main:app --port 8601` | The API, bound to `127.0.0.1:8601`, exposed on the tailnet via `tailscale serve` (`:8443/api`) |
+| `worker` | `python -m core.worker` | Executes queued tasks |
+| `tracker` | `streamlit run tracker.py` | Streamlit UI on `127.0.0.1:8501` |
+| `agent` | `python -m core.main` | Nightly pipeline, cron-triggered (`profiles: [manual]`) |
 
-```bash
-docker compose up -d tracker
-# cron: docker compose run --rm agent
-```
+Inside the compose network the API is reached as `http://api:8601`. Port 443
+on the host stays with nginx; staging runs on its own port.
+
+Release flow: development on the Mac → CI must be green for the exact SHA
+(spec 044c) → staging on the server against a copy of the latest backup
+(`scripts/staging.sh`) → merge to `main` → `scripts/deploy.sh` on the server.
+A DB backup is taken before any schema-touching deployment, and none is
+scheduled at month end (status batch updates).
+
+---
+
+## Roadmap
+
+From `docs/roadmap-api.md`:
+
+| Phase | Steps | Status |
+| --- | --- | --- |
+| A — Foundations | 0 safety net · 1a–1d location independence, installable project, `core/` move, dead files · 2 single DB access path, Groq removal | ✅ |
+| B — Data model | 3 user / catalogue separation · 4 platform ingestion scope | ✅ |
+| C — API | 5 read · 6 write + task queue · 6b agents via API · 7 ingestion via API | ✅ (Oct 2026) |
+| D — Front & chat | 8 `web/` front, page by page, mobile-first · 9 CV-agent chat (`cv-sessions`, SSE) | 🔜 next |
+| — Contraction | 10 drop legacy columns, retire Streamlit | later |
 
 ---
 
 ## Export CSV — formulaire 716.007
 
-Le script `export_jobs.py` génère un CSV compatible avec le formulaire mensuel
-de recherches d'emploi exigé par l'ORP (Office Régional de Placement).
+`core/export_jobs.py` génère un CSV compatible avec le formulaire mensuel de
+recherches d'emploi exigé par l'ORP (Office Régional de Placement).
 
 ```bash
-python export_jobs.py                          # mois courant, statut=applied
-python export_jobs.py --month 2026-05          # mois spécifique
-python export_jobs.py --from 2026-05-01 --to 2026-05-31
-python export_jobs.py --statuses applied rejected archived
+python -m core.export_jobs                          # mois courant, statut=applied
+python -m core.export_jobs --month 2026-05          # mois spécifique
+python -m core.export_jobs --from 2026-05-01 --to 2026-05-31
+python -m core.export_jobs --statuses applied rejected archived
 ```
 
-**Output** : `data/jobs_YYYY-MM.csv` encodé en `utf-8-sig` (BOM) — ouvrable
-tel quel dans Excel et LibreOffice Calc.
+**Output** : `data/jobs_YYYY-MM.csv` en `utf-8-sig` (BOM), ouvrable tel quel
+dans Excel et LibreOffice Calc. **Colonnes** (6) : Date | Entreprise / Adresse
+| Description du poste | Status | URL | ID.
 
-**Colonnes** (6) : Date | Entreprise / Adresse | Description du poste | Status | URL | ID
-
-Le script affiche un résumé par statut et un aperçu dans le terminal après
-chaque export. Aucune dépendance hors stdlib — il s'exécute directement sur
-le serveur Live (`ssh` → `cd /opt/job-agent && python export_jobs.py`).
-
-**Status** : la colonne `Status` exporte le statut DB brut (`new`, `queued`,
-`ready`, `applied`, `rejected`, `archived`, `expired`). Dans l'aperçu de
-l'onglet Reports, ces statuts sont regroupés en « en suspens »
-(`applied`/`queued`/`ready`/`new`) et « négatif » (`rejected`/`archived`/`expired`).
+La colonne `Status` exporte le statut DB brut (`new`, `queued`, `ready`,
+`applied`, `rejected`, `archived`, `expired`). Dans l'onglet Reports, ces
+statuts sont regroupés en « en suspens » (`applied`/`queued`/`ready`/`new`) et
+« négatif » (`rejected`/`archived`/`expired`).
 
 ---
 
 ## Development
 
-- `specs/` — SpecKit feature specs (`spec.md` + `plan.md` + `tasks.md` per feature)
-  - `001-monitored-companies/` — targeted company monitoring, ATS adapters,
-    title gate, scoring signal, monitoring status UI (implemented)
-  - `002-pipeline-monitoring-step/` — wires the monitored-company scrape into
-    `main.py`'s full pipeline via a config setting + CLI flags (spec ready,
-    not yet implemented)
-  - `013-deepseek-only-backend/` — removes Groq and Gemini, simplifies scorer
-    to DeepSeek only (implemented)
-- `CLAUDE.md` — runtime instructions for Claude Code (never-modify file list,
-  code style, active spec pointer)
-- `tests/` — `pytest tests/` (in-memory SQLite, run before any commit
-  touching `storage.py`)
-
-**Code style**: surgical edits, no new dependencies without discussion,
-preserve existing logic, prose-heavy specs before implementation.
+- **Spec-first** — every feature is a SpecKit spec in `specs/NNN-*/`
+  (`spec.md` → `plan.md` → `tasks.md` → implementation). Any UI change needs an
+  approved visual mockup first.
+- **Constitution** — `.specify/memory/constitution.md` (v2.x) governs
+  architecture: wide-net scrapers, scorer as sole fit judgment, DB as sole
+  truth, single DB access path, tailnet-only API, surgical changes.
+- **Tests** — `pytest` (in-memory SQLite) plus architecture guards; `ruff`
+  with always-bug rules only. CI runs on every push and gates staging, merge
+  and deploy.
+- `CLAUDE.md` — runtime instructions for Claude Code.
 
 ---
 
